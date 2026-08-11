@@ -98,6 +98,16 @@ describe('published package layout', () => {
     expect((await readFile(join(ROOT, '.gitignore'), 'utf8')).split(/\r?\n/u)).toContain('.npmrc')
   })
 
+  it('keeps frozen standalone installs aligned with the lockfile peer policy', async () => {
+    expect(await readFile(join(ROOT, 'pnpm-workspace.yaml'), 'utf8')).toBe([
+      'packages:',
+      '  - .',
+      '',
+      'autoInstallPeers: false',
+      '',
+    ].join('\n'))
+  })
+
   it('emits loader-compatible client code and no raw TypeScript relative imports', async () => {
     expect(await readFile(join(ROOT, 'lib', 'client.js'), 'utf8')).toContain('window.__ModuleLoader__.load')
     for (const file of await javascriptFiles(join(ROOT, 'lib'))) {
