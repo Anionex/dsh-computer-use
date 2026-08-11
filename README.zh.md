@@ -15,7 +15,7 @@ DSH Computer Use 让 Agent 识别准确的运行应用、读取当前 UI 结构�
 
 Shell Tool 可以启动应用，Browser Tool 可以操作网页，但两者都没有提供通用原生 macOS UI 协议。可靠的桌面 Agent 需要的不只是 `click(x, y)`：它必须知道正在控制哪个进程和窗口，优先使用语义控件而不是坐标，避免把动作重放到已变化的状态，保护 secure value，请求正确访问权限，并验证动作结果。
 
-DSH Computer Use 用一个 DSH Service、原生 macOS provider、可移植 Skill、按 Agent 渐进暴露的模型 Tool、截图 Artifact 和 Web Settings 表面补齐动作层。`dsh-design` 等领域 Bundle 可以在工作跨入原生应用时组合它；浏览器和 API 任务继续使用更窄的能力。
+DSH Computer Use 用一个 DSH Service、原生 macOS provider、可移植 Skill、按 Agent 渐进暴露的模型 Tool、截图 Artifact 和 Web Settings 表面补齐动作层。领域工作流可以在任务跨入原生应用时组合它；浏览器和 API 任务继续使用更窄的能力。
 
 ## 它补充了什么
 
@@ -51,7 +51,6 @@ fixture 还覆盖应用发现、截图、Accessibility click/value/action、不�
 ```text
 dsh-vision-toolkit   visual facts, OCR, grounding, and pixel evidence
 dsh-computer-use     native application observation and bounded UI actions
-dsh-design           domain decisions and design completion criteria
 ```
 
 DSH Computer Use 是可复用的**动作层**。它不实现视觉模型、设计工作流、浏览器协议、远程桌面流或替代桌面 shell。
@@ -290,4 +289,4 @@ dsh plugin --profile headless remove @dsh-external/dsh-computer-use
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 David Yang。
+[MIT](LICENSE) © 2026 Anionex。

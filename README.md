@@ -15,7 +15,7 @@ English | [中文](README.zh.md)
 
 Shell Tools can launch an application and browser Tools can operate a web page, but neither exposes a general native macOS UI protocol. A useful desktop Agent needs more than `click(x, y)`: it must know which process and window it is controlling, prefer semantic controls over coordinates, avoid replaying actions against changed state, protect secure values, request appropriate access, and verify what happened.
 
-DSH Computer Use fills that action-layer gap with one DSH Service, a native macOS provider, a portable Skill, progressively exposed model Tools, screenshot Artifacts, and a Web Settings surface. Domain bundles such as `dsh-design` can compose it when work crosses into a native application, while browser and API tasks continue using narrower capabilities.
+DSH Computer Use fills that action-layer gap with one DSH Service, a native macOS provider, a portable Skill, progressively exposed model Tools, screenshot Artifacts, and a Web Settings surface. Domain workflows can compose it when work crosses into a native application, while browser and API tasks continue using narrower capabilities.
 
 ## What it adds
 
@@ -51,7 +51,6 @@ The fixture also covers application discovery, screenshots, Accessibility click/
 ```text
 dsh-vision-toolkit   visual facts, OCR, grounding, and pixel evidence
 dsh-computer-use     native application observation and bounded UI actions
-dsh-design           domain decisions and design completion criteria
 ```
 
 DSH Computer Use is the reusable **action layer**. It does not implement a vision model, design workflow, browser protocol, remote-desktop stream, or replacement desktop shell.
@@ -290,4 +289,4 @@ Removing or disabling the bundle unregisters the Skill and Tools, aborts in-flig
 
 ## License
 
-[MIT](LICENSE) © 2026 David Yang.
+[MIT](LICENSE) © 2026 Anionex.

@@ -30,4 +30,3 @@ Suspected vulnerabilities must follow [SECURITY.md](SECURITY.md), not a public i
 - DSH runtime, approval, sandbox, and Agent-loop defects belong in the DeepSeek Harness repository.
 - Browser tasks belong in the browser automation capability unless the task requires native UI.
 - Visual understanding and grounding defects belong in `dsh-vision-toolkit` unless this bundle misuses the public result.
-- Application-specific business workflows belong in a domain bundle such as `dsh-design`.
