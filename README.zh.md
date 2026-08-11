@@ -289,4 +289,4 @@ dsh plugin --profile headless remove @dsh-external/dsh-computer-use
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 Anionex。
+[MIT](LICENSE) © 2026 anionex。

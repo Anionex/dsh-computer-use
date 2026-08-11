@@ -289,4 +289,4 @@ Removing or disabling the bundle unregisters the Skill and Tools, aborts in-flig
 
 ## License
 
-[MIT](LICENSE) © 2026 Anionex.
+[MIT](LICENSE) © 2026 anionex.
