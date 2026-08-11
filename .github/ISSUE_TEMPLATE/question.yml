@@ -1,0 +1,38 @@
+name: Usage question
+description: Ask a reproducible installation, permission, configuration, or workflow question.
+title: "question: "
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check README.md and SUPPORT.md first. Sanitize application names, screenshots, Accessibility trees, and logs before posting.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to accomplish?
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Include exact commands or Tool sequence and sanitized output.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: DSH version, plugin commit, Profile, macOS, hardware, Node.js, TCC state
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed secrets, screenshots of private data, and secure-field values.
+          required: true
+        - label: I searched existing issues.
+          required: true

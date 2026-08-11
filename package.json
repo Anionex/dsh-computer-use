@@ -47,6 +47,7 @@
   "files": [
     "lib",
     "src",
+    "assets",
     "native/macos/Sources",
     "native/macos/bin",
     "native/macos/manifest.json",
@@ -58,6 +59,7 @@
   ],
   "scripts": {
     "native:build": "node scripts/build-native.mjs",
+    "check:native": "node scripts/check-native.mjs",
     "build": "pnpm run native:build && tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/build-client.mjs",
     "prepack": "pnpm run build",
     "test": "pnpm run build && vitest run tests",

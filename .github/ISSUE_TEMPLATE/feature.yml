@@ -1,0 +1,51 @@
+name: Feature proposal
+description: Propose a bounded native-application capability or provider improvement.
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain why a browser, API, shell, or existing Accessibility action is not the narrower and more reliable interface.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete native application task cannot be completed reliably today?
+    validations:
+      required: true
+  - type: textarea
+    id: protocol
+    attributes:
+      label: Proposed observation and action protocol
+      description: Describe target identity, freshness checks, permissions, confirmation, bounded execution, and post-action evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: platforms
+    attributes:
+      label: Platform and application coverage
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Verifiable acceptance criteria
+      description: Include deterministic fixture behavior, stale-state rejection, teardown, and Profile evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Narrower alternatives considered
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: The proposal does not expose arbitrary scripts, selectors, Accessibility constants, or unrestricted coordinates.
+          required: true
+        - label: I have not included credentials, private application data, or customer screenshots.
+          required: true

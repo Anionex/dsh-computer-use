@@ -1,0 +1,88 @@
+name: Bug report
+description: Report reproducible incorrect behavior in DSH Computer Use.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private screenshots, secure-field values, customer data, or suspected vulnerability details. Use SECURITY.md for security reports.
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version or commit
+      placeholder: 0.1.0 or 67caf8a
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: DeepSeek Harness version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: DSH Profile
+      options:
+        - Web
+        - Headless
+        - Both
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS and hardware
+      placeholder: macOS 14.6, Apple silicon or Intel
+    validations:
+      required: true
+  - type: dropdown
+    id: permission
+    attributes:
+      label: Permission state
+      options:
+        - Accessibility granted; Screen Recording granted
+        - Accessibility granted; Screen Recording not granted
+        - Accessibility not granted
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use the deterministic fixture or another non-sensitive test application whenever possible.
+      placeholder: |
+        1. Select bundle id and pid ...
+        2. Observe ...
+        3. Execute ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized diagnostics
+      description: Include stable error code, Tool name, whether the observation was full or diff, and redacted output.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed credentials, private screenshots, personal data, bundle ids that identify private software, and secure values.
+          required: true
+        - label: I reproduced this with the newest observation rather than reusing stale state.
+          required: true
+        - label: I searched existing issues and the current changelog.
+          required: true
+        - label: This is not a suspected security vulnerability.
+          required: true

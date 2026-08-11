@@ -52,8 +52,10 @@ describe('published package layout', () => {
       'lib/providers/macos.js',
       'lib/types/providers/macos.d.ts',
       'lib/client.js',
+      'assets/computer-use-fixture.png',
       'native/macos/bin/dsh-computer-use-helper',
       'native/macos/manifest.json',
+      'scripts/check-native.mjs',
       'scripts/validate.mjs',
       'scripts/model-e2e.mjs',
     ]) await expect(stat(join(ROOT, path))).resolves.toBeDefined()
@@ -63,6 +65,7 @@ describe('published package layout', () => {
     for (const required of [
       'lib',
       'src',
+      'assets',
       'native/macos/Sources',
       'native/macos/bin',
       'native/macos/manifest.json',
@@ -76,6 +79,7 @@ describe('published package layout', () => {
 
   it('has build, prepack, tests, and one-command validation', () => {
     expect(PACKAGE.scripts.build).toContain('native:build')
+    expect(PACKAGE.scripts['check:native']).toContain('check-native.mjs')
     expect(PACKAGE.scripts.build).toContain('tsc -p tsconfig.json')
     expect(PACKAGE.scripts.prepack).toContain('build')
     expect(PACKAGE.scripts.test).toContain('vitest')
