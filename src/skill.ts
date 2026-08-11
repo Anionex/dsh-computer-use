@@ -28,6 +28,10 @@ plugin; an API or CLI; browser automation for browser tasks; then Computer Use.
 If a stale-observation error occurs, observe again and reselect the target. Do
 not guess an equivalent index or retry a destructive action against old state.
 
+If an application approval is rejected, treat it as final for the rest of the
+Session for that app and scope. Do not retry the same tool against the same app;
+ask the user or choose a different target.
+
 ## Sensitive actions
 
 Routine navigation and local edits use the application control lease. Call

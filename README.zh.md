@@ -157,6 +157,8 @@ Secure text value 以 `[secure]` 输出，不会进入 tree text、Tool result�
 
 没有预配置 grant 时，插件通过 DSH approval 询问用户。Read approval 在 Session 内有效，control approval 只在当前 turn 有效；两者都绑定准确 Agent 和 bundle id。Headless 环境没有 approval answerer 时会 fail closed。
 
+被拒绝的请求在本次 Session 内对该应用和 scope 保持最终结果，不会再次询问。
+
 高影响外部通信、发送敏感数据、不可逆删除、账号/安全/隐私变更、未请求安装、法律接受，以及超出用户明确授权的金融完成，还需要紧邻执行的一次语义确认。`computer_confirm` 返回绑定准确 app、process、observation 和 action field 的短时一次性 token。配置 grant 不能绕过该确认。
 
 ## macOS 权限
@@ -210,7 +212,7 @@ Settings 更新按 generation 生效。候选 helper 和配置必须先通过校
 | Code | 正确下一步 |
 |---|---|
 | `COMPUTER_UNSUPPORTED_PLATFORM` | 使用受支持 provider 或其他能力 |
-| `COMPUTER_PERMISSION_REQUIRED` | 授予指定 macOS 权限或 DSH 应用 lease |
+| `COMPUTER_PERMISSION_REQUIRED` | 授予指定 macOS 权限或 DSH 应用 lease；被拒绝后本次 Session 内不再询问 |
 | `COMPUTER_APP_NOT_FOUND` | 列出应用并选择准确 bundle id 和 pid |
 | `COMPUTER_STALE_OBSERVATION` | 重新观察并重新选择目标 |
 | `COMPUTER_ELEMENT_UNAVAILABLE` | 使用元素声明的 action 或显式坐标 fallback |

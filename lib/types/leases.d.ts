@@ -13,6 +13,11 @@ declare module '@deepseek-ai/dsh-session/types' {
             turn?: number;
             source: 'approval';
         };
+        /** A rejected Computer Use application approval; the same scope is not asked again in this Session. */
+        'computer-use/denied': {
+            bundleId: string;
+            scope: 'read' | 'control';
+        };
     }
 }
 /** Source of the technical application lease used by an operation. */

@@ -155,6 +155,25 @@ describe('Computer Use Service', () => {
     }
   })
 
+  it('records a rejected approval for the Session and does not ask again for the same app and scope', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-lease-rejected-')
+    try {
+      const { service, request } = serviceHarness({ grants: [] }, 'rejected')
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      await expect(service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context))
+        .rejects.toMatchObject({ code: 'COMPUTER_PERMISSION_REQUIRED' })
+      await expect(service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context))
+        .rejects.toMatchObject({ code: 'COMPUTER_PERMISSION_REQUIRED' })
+      expect(request).toHaveBeenCalledTimes(1)
+      expect(agent.session.events.filter(event => event.type === 'computer-use/denied')).toEqual([
+        { type: 'computer-use/denied', data: { bundleId: FIXTURE_APP.bundleId, scope: 'read' } },
+      ])
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
   it('binds sensitive confirmation to one exact app, observation, and action, then consumes it once', async () => {
     const workspace = await temporaryDirectory('dsh-computer-confirm-')
     try {
