@@ -83,6 +83,14 @@ The Skill activates the focused execution schemas only for that Agent. A first v
 
 > Use Computer Use to inspect the running DSH Computer Use Fixture, enable its deterministic option, and report the fresh status. Prefer Accessibility elements and do not reuse an old observation.
 
+## Usage examples
+
+These prompts assume `/computer-use` was loaded.
+
+- Observe. "List the running applications, then observe the frontmost one and report its window title, UI elements, and Accessibility permission state."
+- Act through an element. "In the DSH Computer Use Fixture, enable the deterministic option through an Accessibility element, then report the fresh status."
+- Type without the clipboard. "In the frontmost application's focused text field, type `dsh computer use`, then scroll up one screen and return the fresh observation."
+
 ## How it works
 
 ```mermaid

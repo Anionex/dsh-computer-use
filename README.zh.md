@@ -83,6 +83,14 @@ Skill 只为当前 Agent 激活聚焦执行 schema。一个首次验证请求：
 
 > 使用 Computer Use 检查正在运行的 DSH Computer Use Fixture，启用 deterministic option，并根据动作后返回的新状态报告结果。优先使用 Accessibility 元素，不要复用旧 observation。
 
+## 使用示例
+
+以下示例假设已经输入 `/computer-use`。
+
+- 观察。“列出正在运行的应用，然后观察最前面的应用，报告窗口标题、UI 元素和 Accessibility 权限状态。”
+- 通过元素执行动作。“在 DSH Computer Use Fixture 中，通过 Accessibility 元素启用 deterministic option，然后报告新状态。”
+- 不经过剪贴板输入。“在最前面应用的聚焦文本框里输入 `dsh computer use`，然后向上滚动一屏并返回新 observation。”
+
 ## 工作原理
 
 ```mermaid
