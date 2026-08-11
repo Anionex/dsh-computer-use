@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "helperVersion": "0.1.0",
+  "sourceSha256": "e00357b06dcccb22fc737a67618745c2cfb6a45e11f2fbe4f1193dbada37b800",
+  "binary": {
+    "path": "bin/dsh-computer-use-helper",
+    "sha256": "f2eafe5c34eaa2bfb4a28b5da6336ecdc47d9477b4c9fdccd4137fd5a654cf35",
+    "architectures": [
+      "arm64",
+      "x86_64"
+    ],
+    "minimumMacOS": "14.0"
+  }
+}

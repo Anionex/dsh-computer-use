@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
+    "jsx": "react-jsx",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "types": ["node", "react"],
+    "rootDir": "src/client",
+    "outDir": ".client-build",
+    "declarationDir": "lib/types/client",
+    "noEmitOnError": true,
+    "paths": {
+      "react": ["../node_modules/@types/react/index.d.ts"],
+      "react/jsx-runtime": ["../node_modules/@types/react/jsx-runtime.d.ts"],
+      "@deepseek-ai/dsh-client-locale/client": ["../packages/client/locale/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-runtime/client": ["../packages/client/runtime/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-primitives": ["../packages/client/ui-primitives/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-settings/client": ["../packages/client/ui-settings/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-slots": ["../packages/client/ui-slots/lib/types/index.d.ts"]
+    }
+  },
+  "include": ["src/client/**/*.tsx", "src/client/**/*.ts"]
+}

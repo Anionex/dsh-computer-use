@@ -1,0 +1,5 @@
+# One aggregate row initializes the macOS Service provider before publishing
+# the model-facing Skill and Agent-scoped Tools.
+- insert:
+    - id: computer-use
+      name: '@dsh-external/dsh-computer-use'
