@@ -1,6 +1,6 @@
 import { Context } from 'cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
+import type { ApprovalOutcome, ApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import { resolveConfig, type ComputerUseConfig } from '../src/config.ts'
 import { ComputerUseService } from '../src/service.ts'
 import {
@@ -20,10 +20,18 @@ class TestComputerUseService extends ComputerUseService {
   }
 }
 
-function serviceHarness(config: ComputerUseConfig = {}, approval: ApprovalOutcome = 'allowed-once') {
+function serviceHarness(
+  config: ComputerUseConfig = {},
+  approval: ApprovalOutcome = 'allowed-once',
+  policy: ApprovalPolicy = 'ask',
+) {
   const ctx = new Context()
   const request = vi.fn(() => Promise.resolve(approval))
-  ctx.provide('approval', { request } as never)
+  ctx.provide('approval', {
+    request,
+    overrideOf: () => (policy === 'never' ? 'never' : undefined),
+    config: { policy },
+  } as never)
   const backend = new FakeBackend()
   const service = new TestComputerUseService(ctx, backend, resolveConfig({
     settleMs: 0,
@@ -169,6 +177,50 @@ describe('Computer Use Service', () => {
       expect(agent.session.events.filter(event => event.type === 'computer-use/denied')).toEqual([
         { type: 'computer-use/denied', data: { bundleId: FIXTURE_APP.bundleId, scope: 'read' } },
       ])
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('blocks un-granted apps without an approval ask when approval prompts are disabled', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-policy-never-')
+    try {
+      const { service, request } = serviceHarness({ grants: [] }, 'allowed-once', 'never')
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      await expect(service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context))
+        .rejects.toMatchObject({
+          code: 'COMPUTER_PERMISSION_REQUIRED',
+          message: expect.stringContaining('approval prompts are disabled'),
+        })
+      await expect(service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context))
+        .rejects.toMatchObject({ code: 'COMPUTER_PERMISSION_REQUIRED' })
+      expect(request).not.toHaveBeenCalled()
+      expect(agent.session.events.filter(event => event.type === 'computer-use/denied')).toEqual([])
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('blocks sensitive confirmation without an approval ask when approval prompts are disabled', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-confirm-policy-never-')
+    try {
+      const { service, request } = serviceHarness({}, 'allowed-once', 'never')
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const proposed: ComputerActionRequest = {
+        kind: 'click',
+        observationId: observation.observationId,
+        elementIndex: 1,
+        sensitive: true,
+      }
+      await expect(service.confirm({ action: proposed, reason: 'Publish a fixture state', target: 'fixture' }, context))
+        .rejects.toMatchObject({
+          code: 'COMPUTER_CONFIRMATION_REQUIRED',
+          message: expect.stringContaining('approval prompts are disabled'),
+        })
+      expect(request).not.toHaveBeenCalled()
     } finally {
       await workspace.cleanup()
     }

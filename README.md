@@ -157,7 +157,9 @@ The technical access model uses two application leases:
 
 Without a configured grant, the plugin asks through DSH approval. Read approval lasts for the Session; control approval lasts for the current turn. Both are scoped to the exact Agent and bundle id. Headless execution without an approval answerer fails closed.
 
-A rejected request is final for the rest of the Session for that app and scope; the same request is not asked again.
+A user-rejected request is final for the rest of the Session for that app and scope; the same request is not asked again.
+
+The DSH `danger-full-access` permission preset maps to `approval/policy: never`, so DSH rejects every approval ask before any prompt appears. An un-granted app then fails with `COMPUTER_PERMISSION_REQUIRED` and a message that names the exact grant or preset change. This is not a user rejection and is not recorded as one: the same app can be asked again after a grant is added or the preset switches to `ask`. Add exact bundle-id grants in Settings when you run with prompts disabled.
 
 High-impact external communication, transmission of sensitive data, irreversible deletion, account/security/privacy changes, unrequested installation, legal acceptance, and financial completion beyond explicit user authorization also require semantic confirmation immediately before execution. `computer_confirm` returns a short-lived token bound to the exact app, process, observation, and action fields. Configured grants do not bypass this confirmation.
 
@@ -212,7 +214,7 @@ Settings updates are generation-based. A candidate helper and configuration must
 | Code | Correct next step |
 |---|---|
 | `COMPUTER_UNSUPPORTED_PLATFORM` | Use a supported provider or another capability |
-| `COMPUTER_PERMISSION_REQUIRED` | Grant the named macOS permission or DSH application lease; a rejection is final for the rest of the Session |
+| `COMPUTER_PERMISSION_REQUIRED` | Grant the named macOS permission or DSH application lease. A user rejection is final for the Session; a policy-disabled ask clears when a grant is added or the preset switches to `ask` |
 | `COMPUTER_APP_NOT_FOUND` | List apps and select an exact bundle id and pid |
 | `COMPUTER_STALE_OBSERVATION` | Observe again and reselect the target |
 | `COMPUTER_ELEMENT_UNAVAILABLE` | Use an advertised action or an explicit coordinate fallback |

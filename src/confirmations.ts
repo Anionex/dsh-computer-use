@@ -3,6 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from 'cordis'
+import { approvalPolicy } from './approval-policy.ts'
 import type { ResolvedComputerUseConfig } from './config.ts'
 import { ComputerUseError } from './errors.ts'
 import {
@@ -50,6 +51,12 @@ export class ComputerConfirmationManager {
     callId: import('@deepseek-ai/dsh-llm').CallId | undefined,
     signal: AbortSignal,
   ): Promise<ComputerConfirmation> {
+    if (approvalPolicy(this.ctx, agent) === 'never') {
+      throw new ComputerUseError(
+        'COMPUTER_CONFIRMATION_REQUIRED',
+        'sensitive action confirmation is blocked because approval prompts are disabled in this Session (approval/policy: never); do not execute the action, and ask the user to switch the permission preset to one with approval ask or run it manually',
+      )
+    }
     const outcome = await this.ctx.approval.request({
       agent,
       toolName: 'computer_confirm',

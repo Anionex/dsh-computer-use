@@ -4,6 +4,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CallId } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Context } from 'cordis'
+import { approvalPolicy } from './approval-policy.ts'
 import type { ResolvedComputerUseConfig } from './config.ts'
 import { ComputerUseError } from './errors.ts'
 import type { ComputerAppIdentity } from './types.ts'
@@ -65,6 +66,12 @@ export class ComputerLeaseManager {
       return scope === 'read' || event.data.turn === turn
     })
     if (existing) return 'approved'
+    if (approvalPolicy(this.ctx, agent) === 'never') {
+      throw new ComputerUseError(
+        'COMPUTER_PERMISSION_REQUIRED',
+        `${scope} access for ${app.name} is blocked because approval prompts are disabled in this Session (approval/policy: never, e.g. the danger-full-access preset); add "${app.bundleId}" to the computer-use grants in Settings, or switch the permission preset to one with approval ask`,
+      )
+    }
     const denied = agent.session.events.some((event) => {
       if (event.type !== 'computer-use/denied') return false
       return event.data.bundleId === app.bundleId && event.data.scope === scope

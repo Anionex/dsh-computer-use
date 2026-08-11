@@ -157,7 +157,9 @@ Secure text value 以 `[secure]` 输出，不会进入 tree text、Tool result�
 
 没有预配置 grant 时，插件通过 DSH approval 询问用户。Read approval 在 Session 内有效，control approval 只在当前 turn 有效；两者都绑定准确 Agent 和 bundle id。Headless 环境没有 approval answerer 时会 fail closed。
 
-被拒绝的请求在本次 Session 内对该应用和 scope 保持最终结果，不会再次询问。
+用户拒绝的请求在本次 Session 内对该应用和 scope 保持最终结果，不会再次询问。
+
+DSH 的 `danger-full-access` 权限预设对应 `approval/policy: never`，DSH 会在任何弹窗出现前拒绝每次 approval 询问。未授权应用随后以 `COMPUTER_PERMISSION_REQUIRED` 失败，错误信息会指明需要添加的 grant 或要切换的预设。这不是用户拒绝，也不会被记录为用户拒绝：添加 grant 或把预设切换到 `ask` 后，同一个应用可以再次询问。在关闭提示的运行环境中使用插件时，请在 Settings 里添加准确的 bundle-id grant。
 
 高影响外部通信、发送敏感数据、不可逆删除、账号/安全/隐私变更、未请求安装、法律接受，以及超出用户明确授权的金融完成，还需要紧邻执行的一次语义确认。`computer_confirm` 返回绑定准确 app、process、observation 和 action field 的短时一次性 token。配置 grant 不能绕过该确认。
 
@@ -212,7 +214,7 @@ Settings 更新按 generation 生效。候选 helper 和配置必须先通过校
 | Code | 正确下一步 |
 |---|---|
 | `COMPUTER_UNSUPPORTED_PLATFORM` | 使用受支持 provider 或其他能力 |
-| `COMPUTER_PERMISSION_REQUIRED` | 授予指定 macOS 权限或 DSH 应用 lease；被拒绝后本次 Session 内不再询问 |
+| `COMPUTER_PERMISSION_REQUIRED` | 授予指定 macOS 权限或 DSH 应用 lease。用户拒绝在 Session 内保持最终结果；策略禁用导致的拒绝会在添加 grant 或预设切到 `ask` 后解除 |
 | `COMPUTER_APP_NOT_FOUND` | 列出应用并选择准确 bundle id 和 pid |
 | `COMPUTER_STALE_OBSERVATION` | 重新观察并重新选择目标 |
 | `COMPUTER_ELEMENT_UNAVAILABLE` | 使用元素声明的 action 或显式坐标 fallback |

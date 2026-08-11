@@ -4,6 +4,11 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ## [Unreleased]
 
+### Fixed
+
+- Treated `approval/policy: never` as a policy block instead of a user rejection: un-granted apps fail with an actionable message, no denial is recorded, and sensitive confirmation is refused without an ask.
+- Applied persisted Settings grants at startup so `settings.yaml` grants take effect without a prior Settings write.
+
 ### Documentation
 
 - Reworked the public repository facade around the fresh-observation protocol, deterministic native proof, permissions, security, support, and contribution paths.
