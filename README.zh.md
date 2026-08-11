@@ -1,6 +1,5 @@
 # DSH Computer Use
 
-[![仓库检查](https://github.com/dsh-external/dsh-computer-use/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dsh-external/dsh-computer-use/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-2f855a.svg)](LICENSE)
 ![macOS](https://img.shields.io/badge/macOS-14%2B-111827.svg)
 ![Universal binary](https://img.shields.io/badge/native-arm64%20%2B%20x86__64-2563eb.svg)
@@ -31,10 +30,6 @@ DSH Computer Use 用一个 DSH Service、原生 macOS provider、可移植 Skill
 
 仓库包含确定性 AppKit fixture 和 universal native helper。真实 fixture 测试与发布 runner 会发现准确进程、读取 Accessibility 状态、通过 observation 中的元素执行动作，并要求返回的新状态确认结果。
 
-<p align="center">
-  <img src="assets/computer-use-fixture.png" width="760" alt="DSH Computer Use 原生 fixture 在 observation 绑定的 checkbox 动作之后，选项已经启用，应用状态显示 Status: option enabled。" />
-</p>
-
 仓库中的证据状态通过 Agent 使用的同一协议生成：
 
 ```text
@@ -44,6 +39,10 @@ observe exact bundle id + pid
 -> fresh observation
 -> checkbox value 1; status "Status: option enabled"
 ```
+
+<p align="center">
+  <img src="assets/computer-use-fixture.png" width="760" alt="DSH Computer Use 原生 fixture 在 observation 绑定的 checkbox 动作之后，选项已经启用，应用状态显示 Status: option enabled。" />
+</p>
 
 fixture 还覆盖应用发现、截图、Accessibility click/value/action、不替换剪贴板的 Unicode 输入、按键、滚动、拖动、延迟状态、stale observation 拒绝、secure field 脱敏和进程终止。该截图是离散测试 Artifact，不是连续桌面流。
 
@@ -269,7 +268,7 @@ pnpm run validate:model
 pnpm run validate:release
 ```
 
-仓库 CI 从干净安装检查独立软件包与 native 完整性。完整 TypeScript build、干净 DSH Profile、强制 TCC 的原生动作和真实模型 lane 仍是发布检查，因为它们需要同级 DSH 源码树、macOS 权限或凭据。
+干净独立 checkout 可以运行 `pnpm exec vitest run tests/package-layout.spec.ts` 和 `pnpm run check:native`。完整 TypeScript build、干净 DSH Profile、强制 TCC 的原生动作和真实模型 lane 仍是发布检查，因为它们需要同级 DSH 源码树、macOS 权限或凭据。
 
 ## 移除
 

@@ -7,7 +7,7 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 ### Documentation
 
 - Reworked the public repository facade around the fresh-observation protocol, deterministic native proof, permissions, security, support, and contribution paths.
-- Added repository/native checks and structured community intake.
+- Added a reusable native-integrity command and structured community intake.
 
 ## [0.1.0] - 2026-08-11
 

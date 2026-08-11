@@ -1,6 +1,5 @@
 # DSH Computer Use
 
-[![Repository checks](https://github.com/dsh-external/dsh-computer-use/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dsh-external/dsh-computer-use/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2f855a.svg)](LICENSE)
 ![macOS](https://img.shields.io/badge/macOS-14%2B-111827.svg)
 ![Universal binary](https://img.shields.io/badge/native-arm64%20%2B%20x86__64-2563eb.svg)
@@ -31,10 +30,6 @@ DSH Computer Use fills that action-layer gap with one DSH Service, a native macO
 
 The repository includes a deterministic AppKit fixture and a universal native helper. The real fixture test and release runner discover the exact process, observe its Accessibility state, act through an observed element, and require the returned fresh state to confirm the result.
 
-<p align="center">
-  <img src="assets/computer-use-fixture.png" width="760" alt="Native DSH Computer Use Fixture after an observation-bound checkbox action; the checkbox is enabled and the application reports Status: option enabled." />
-</p>
-
 The checked-in proof state is produced through the same protocol exposed to the Agent:
 
 ```text
@@ -44,6 +39,10 @@ observe exact bundle id + pid
 -> fresh observation
 -> checkbox value 1; status "Status: option enabled"
 ```
+
+<p align="center">
+  <img src="assets/computer-use-fixture.png" width="760" alt="Native DSH Computer Use Fixture after an observation-bound checkbox action; the checkbox is enabled and the application reports Status: option enabled." />
+</p>
 
 The fixture also covers application discovery, screenshots, Accessibility click/value/action, Unicode typing without clipboard replacement, key input, scrolling, dragging, delayed state, stale-observation rejection, secure-field redaction, and process termination. The screenshot is a discrete test artifact rather than a continuous desktop stream.
 
@@ -269,7 +268,7 @@ pnpm run validate:model
 pnpm run validate:release
 ```
 
-Repository CI checks standalone package/native integrity from a clean install. Full TypeScript build, clean DSH Profile validation, TCC-required native actions, and the real-model lane remain release checks because they require the sibling DSH source tree, macOS permissions, or credentials.
+A clean standalone checkout can run `pnpm exec vitest run tests/package-layout.spec.ts` and `pnpm run check:native`. Full TypeScript build, clean DSH Profile validation, TCC-required native actions, and the real-model lane remain release checks because they require the sibling DSH source tree, macOS permissions, or credentials.
 
 ## Removal
 
