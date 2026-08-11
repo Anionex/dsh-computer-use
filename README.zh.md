@@ -5,32 +5,32 @@
 ![Universal binary](https://img.shields.io/badge/native-arm64%20%2B%20x86__64-2563eb.svg)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-Bundle-5b50ed.svg)
 
-**给 DeepSeek Harness 增加基于新鲜 Accessibility 状态的原生 macOS 动作层，而不是盲点桌面坐标。**
+给 DeepSeek Harness 增加基于新鲜 Accessibility 状态的原生 macOS 动作层。
 
-DSH Computer Use 让 Agent 识别准确的运行应用、读取当前 UI 结构、把动作绑定到一个可回放 observation、拒绝陈旧目标、获取有 scope 的访问权限，并返回动作后的新状态。它是 DSH capability bundle，不是另一套 Agent runtime 或远程桌面产品。
+DSH Computer Use 让 Agent 识别准确的运行应用、读取当前 UI 结构、把动作绑定到一个可回放 observation、拒绝陈旧目标、获取有 scope 的访问权限，并返回动作后的新状态。它是 DSH capability bundle。
 
 [English](README.md) | 中文
 
 ## 为什么需要它
 
-Shell Tool 可以启动应用，Browser Tool 可以操作网页，但两者都没有提供通用原生 macOS UI 协议。可靠的桌面 Agent 需要的不只是 `click(x, y)`：它必须知道正在控制哪个进程和窗口，优先使用语义控件而不是坐标，避免把动作重放到已变化的状态，保护 secure value，请求正确访问权限，并验证动作结果。
+Shell Tool 可以启动应用，Browser Tool 可以操作网页，但两者都没有提供通用原生 macOS UI 协议。桌面 Agent 需要知道正在控制哪个进程和窗口，优先使用语义控件而不是坐标，避免把动作重放到已变化的状态，保护 secure value，请求正确访问权限，并验证动作结果。
 
-DSH Computer Use 用一个 DSH Service、原生 macOS provider、可移植 Skill、按 Agent 渐进暴露的模型 Tool、截图 Artifact 和 Web Settings 表面补齐动作层。领域工作流可以在任务跨入原生应用时组合它；浏览器和 API 任务继续使用更窄的能力。
+DSH Computer Use 用一个 DSH Service、原生 macOS provider、可移植 Skill、按 Agent 渐进暴露的模型 Tool、截图 Artifact 和 Web Settings 表面提供动作层。领域工作流可以在任务跨入原生应用时组合它；浏览器和 API 任务继续使用更窄的能力。
 
 ## 它补充了什么
 
-- **先观察再动作：**返回有界 Accessibility tree、带 index 的元素、准确 app/process/window metadata、权限状态和可选截图 Artifact。
-- **把动作绑定到状态：**每个元素 index 只属于一个 opaque `observationId`；修改型 Tool 会拒绝变化的进程、窗口、locator 或目标身份，不会猜测替代目标。
-- **优先语义输入：**先使用 `AXPress`、可编辑 value 和元素声明的 Accessibility action，只有显式允许时才回退到 observation 窗口内坐标。
-- **返回新鲜证据：**每个成功动作都经过有界 settle，并返回新的完整或差分 observation。
-- **按应用限制访问：**read/control lease 绑定 Agent、Session、turn 和准确 bundle id；敏感动作另需一次性确认。
-- **保持模型表面聚焦：**只有当前 Agent 加载 Computer Use Skill 后才暴露执行 Tool vocabulary。
+- 先观察再动作。返回有界 Accessibility tree、带 index 的元素、准确 app/process/window metadata、权限状态和可选截图 Artifact。
+- 把动作绑定到状态。每个元素 index 只属于一个 opaque `observationId`；修改型 Tool 会拒绝变化的进程、窗口、locator 或目标身份。
+- 优先语义输入。先使用 `AXPress`、可编辑 value 和元素声明的 Accessibility action，只有显式允许时才回退到 observation 窗口内坐标。
+- 返回新鲜证据。每个成功动作都经过有界 settle，并返回新的完整或差分 observation。
+- 按应用限制访问。read/control lease 按 Agent、Session、turn 和准确 bundle id 分离；敏感动作另需一次性确认。
+- 保持模型表面聚焦。只有当前 Agent 加载 Computer Use Skill 后才暴露执行 Tool vocabulary。
 
-## 证据：一次绑定 observation 的原生动作
+## 示例：一次绑定 observation 的原生动作
 
 仓库包含确定性 AppKit fixture 和 universal native helper。真实 fixture 测试与发布 runner 会发现准确进程、读取 Accessibility 状态、通过 observation 中的元素执行动作，并要求返回的新状态确认结果。
 
-仓库中的证据状态通过 Agent 使用的同一协议生成：
+仓库中的记录状态通过 Agent 使用的同一协议生成：
 
 ```text
 observe exact bundle id + pid
@@ -46,14 +46,9 @@ observe exact bundle id + pid
 
 fixture 还覆盖应用发现、截图、Accessibility click/value/action、不替换剪贴板的 Unicode 输入、按键、滚动、拖动、延迟状态、stale observation 拒绝、secure field 脱敏和进程终止。该截图是离散测试 Artifact，不是连续桌面流。
 
-## 产品定位
+## 范围
 
-```text
-dsh-vision-toolkit   visual facts, OCR, grounding, and pixel evidence
-dsh-computer-use     native application observation and bounded UI actions
-```
-
-DSH Computer Use 是可复用的**动作层**。它不实现视觉模型、设计工作流、浏览器协议、远程桌面流或替代桌面 shell。
+`dsh-computer-use` 是动作层。视觉事实、OCR、grounding 和像素证据来自独立安装的 `dsh-vision-toolkit`。浏览器任务使用 browser automation；领域工作流需要原生 UI 时组合本 Bundle。
 
 ## 快速开始
 
@@ -84,7 +79,7 @@ dsh --profile headless --dump-config | grep computer-use
 /computer-use
 ```
 
-Skill 只为当前 Agent 激活聚焦执行 schema。适合作为首次验证的请求：
+Skill 只为当前 Agent 激活聚焦执行 schema。一个首次验证请求：
 
 > 使用 Computer Use 检查正在运行的 DSH Computer Use Fixture，启用 deterministic option，并根据动作后返回的新状态报告结果。优先使用 Accessibility 元素，不要复用旧 observation。
 
@@ -149,8 +144,8 @@ Secure text value 以 `[secure]` 输出，不会进入 tree text、Tool result�
 
 技术访问模型包含两类应用 lease：
 
-- **read：**读取 Accessibility 状态和请求的截图；
-- **control：**向选定应用发送 UI 输入。
+- read：读取 Accessibility 状态和请求的截图；
+- control：向选定应用发送 UI 输入。
 
 没有预配置 grant 时，插件通过 DSH approval 询问用户。Read approval 在 Session 内有效，control approval 只在当前 turn 有效；两者都绑定准确 Agent 和 bundle id。Headless 环境没有 approval answerer 时会 fail closed。
 
@@ -222,12 +217,12 @@ Settings 更新按 generation 生效。候选 helper 和配置必须先通过校
 
 ## Web 与 Headless 行为
 
-- **Web：**通过 `dsh.client` 贡献 Settings 分区，管理健康、限制、helper 选择和准确 bundle-id grant。Tool 输出使用通用 card 和截图 Artifact metadata，不提供连续桌面流。
-- **Headless：**暴露相同 Skill、Tool、observation 语义、错误和 Artifact。缺少交互 approval 时返回稳定权限或确认错误，不会静默允许控制。
+- Web：通过 `dsh.client` 贡献 Settings 分区，管理健康、限制、helper 选择和准确 bundle-id grant。Tool 输出使用通用 card 和截图 Artifact metadata，不提供连续桌面流。
+- Headless：暴露相同 Skill、Tool、observation 语义、错误和 Artifact。缺少交互 approval 时返回稳定权限或确认错误，不会静默允许控制。
 
 ## 状态与限制
 
-- **状态：**早期 `0.1.0`；稳定版本发布前，模型可见和 provider 行为仍可能变化。
+- 状态：早期 `0.1.0`；稳定版本发布前，模型可见和 provider 行为仍可能变化。
 - 当前 provider 只支持 macOS；Windows UI Automation 和 Linux provider 尚未实现。
 - Accessibility 质量取决于目标应用；自定义 canvas 可能暴露不完整结构，需要截图/视觉 fallback。
 - 浏览器工作应继续使用 browser automation，因为 DOM/CDP 状态更窄、更精确。

@@ -5,32 +5,32 @@
 ![Universal binary](https://img.shields.io/badge/native-arm64%20%2B%20x86__64-2563eb.svg)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-Bundle-5b50ed.svg)
 
-**Give DeepSeek Harness a native macOS action layer that acts on fresh Accessibility state instead of blind desktop coordinates.**
+Give DeepSeek Harness a native macOS action layer that operates on fresh Accessibility state.
 
-DSH Computer Use lets an Agent identify an exact running application, inspect its current UI structure, bind an action to one replayable observation, reject stale targets, acquire scoped access, and return fresh post-action state. It is a DSH capability bundle, not another Agent runtime or remote-desktop product.
+DSH Computer Use lets an Agent identify an exact running application, inspect its current UI structure, bind an action to one replayable observation, reject stale targets, acquire scoped access, and return fresh post-action state. It is a DSH capability bundle.
 
 English | [中文](README.zh.md)
 
 ## Why this exists
 
-Shell Tools can launch an application and browser Tools can operate a web page, but neither exposes a general native macOS UI protocol. A useful desktop Agent needs more than `click(x, y)`: it must know which process and window it is controlling, prefer semantic controls over coordinates, avoid replaying actions against changed state, protect secure values, request appropriate access, and verify what happened.
+Shell Tools can launch an application, and browser Tools can operate a web page. Neither exposes a general native macOS UI protocol. A desktop Agent needs to know which process and window it is controlling, prefer semantic controls over coordinates, avoid replaying actions against changed state, protect secure values, request appropriate access, and verify what happened.
 
-DSH Computer Use fills that action-layer gap with one DSH Service, a native macOS provider, a portable Skill, progressively exposed model Tools, screenshot Artifacts, and a Web Settings surface. Domain workflows can compose it when work crosses into a native application, while browser and API tasks continue using narrower capabilities.
+DSH Computer Use provides that action layer with one DSH Service, a native macOS provider, a portable Skill, progressively exposed model Tools, screenshot Artifacts, and a Web Settings surface. Domain workflows can compose it when work crosses into a native application; browser and API tasks keep using narrower capabilities.
 
 ## What it adds
 
-- **Observe before acting:** return a bounded Accessibility tree, indexed elements, exact app/process/window metadata, permission state, and an optional screenshot Artifact.
-- **Bind actions to state:** every element index belongs to one opaque `observationId`; modifying Tools reject changed processes, windows, locators, or target identities instead of guessing.
-- **Prefer semantic input:** use `AXPress`, editable values, and advertised Accessibility actions before an explicit observed-window coordinate fallback.
-- **Return fresh evidence:** every successful action settles for a bounded interval and returns a new full or diff observation.
-- **Scope access by application:** separate read and control leases by Agent, Session, turn, and exact bundle id, with one-use confirmation for sensitive actions.
-- **Keep the model surface focused:** expose the execution vocabulary only after the Computer Use Skill is loaded for that Agent.
+- Observe before acting. Returns a bounded Accessibility tree, indexed elements, exact app/process/window metadata, permission state, and an optional screenshot Artifact.
+- Bind actions to state. Every element index belongs to one opaque `observationId`; modifying Tools reject changed processes, windows, locators, or target identities.
+- Prefer semantic input. Uses `AXPress`, editable values, and advertised Accessibility actions before an explicit observed-window coordinate fallback.
+- Return fresh evidence. Every successful action settles for a bounded interval and returns a new full or diff observation.
+- Scope access by application. Read and control leases are separated by Agent, Session, turn, and exact bundle id, with one-use confirmation for sensitive actions.
+- Keep the model surface focused. The execution vocabulary appears only after the Computer Use Skill is loaded for that Agent.
 
-## Proof: one observation-bound native action
+## Example: one observation-bound native action
 
 The repository includes a deterministic AppKit fixture and a universal native helper. The real fixture test and release runner discover the exact process, observe its Accessibility state, act through an observed element, and require the returned fresh state to confirm the result.
 
-The checked-in proof state is produced through the same protocol exposed to the Agent:
+The recorded state is produced through the same protocol exposed to the Agent:
 
 ```text
 observe exact bundle id + pid
@@ -44,16 +44,11 @@ observe exact bundle id + pid
   <img src="assets/computer-use-fixture.png" width="760" alt="Native DSH Computer Use Fixture after an observation-bound checkbox action; the checkbox is enabled and the application reports Status: option enabled." />
 </p>
 
-The fixture also covers application discovery, screenshots, Accessibility click/value/action, Unicode typing without clipboard replacement, key input, scrolling, dragging, delayed state, stale-observation rejection, secure-field redaction, and process termination. The screenshot is a discrete test artifact rather than a continuous desktop stream.
+The fixture also covers application discovery, screenshots, Accessibility click/value/action, Unicode typing without clipboard replacement, key input, scrolling, dragging, delayed state, stale-observation rejection, secure-field redaction, and process termination. The screenshot is a discrete test artifact; it is not a continuous desktop stream.
 
-## Product position
+## Scope
 
-```text
-dsh-vision-toolkit   visual facts, OCR, grounding, and pixel evidence
-dsh-computer-use     native application observation and bounded UI actions
-```
-
-DSH Computer Use is the reusable **action layer**. It does not implement a vision model, design workflow, browser protocol, remote-desktop stream, or replacement desktop shell.
+`dsh-computer-use` is the action layer. Visual facts, OCR, grounding, and pixel evidence come from the independently installed `dsh-vision-toolkit`. Browser tasks use browser automation, and domain workflows compose this bundle when they need native UI.
 
 ## Quick start
 
@@ -84,7 +79,7 @@ In a Session with the Skill Tool, load Computer Use:
 /computer-use
 ```
 
-The Skill activates the focused execution schemas only for that Agent. A suitable first verification request is:
+The Skill activates the focused execution schemas only for that Agent. A first verification request:
 
 > Use Computer Use to inspect the running DSH Computer Use Fixture, enable its deterministic option, and report the fresh status. Prefer Accessibility elements and do not reuse an old observation.
 
@@ -149,8 +144,8 @@ Secure text values are emitted as `[secure]`; they do not enter tree text, Tool 
 
 The technical access model uses two application leases:
 
-- **read:** inspect Accessibility state and a requested screenshot;
-- **control:** send UI input to the selected application.
+- read: inspect Accessibility state and a requested screenshot;
+- control: send UI input to the selected application.
 
 Without a configured grant, the plugin asks through DSH approval. Read approval lasts for the Session; control approval lasts for the current turn. Both are scoped to the exact Agent and bundle id. Headless execution without an approval answerer fails closed.
 
@@ -222,12 +217,12 @@ Settings updates are generation-based. A candidate helper and configuration must
 
 ## Web and Headless behavior
 
-- **Web:** contributes a `dsh.client` Settings section for health, limits, helper selection, and exact bundle-id grants. Tool output uses generic cards and screenshot Artifact metadata; there is no continuous desktop stream.
-- **Headless:** exposes the same Skill, Tools, observation semantics, errors, and Artifacts. Missing interactive approval returns a stable permission or confirmation error and does not allow control.
+- Web: contributes a `dsh.client` Settings section for health, limits, helper selection, and exact bundle-id grants. Tool output uses generic cards and screenshot Artifact metadata; there is no continuous desktop stream.
+- Headless: exposes the same Skill, Tools, observation semantics, errors, and Artifacts. Missing interactive approval returns a stable permission or confirmation error and does not allow control.
 
 ## Status and limitations
 
-- **Status:** early `0.1.0` release; model-facing and provider behavior may still change before a stable release.
+- Status: early `0.1.0` release; model-facing and provider behavior may still change before a stable release.
 - The current provider is macOS-only. Windows UI Automation and Linux providers are not implemented.
 - Accessibility quality depends on the target application. Custom canvases may expose incomplete structure and require screenshot/vision fallback.
 - Browser work should continue to use browser automation because DOM/CDP state is narrower and more precise.
