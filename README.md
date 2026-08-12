@@ -20,6 +20,7 @@ The default DSH Computer Use route is deliberately non-interfering:
 - **No system-cursor movement:** the helper contains no cursor-warp path.
 - **No global pointer injection:** click, scroll, and drag fallback use a pid/window-targeted SkyLight route, not the global HID event stream.
 - **No default app activation:** semantic Accessibility, process-targeted keyboard input, and target-process pointer input run with `focusPolicy: preserve`.
+- **A separate Agent cursor:** click, scroll, and drag actions animate a click-through, nonactivating software cursor while the macOS system cursor remains untouched. It is visible by default and auto-hides after the action.
 - **No blind replay:** every action is tied to an exact, unexpired observation and returns fresh state.
 
 The result is a native action layer that can operate many background applications while the user continues working in the current foreground application.
@@ -126,9 +127,14 @@ The default interaction policy is:
 interaction:
   focusPolicy: preserve
   pointerInputPolicy: targeted
+  cursorVisualization: visible
+  cursorMotionMs: 180
+  cursorAutoHideMs: 1400
 ```
 
-`pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag. `focusPolicy: activate` is an explicit compatibility mode that may bring the target application to the foreground; after activation, the helper observes and validates the exact target again before input.
+`cursorVisualization: visible` displays the Agent's own non-interactive cursor for click, scroll, and drag. It never replaces or moves the macOS system cursor. Set it to `hidden` when visual feedback is unwanted. `pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag. `focusPolicy: activate` is an explicit compatibility mode that may bring the target application to the foreground; after activation, the helper observes and validates the exact target again before input.
+
+The cursor is a 56x56 white arrow with a dark outline, shadow, and fixed Agent badge. It is a separate process, click-through, nonactivating, and bound to the exact observed pid, window, and frame so it disappears if the target window closes, moves, resizes, or is minimized.
 
 The helper executable is an internal DSH transport rather than a public authorization API. It requires an isolated process group plus parent-owned standard transports, so ordinary shell redirection fails closed before command parsing. This is defense in depth, not authentication against arbitrary code running as the same macOS user: a deliberately constructed detached parent can reproduce that transport topology. Use the registered Tools so application leases, sensitive-action confirmation, and host policy checks remain in force; `danger-full-access` must not be treated as protection against direct native invocation.
 
@@ -209,6 +215,9 @@ The committed helper is an ad-hoc-signed universal `arm64` + `x86_64` binary tar
 | `helper.allowSourceBuild` | Permit an explicit managed-source rebuild when the committed helper is absent; default `false` |
 | `interaction.focusPolicy` | `preserve` (default) avoids target-app activation; `activate` explicitly permits it and requires re-observation/revalidation |
 | `interaction.pointerInputPolicy` | `targeted` (default) permits pid/window-targeted pointer input; `deny` disables click fallback, scroll, and drag |
+| `interaction.cursorVisualization` | `visible` (default) shows the separate Agent cursor; `hidden` disables only the overlay |
+| `interaction.cursorMotionMs` | Animated Agent-cursor travel duration, default `180` ms |
+| `interaction.cursorAutoHideMs` | Idle time before the Agent cursor hides, default `1400` ms; `0` keeps it visible |
 | `grants` | Exact non-wildcard bundle-id read/control policy; `control: true` implies read |
 
 </details>

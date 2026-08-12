@@ -2,7 +2,7 @@
 
 ## Requirement
 
-DSH Computer Use must let an Agent operate a native macOS application while the user continues working elsewhere. The default path must not move the system cursor, post pointer events to the global HID stream, or activate the target application merely to make an action work.
+DSH Computer Use must let an Agent operate a native macOS application while the user continues working elsewhere. The default path must not move the system cursor, post pointer events to the global HID stream, or activate the target application merely to make an action work. Pointer actions may show a separate Agent cursor, but that overlay must never become an input source or a window manager participant.
 
 The default Bundle configuration is:
 
@@ -10,9 +10,12 @@ The default Bundle configuration is:
 interaction:
   focusPolicy: preserve
   pointerInputPolicy: targeted
+  cursorVisualization: visible
+  cursorMotionMs: 180
+  cursorAutoHideMs: 1400
 ```
 
-`preserve` means the helper does not request foreground activation. `targeted` means mouse, drag, and wheel events may be sent only to the exact observed process and window. The model cannot change either policy through Tool arguments.
+`preserve` means the helper does not request foreground activation. `targeted` means mouse, drag, and wheel events may be sent only to the exact observed process and window. `visible` enables the separate Agent cursor, whose motion and auto-hide timing are also host-owned. The model cannot change any interaction policy through Tool arguments.
 
 This is an input-routing property, not a consequence of Accessibility permission alone. Accessibility grants semantic UI access; foreground preservation comes from choosing semantic Accessibility operations first and using process/window-targeted fallback instead of the system cursor.
 
@@ -26,6 +29,8 @@ The action path has four ordered layers:
 4. When semantic input is unavailable, keyboard events are posted to the selected pid and pointer events are posted to the selected pid and window. No pointer fallback uses a global event tap.
 
 Pointer delivery resolves the exact `CGWindowID`, converts the screen point to window-local coordinates, annotates the event with the target pid/window fields, and posts it through `SLEventPostToPid`. Missing window identity, unavailable SkyLight symbols, or an ambiguous window match fails closed.
+
+Visual feedback uses a 56x56 `NSPanel` owned by a dedicated, persistent cursor process. The panel is borderless, nonactivating, click-through, and excluded from normal window cycling; it is not made visible on every Space. It draws a large white arrow with a dark outline, a shadow, and a fixed purple Agent badge. Before input it animates to the same screen-global target point using an ease-out motion, briefly compresses the arrow for click, and keeps it pressed through a drag. It auto-hides after inactivity. The overlay never posts input and never changes the system cursor position.
 
 Policy is enforced twice on the supported DSH Tool path. The Service rejects a known pointer or foreground requirement before obtaining a control lease or consuming a sensitive-action confirmation. The helper validates the same resolved policy immediately before input, including fallback decisions that can only be made at runtime. The helper also requires an isolated process group plus three standard pipe or Unix-socket transports whose peer endpoints belong to its direct parent process; ordinary shell redirection fails closed before any command is parsed. This transport check is defense in depth, not authentication against arbitrary code running as the same macOS user: a deliberately constructed detached parent can reproduce the topology, especially under `danger-full-access`. The registered Tool path remains the only supported route because it applies leases, confirmations, and host policy before invoking the helper.
 
@@ -72,6 +77,10 @@ The helper never moves the system cursor and then tries to restore it. That desi
 
 Instead, pointer fallback creates an event at the observed screen point, binds it to the exact pid and `CGWindowID`, supplies the window-local point expected by AppKit, and sends it through the per-process SkyLight route. Click, scroll, and drag share this route. The committed helper contains no `CGWarpMouseCursorPosition`, global `CGEventPost`, or `.post(tap: .cghidEventTap)` path.
 
+### Cursor visualization is presentation-only
+
+The visible Agent cursor is deliberately not the input source. It is a separate process with a strict JSON-lines protocol and a startup-ready handshake. Every show, press, and release is bound to the observed pid, `CGWindowID`, and expected frame; a closed, moved, resized, minimized, or off-screen window hides the overlay. Because presentation is separate from routing, disabling the cursor cannot change action semantics and overlay failure cannot redirect or globally emit input.
+
 ### Activation is an explicit compatibility mode
 
 Some applications accept input only while active. A deployment may set `focusPolicy: activate`, accepting that the target application can take the foreground. Before emitting input, the helper activates the exact process, observes it again, and revalidates the referenced window and element. Any state change fails with `COMPUTER_STALE_OBSERVATION` instead of acting on the pre-activation target.
@@ -91,6 +100,10 @@ The per-process pointer route uses dynamically resolved SkyLight symbols. This k
 The release evidence covers both implementation and observed behavior:
 
 - source and binary checks reject system-cursor warp symbols, the exact global `CGEventPost` symbol, and unknown dynamically resolved native symbols;
+- overlay checks require a nonactivating panel, click-through hit testing, prohibited application activation policy, and no cursor-warp primitive;
+- the overlay runtime rejects missing or malformed target identity, oversized or invalid JSON-lines commands, unsupported timing, and direct helpers that do not own a managed parent transport;
+- a real overlay process must emit its ready frame before commands, reuse one process across commands, and stop cleanly on disposal;
+- a native monitor requires the overlay to be the only 56x56 window owned by its process, not become frontmost, and produce no global pointer events from that process pid;
 - the helper must contain `SLEventPostToPid` and `CGEventSetWindowLocation`;
 - the fixture is started through `open -g` with `--background`, so LaunchServices does not request foreground activation;
 - the fixture records every `applicationDidBecomeActive` callback and requires `activationCount: 0` on the default path;
@@ -106,3 +119,4 @@ The release evidence covers both implementation and observed behavior:
 - The window must be on-screen and uniquely identifiable. Minimized, fully hidden, ambiguous, or windowless targets fail closed.
 - `focusPolicy: activate` is intentionally disruptive and exists only as an operator-selected compatibility mode.
 - A target application may change its own activation or focus as a side effect of an accepted action; the helper does not claim control over application-internal behavior.
+- The Agent cursor is scoped to one active Space and the exact observed window. `cursorAutoHideMs: 0` keeps it visible until the bound window changes, a new hide command arrives, or the helper is disposed.

@@ -6,6 +6,7 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ### Added
 
+- Added a Codex-aligned, click-through Agent cursor overlay that animates independently from the macOS system cursor, remains nonactivating, binds to the exact observed window, and can be configured or hidden from Web Settings.
 - Added host-owned `interaction.focusPolicy` and `interaction.pointerInputPolicy` settings with default `preserve` / `targeted` behavior and matching Web Settings controls.
 - Added target-process pointer delivery for click, scroll, and drag, bound to the exact pid, `CGWindowID`, and window-local point through dynamically resolved SkyLight APIs.
 - Added action-result evidence through `activation`, `pointerInput`, and `pointerRouting`.
