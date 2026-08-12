@@ -15,6 +15,12 @@ export interface ComputerUseAppGrant {
   control?: boolean
 }
 
+/** Host-owned policy for foreground activation and target-process pointer input. */
+export interface ComputerUseInteractionConfig {
+  focusPolicy?: 'preserve' | 'activate'
+  pointerInputPolicy?: 'deny' | 'targeted'
+}
+
 /** User-facing configuration; schema defaults are repeated by {@link resolveConfig}. */
 export interface ComputerUseConfig {
   observationTtlMs?: number
@@ -31,6 +37,7 @@ export interface ComputerUseConfig {
     path?: string
     allowSourceBuild?: boolean
   }
+  interaction?: ComputerUseInteractionConfig
   grants?: ComputerUseAppGrant[]
 }
 
@@ -49,6 +56,10 @@ export const Config: Schema<ComputerUseConfig> = z.object({
   helper: z.object({
     path: z.string(),
     allowSourceBuild: z.boolean().default(false),
+  }),
+  interaction: z.object({
+    focusPolicy: z.union(['preserve', 'activate']).default('preserve'),
+    pointerInputPolicy: z.union(['deny', 'targeted']).default('targeted'),
   }),
   grants: z.array(z.object({
     bundleId: z.string(),
@@ -73,6 +84,10 @@ export interface ResolvedComputerUseConfig {
     path?: string
     allowSourceBuild: boolean
   }
+  interaction: {
+    focusPolicy: 'preserve' | 'activate'
+    pointerInputPolicy: 'deny' | 'targeted'
+  }
   grants: Array<{
     bundleId: string
     read: boolean
@@ -85,6 +100,13 @@ function integer(name: string, value: number, min: number, max: number): number 
     throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', `${name} must be an integer between ${min} and ${max}`)
   }
   return value
+}
+
+function option<T extends string>(name: string, value: string, allowed: readonly T[]): T {
+  if (!allowed.includes(value as T)) {
+    throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', `${name} must be one of ${allowed.join(', ')}`)
+  }
+  return value as T
 }
 
 /** Validate and normalize one raw config object. */
@@ -109,6 +131,8 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
   if (helperPath !== undefined && helperPath.length === 0) {
     throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'helper.path must not be empty')
   }
+  const focusPolicy = option('interaction.focusPolicy', config.interaction?.focusPolicy ?? 'preserve', ['preserve', 'activate'] as const)
+  const pointerInputPolicy = option('interaction.pointerInputPolicy', config.interaction?.pointerInputPolicy ?? 'targeted', ['deny', 'targeted'] as const)
   const seen = new Set<string>()
   const grants = (config.grants ?? []).map((grant) => {
     const bundleId = grant.bundleId.trim()
@@ -136,6 +160,10 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
     helper: {
       ...(helperPath === undefined ? {} : { path: helperPath }),
       allowSourceBuild: config.helper?.allowSourceBuild ?? false,
+    },
+    interaction: {
+      focusPolicy,
+      pointerInputPolicy,
     },
     grants,
   }

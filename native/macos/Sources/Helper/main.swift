@@ -80,6 +80,85 @@ private func dictionaries(_ object: Any?) -> [[String: Any]] {
     object as? [[String: Any]] ?? []
 }
 
+private enum TransportEndpoint: Hashable {
+    case pipe(handle: UInt64, peer: UInt64)
+    case unixSocket(handle: UInt64, peer: UInt64)
+}
+
+private func processDescriptors(_ pid: Int32) -> [proc_fdinfo] {
+    let capacity = Int(max(proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0), 0))
+    guard capacity >= MemoryLayout<proc_fdinfo>.size else { return [] }
+    var descriptors = Array(repeating: proc_fdinfo(), count: capacity / MemoryLayout<proc_fdinfo>.size)
+    let bytes = descriptors.withUnsafeMutableBytes { buffer in
+        proc_pidinfo(pid, PROC_PIDLISTFDS, 0, buffer.baseAddress, Int32(buffer.count))
+    }
+    guard bytes > 0 else { return [] }
+    return Array(descriptors.prefix(Int(bytes) / MemoryLayout<proc_fdinfo>.size))
+}
+
+private func transportEndpoint(_ pid: Int32, _ fd: Int32) -> TransportEndpoint? {
+    var pipe = pipe_fdinfo()
+    let pipeSize = MemoryLayout<pipe_fdinfo>.size
+    if proc_pidfdinfo(pid, fd, PROC_PIDFDPIPEINFO, &pipe, Int32(pipeSize)) == pipeSize {
+        return .pipe(handle: pipe.pipeinfo.pipe_handle, peer: pipe.pipeinfo.pipe_peerhandle)
+    }
+
+    var socket = socket_fdinfo()
+    let socketSize = MemoryLayout<socket_fdinfo>.size
+    guard proc_pidfdinfo(pid, fd, PROC_PIDFDSOCKETINFO, &socket, Int32(socketSize)) == socketSize,
+          socket.psi.soi_family == AF_UNIX,
+          socket.psi.soi_type == SOCK_STREAM,
+          socket.psi.soi_kind == SOCKINFO_UN else { return nil }
+    return .unixSocket(
+        handle: socket.psi.soi_so,
+        peer: socket.psi.soi_proto.pri_un.unsi_conn_so
+    )
+}
+
+private func transportEndpointsMatch(_ child: TransportEndpoint, _ parent: TransportEndpoint) -> Bool {
+    switch (child, parent) {
+    case let (.pipe(childHandle, childPeer), .pipe(parentHandle, parentPeer)),
+         let (.unixSocket(childHandle, childPeer), .unixSocket(parentHandle, parentPeer)):
+        return childPeer != 0
+            && childHandle == parentPeer
+            && childPeer == parentHandle
+    default:
+        return false
+    }
+}
+
+private func disconnectedUnixSocket(_ endpoint: TransportEndpoint) -> Bool {
+    if case let .unixSocket(_, peer) = endpoint { return peer == 0 }
+    return false
+}
+
+private func parentOwnsStandardTransport() -> Bool {
+    let childEndpoints = [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO].compactMap { fd in
+        transportEndpoint(getpid(), fd).map { (fd, $0) }
+    }
+    guard childEndpoints.count == 3,
+          Set(childEndpoints.map(\.1)).count == 3 else { return false }
+
+    let parentEndpoints = processDescriptors(getppid()).compactMap { descriptor in
+        transportEndpoint(getppid(), descriptor.proc_fd)
+    }
+    return childEndpoints.allSatisfy { fd, child in
+        let matches = parentEndpoints.filter { transportEndpointsMatch(child, $0) }
+        if matches.count == 1 { return true }
+        // The batch stdin writer may close its parent endpoint before the helper
+        // reaches main. Node represents that standard stream as a disconnected
+        // Unix socket, while stdout and stderr remain provably parent-owned.
+        return fd == STDIN_FILENO && matches.isEmpty && disconnectedUnixSocket(child)
+    }
+}
+
+private func requireHostTransport() throws {
+    guard getpgrp() == getpid(),
+          parentOwnsStandardTransport() else {
+        throw fail("COMPUTER_ACTION_BLOCKED", "native helper requires managed parent transport; use the registered Computer Use Tools")
+    }
+}
+
 private func permissionAccessibility() -> String {
     AXIsProcessTrusted() ? "granted" : "denied"
 }
@@ -220,6 +299,37 @@ private func windowNumber(_ element: AXUIElement) -> Int? {
     (axCopy(element, "AXWindowNumber" as CFString) as? NSNumber)?.intValue
 }
 
+private func windowNumber(
+    app: NSRunningApplication,
+    frame: CGRect?,
+    title: String?
+) -> Int? {
+    guard let windows = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements],
+        kCGNullWindowID
+    ) as? [[String: Any]] else { return nil }
+    let candidates = windows.filter { window in
+        guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier,
+              (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 else { return false }
+        if let frame {
+            guard let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let candidate = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+            let tolerance: CGFloat = 2
+            guard abs(candidate.minX - frame.minX) <= tolerance,
+                  abs(candidate.minY - frame.minY) <= tolerance,
+                  abs(candidate.width - frame.width) <= tolerance,
+                  abs(candidate.height - frame.height) <= tolerance else { return false }
+        }
+        if let title, !title.isEmpty {
+            guard let candidateTitle = window[kCGWindowName as String] as? String,
+                  candidateTitle == title else { return false }
+        }
+        return true
+    }
+    guard candidates.count == 1 else { return nil }
+    return (candidates[0][kCGWindowNumber as String] as? NSNumber)?.intValue
+}
+
 private func sha256(_ value: String) -> String {
     SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
 }
@@ -240,6 +350,7 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
     let frame = rootWindow.flatMap(axFrame)
     let title = rootWindow.flatMap { axString($0, kAXTitleAttribute as CFString) }
     let windowId = rootWindow.flatMap(windowNumber)
+        ?? windowNumber(app: app, frame: frame, title: title)
     var windowJSON: [String: Any]?
     if let frame {
         var json: [String: Any] = ["frame": rectJSON(frame)]
@@ -417,25 +528,37 @@ private func activate(_ app: NSRunningApplication, timeoutMs: Int) throws {
     }
 }
 
-private func eventSource() throws -> CGEventSource {
-    guard let source = CGEventSource(stateID: .combinedSessionState) else {
+private func targetedEventSource() throws -> CGEventSource {
+    guard let source = CGEventSource(stateID: .privateState) else {
         throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics input event source is unavailable")
     }
     return source
 }
 
-private func clickPoint(_ point: CGPoint, button: CGMouseButton, count: Int) throws {
-    let source = try eventSource()
-    let downType: CGEventType = button == .right ? .rightMouseDown : button == .center ? .otherMouseDown : .leftMouseDown
-    let upType: CGEventType = button == .right ? .rightMouseUp : button == .center ? .otherMouseUp : .leftMouseUp
-    guard let down = CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: point, mouseButton: button),
-          let up = CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: point, mouseButton: button) else {
-        throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics could not create click events")
+private func pointerTarget(app: NSRunningApplication, window: [String: Any]?) throws -> TargetedPointerTarget {
+    guard let window,
+          let windowNumber = (window["id"] as? NSNumber)?.int64Value,
+          let frame = window["frame"] as? [String: Any] else {
+        throw fail("COMPUTER_TARGET_UNAVAILABLE", "target-process pointer input needs an observed window id and frame")
     }
-    down.setIntegerValueField(.mouseEventClickState, value: Int64(count))
-    up.setIntegerValueField(.mouseEventClickState, value: Int64(count))
-    down.post(tap: .cghidEventTap)
-    up.post(tap: .cghidEventTap)
+    return TargetedPointerTarget(
+        pid: app.processIdentifier,
+        windowNumber: windowNumber,
+        windowFrame: CGRect(
+            x: try double(frame["x"], "window.x"),
+            y: try double(frame["y"], "window.y"),
+            width: try double(frame["width"], "window.width"),
+            height: try double(frame["height"], "window.height")
+        )
+    )
+}
+
+private func pointerAction(_ body: () throws -> Void) throws {
+    do {
+        try body()
+    } catch let error as TargetedPointerError {
+        throw fail("COMPUTER_ACTION_BLOCKED", error.message)
+    }
 }
 
 private func windowPoint(_ action: [String: Any], window: [String: Any]?, xKey: String, yKey: String) throws -> CGPoint {
@@ -491,7 +614,7 @@ private func pressKey(_ key: String, modifiers: [String], app: NSRunningApplicat
     guard let code = keyCodes[normalized] else {
         throw fail("COMPUTER_PROVIDER_FAILURE", "unsupported key; use the documented key vocabulary")
     }
-    let source = try eventSource()
+    let source = try targetedEventSource()
     guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
           let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else {
         throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics could not create keyboard events")
@@ -511,12 +634,13 @@ private func focusedElement(_ app: NSRunningApplication) -> AXUIElement? {
     return (focused as! AXUIElement)
 }
 
-private func typeText(_ text: String, app: NSRunningApplication) throws -> String {
-    if let focused = focusedElement(app),
-       AXUIElementSetAttributeValue(focused, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success {
-        return "accessibility"
-    }
-    let source = try eventSource()
+private func setSelectedText(_ text: String, app: NSRunningApplication) -> Bool {
+    guard let focused = focusedElement(app) else { return false }
+    return AXUIElementSetAttributeValue(focused, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success
+}
+
+private func typeTextWithKeyboard(_ text: String, app: NSRunningApplication) throws {
+    let source = try targetedEventSource()
     guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
           let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
         throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics could not create Unicode keyboard events")
@@ -529,7 +653,6 @@ private func typeText(_ text: String, app: NSRunningApplication) throws -> Strin
     down.postToPid(app.processIdentifier)
     usleep(5_000)
     up.postToPid(app.processIdentifier)
-    return "keyboard"
 }
 
 private func targetRecord(_ request: [String: Any], snapshot: ObservationSnapshot) throws -> ElementRecord? {
@@ -563,6 +686,91 @@ private func windowMatches(_ expected: [String: Any]?, current: [String: Any]?) 
         .isEqual(to: selectedIdentity(current, keys: keys))
 }
 
+private func activationStateMatches(_ before: ObservationSnapshot, current: ObservationSnapshot) -> Bool {
+    guard windowMatches(before.windowJSON, current: current.windowJSON),
+          before.elements.count == current.elements.count else { return false }
+    return zip(before.elements, current.elements).allSatisfy { expected, actual in
+        expected.locator == actual.locator && targetMatches(expected.json, current: actual)
+    }
+}
+
+private func validateTarget(_ request: [String: Any], snapshot: ObservationSnapshot) throws -> ElementRecord? {
+    let record = try targetRecord(request, snapshot: snapshot)
+    if let record, let expectedElement = request["element"] as? [String: Any] {
+        guard windowMatches(request["window"] as? [String: Any], current: snapshot.windowJSON),
+              targetMatches(expectedElement, current: record) else {
+            throw fail("COMPUTER_STALE_OBSERVATION", "the target element or window changed after the referenced observation")
+        }
+    } else {
+        let expected = try string(request["expectedStateHash"], "request.expectedStateHash")
+        guard snapshot.stateHash == expected else {
+            throw fail("COMPUTER_STALE_OBSERVATION", "the application UI changed after the referenced observation")
+        }
+    }
+    return record
+}
+
+private func interactionValue(_ interaction: [String: Any], _ key: String, _ allowed: [String]) throws -> String {
+    let value = try string(interaction[key], "request.interaction.\(key)")
+    guard allowed.contains(value) else {
+        throw fail("COMPUTER_PROVIDER_FAILURE", "request.interaction.\(key) must be one of \(allowed.joined(separator: ", "))")
+    }
+    return value
+}
+
+private func requirePointerInput(_ policy: String) throws {
+    guard policy == "targeted" else {
+        throw fail("COMPUTER_ACTION_BLOCKED", "this action needs target-process pointer input, but interaction.pointerInputPolicy is deny")
+    }
+}
+
+private func requiresForegroundPermission(_ action: String) -> Bool {
+    action == (kAXRaiseAction as String)
+}
+
+private func inputContext(
+    app: NSRunningApplication,
+    request: [String: Any],
+    limits: [String: Any],
+    snapshot: ObservationSnapshot,
+    record: ElementRecord?,
+    focusPolicy: String,
+    timeoutMs: Int,
+) throws -> (snapshot: ObservationSnapshot, record: ElementRecord?, activation: String) {
+    guard focusPolicy == "activate" else {
+        return (snapshot, record, "not-requested")
+    }
+    if app.isActive {
+        return (snapshot, record, "already-frontmost")
+    }
+    try activate(app, timeoutMs: timeoutMs)
+    let refreshed = try observeSnapshot(app: app, limits: limits)
+    let refreshedRecord: ElementRecord?
+    if request["element"] != nil {
+        refreshedRecord = try validateTarget(request, snapshot: refreshed)
+    } else {
+        guard activationStateMatches(snapshot, current: refreshed) else {
+            throw fail("COMPUTER_STALE_OBSERVATION", "the application UI changed while the target application was activated")
+        }
+        refreshedRecord = nil
+    }
+    return (refreshed, refreshedRecord, "activated")
+}
+
+private func actionResult(
+    channel: String,
+    activation: String,
+    pointerInput: Bool,
+    pointerRouting: String = "none"
+) -> [String: Any] {
+    [
+        "channel": channel,
+        "activation": activation,
+        "pointerInput": pointerInput,
+        "pointerRouting": pointerRouting,
+    ]
+}
+
 private func performAction(_ request: [String: Any]) throws -> [String: Any] {
     let appIdentity = try dictionary(request["app"], "request.app")
     let selector: [String: Any] = [
@@ -572,94 +780,175 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
     let app = try resolveApp(selector)
     let limits = try dictionary(request["limits"], "request.limits")
     let snapshot = try observeSnapshot(app: app, limits: limits)
-    let expected = try string(request["expectedStateHash"], "request.expectedStateHash")
     let action = try dictionary(request["action"], "request.action")
     let kind = try string(action["kind"], "action.kind")
     let actionTimeoutMs = try int(request["actionTimeoutMs"], "request.actionTimeoutMs")
     guard actionTimeoutMs >= 1_000 && actionTimeoutMs <= 120_000 else {
         throw fail("COMPUTER_PROVIDER_FAILURE", "request.actionTimeoutMs must be between 1000 and 120000")
     }
-    let record = try targetRecord(request, snapshot: snapshot)
-    if let record, let expectedElement = request["element"] as? [String: Any] {
-        guard windowMatches(request["window"] as? [String: Any], current: snapshot.windowJSON),
-              targetMatches(expectedElement, current: record) else {
-            throw fail("COMPUTER_STALE_OBSERVATION", "the target element or window changed after the referenced observation")
-        }
-    } else if snapshot.stateHash != expected {
-        throw fail("COMPUTER_STALE_OBSERVATION", "the application UI changed after the referenced observation")
-    }
-    try activate(app, timeoutMs: actionTimeoutMs)
+    let interaction = try dictionary(request["interaction"], "request.interaction")
+    let focusPolicy = try interactionValue(interaction, "focusPolicy", ["preserve", "activate"])
+    let pointerInputPolicy = try interactionValue(interaction, "pointerInputPolicy", ["deny", "targeted"])
+    let record = try validateTarget(request, snapshot: snapshot)
+
     switch kind {
     case "click":
         if let record, let available = record.json["actions"] as? [String], available.contains(kAXPressAction as String) {
             let result = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
             guard result == .success else { throw fail("COMPUTER_ACTION_BLOCKED", "Accessibility press was rejected") }
-            return ["channel": "accessibility"]
+            return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
         }
-        if let record, bool(action["allowCoordinateFallback"]), let frame = axFrame(record.element) {
-            try clickPoint(CGPoint(x: frame.midX, y: frame.midY), button: try mouseButton(action["button"] as? String), count: min(max((action["clickCount"] as? NSNumber)?.intValue ?? 1, 1), 3))
-            return ["channel": "coordinates"]
+        let elementFallback = record != nil && bool(action["allowCoordinateFallback"])
+        let coordinateFallback = action["x"] != nil && action["y"] != nil
+        guard elementFallback || coordinateFallback else {
+            throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "element does not support AXPress and coordinate fallback was not requested")
+        }
+        try requirePointerInput(pointerInputPolicy)
+        let current = try inputContext(
+            app: app,
+            request: request,
+            limits: limits,
+            snapshot: snapshot,
+            record: record,
+            focusPolicy: focusPolicy,
+            timeoutMs: actionTimeoutMs,
+        )
+        if let record = current.record, elementFallback, let frame = axFrame(record.element) {
+            let target = try pointerTarget(app: app, window: current.snapshot.windowJSON)
+            try pointerAction {
+                try targetedClick(
+                    at: CGPoint(x: frame.midX, y: frame.midY),
+                    button: try mouseButton(action["button"] as? String),
+                    count: min(max((action["clickCount"] as? NSNumber)?.intValue ?? 1, 1), 3),
+                    target: target
+                )
+            }
+            return actionResult(channel: "coordinates", activation: current.activation, pointerInput: true, pointerRouting: "target-process")
         }
         if action["x"] != nil, action["y"] != nil {
-            let point = try windowPoint(action, window: snapshot.windowJSON, xKey: "x", yKey: "y")
-            try clickPoint(point, button: try mouseButton(action["button"] as? String), count: min(max((action["clickCount"] as? NSNumber)?.intValue ?? 1, 1), 3))
-            return ["channel": "coordinates"]
+            let point = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "x", yKey: "y")
+            let target = try pointerTarget(app: app, window: current.snapshot.windowJSON)
+            try pointerAction {
+                try targetedClick(
+                    at: point,
+                    button: try mouseButton(action["button"] as? String),
+                    count: min(max((action["clickCount"] as? NSNumber)?.intValue ?? 1, 1), 3),
+                    target: target
+                )
+            }
+            return actionResult(channel: "coordinates", activation: current.activation, pointerInput: true, pointerRouting: "target-process")
         }
-        throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "element does not support AXPress and coordinate fallback was not available")
+        throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "coordinate fallback was requested but no current target coordinates were available")
     case "set-value":
         guard let record else { throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "set-value requires an observed element") }
         let value = try stringAllowingEmpty(action["value"], "action.value")
         let result = AXUIElementSetAttributeValue(record.element, kAXValueAttribute as CFString, value as CFTypeRef)
         guard result == .success else { throw fail("COMPUTER_ACTION_BLOCKED", "Accessibility value assignment was rejected") }
-        return ["channel": "accessibility"]
+        return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
     case "type-text":
-        return ["channel": try typeText(try string(action["text"], "action.text"), app: app)]
+        let text = try string(action["text"], "action.text")
+        if setSelectedText(text, app: app) {
+            return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
+        }
+        let current = try inputContext(
+            app: app,
+            request: request,
+            limits: limits,
+            snapshot: snapshot,
+            record: record,
+            focusPolicy: focusPolicy,
+            timeoutMs: actionTimeoutMs,
+        )
+        if current.activation == "activated", setSelectedText(text, app: app) {
+            return actionResult(channel: "accessibility", activation: current.activation, pointerInput: false)
+        }
+        try typeTextWithKeyboard(text, app: app)
+        return actionResult(channel: "keyboard", activation: current.activation, pointerInput: false)
     case "press-key":
+        let current = try inputContext(
+            app: app,
+            request: request,
+            limits: limits,
+            snapshot: snapshot,
+            record: record,
+            focusPolicy: focusPolicy,
+            timeoutMs: actionTimeoutMs,
+        )
         let modifiers = action["modifiers"] as? [String] ?? []
         try pressKey(try string(action["key"], "action.key"), modifiers: modifiers, app: app)
-        return ["channel": "keyboard"]
+        return actionResult(channel: "keyboard", activation: current.activation, pointerInput: false)
     case "scroll":
+        try requirePointerInput(pointerInputPolicy)
+        let current = try inputContext(
+            app: app,
+            request: request,
+            limits: limits,
+            snapshot: snapshot,
+            record: record,
+            focusPolicy: focusPolicy,
+            timeoutMs: actionTimeoutMs,
+        )
         let point: CGPoint
-        if let record, let frame = axFrame(record.element) { point = CGPoint(x: frame.midX, y: frame.midY) }
-        else { point = try windowPoint(action, window: snapshot.windowJSON, xKey: "x", yKey: "y") }
+        if let record = current.record, let frame = axFrame(record.element) { point = CGPoint(x: frame.midX, y: frame.midY) }
+        else { point = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "x", yKey: "y") }
         let direction = try string(action["direction"], "action.direction")
         let pages = min(max((action["pages"] as? NSNumber)?.intValue ?? 1, 1), 10)
         let vertical = direction == "up" ? 10 * pages : direction == "down" ? -10 * pages : 0
         let horizontal = direction == "left" ? 10 * pages : direction == "right" ? -10 * pages : 0
         guard vertical != 0 || horizontal != 0 else { throw fail("COMPUTER_PROVIDER_FAILURE", "unsupported scroll direction") }
-        CGWarpMouseCursorPosition(point)
-        guard let event = CGEvent(scrollWheelEvent2Source: try eventSource(), units: .line, wheelCount: 2, wheel1: Int32(vertical), wheel2: Int32(horizontal), wheel3: 0) else {
-            throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics could not create scroll event")
+        let target = try pointerTarget(app: app, window: current.snapshot.windowJSON)
+        try pointerAction {
+            try targetedScroll(
+                at: point,
+                vertical: Int32(vertical),
+                horizontal: Int32(horizontal),
+                target: target
+            )
         }
-        event.post(tap: .cghidEventTap)
-        return ["channel": "coordinates"]
+        return actionResult(channel: "coordinates", activation: current.activation, pointerInput: true, pointerRouting: "target-process")
     case "drag":
-        let from = try windowPoint(action, window: snapshot.windowJSON, xKey: "fromX", yKey: "fromY")
-        let to = try windowPoint(action, window: snapshot.windowJSON, xKey: "toX", yKey: "toY")
-        let source = try eventSource()
-        guard let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: from, mouseButton: .left),
-              let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: from, mouseButton: .left),
-              let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: to, mouseButton: .left) else {
-            throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics could not create drag events")
+        try requirePointerInput(pointerInputPolicy)
+        let current = try inputContext(
+            app: app,
+            request: request,
+            limits: limits,
+            snapshot: snapshot,
+            record: record,
+            focusPolicy: focusPolicy,
+            timeoutMs: actionTimeoutMs,
+        )
+        let from = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "fromX", yKey: "fromY")
+        let to = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "toX", yKey: "toY")
+        let target = try pointerTarget(app: app, window: current.snapshot.windowJSON)
+        try pointerAction {
+            try targetedDrag(from: from, to: to, target: target)
         }
-        move.post(tap: .cghidEventTap)
-        down.post(tap: .cghidEventTap)
-        for step in 1...12 {
-            let fraction = CGFloat(step) / 12
-            let point = CGPoint(x: from.x + (to.x - from.x) * fraction, y: from.y + (to.y - from.y) * fraction)
-            CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
-            usleep(8_000)
-        }
-        up.post(tap: .cghidEventTap)
-        return ["channel": "coordinates"]
+        return actionResult(channel: "coordinates", activation: current.activation, pointerInput: true, pointerRouting: "target-process")
     case "perform-action":
         guard let record else { throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "perform-action requires an observed element") }
         let actionName = try string(action["action"], "action.action")
         let available = record.json["actions"] as? [String] ?? []
         guard available.contains(actionName) else { throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "the element did not advertise the requested Accessibility action") }
-        let result = AXUIElementPerformAction(record.element, actionName as CFString)
+        if requiresForegroundPermission(actionName), focusPolicy != "activate" {
+            throw fail("COMPUTER_ACTION_BLOCKED", "the requested Accessibility action may raise the target window, but interaction.focusPolicy is preserve")
+        }
+        let current = requiresForegroundPermission(actionName)
+            ? try inputContext(
+                app: app,
+                request: request,
+                limits: limits,
+                snapshot: snapshot,
+                record: record,
+                focusPolicy: focusPolicy,
+                timeoutMs: actionTimeoutMs
+            )
+            : (snapshot, record, "not-requested")
+        guard let currentRecord = current.record else {
+            throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "perform-action target is unavailable after foreground validation")
+        }
+        let result = AXUIElementPerformAction(currentRecord.element, actionName as CFString)
         guard result == .success else { throw fail("COMPUTER_ACTION_BLOCKED", "Accessibility action was rejected") }
-        return ["channel": "accessibility"]
+        return actionResult(channel: "accessibility", activation: current.activation, pointerInput: false)
     default:
         throw fail("COMPUTER_PROVIDER_FAILURE", "unsupported action kind")
     }
@@ -738,6 +1027,7 @@ private struct HelperMain {
         do {
             _ = NSApplication.shared
             NSApplication.shared.setActivationPolicy(.prohibited)
+            try requireHostTransport()
             guard let data = try FileHandle.standardInput.readToEnd(), !data.isEmpty,
                   let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw fail("COMPUTER_PROVIDER_FAILURE", "stdin must contain one JSON request")

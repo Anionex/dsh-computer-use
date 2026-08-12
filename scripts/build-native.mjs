@@ -12,8 +12,10 @@ const NATIVE = join(ROOT, 'native', 'macos')
 const BUILD = join(NATIVE, 'build')
 const HELPER_SOURCE = join(NATIVE, 'Sources', 'Helper')
 const FIXTURE_SOURCE = join(NATIVE, 'Sources', 'Fixture', 'main.swift')
+const MONITOR_SOURCE = join(NATIVE, 'Sources', 'Monitor', 'main.swift')
 const HELPER_OUTPUT = join(NATIVE, 'bin', 'dsh-computer-use-helper')
 const FIXTURE_APP = join(NATIVE, 'fixture', 'DSHComputerUseFixture.app')
+const MONITOR_OUTPUT = join(NATIVE, 'fixture', 'dsh-computer-use-input-monitor')
 const args = new Set(process.argv.slice(2))
 const helperOnly = args.has('--helper-only')
 const fixtureOnly = args.has('--fixture-only')
@@ -72,6 +74,7 @@ async function buildHelper() {
       '-framework', 'ApplicationServices',
       '-framework', 'CoreGraphics',
       '-framework', 'ScreenCaptureKit',
+      '-lproc',
       ...sources,
       '-o', output,
     ], 300000)
@@ -128,7 +131,22 @@ async function buildFixture() {
 `
   await writeFile(join(contents, 'Info.plist'), plist)
   await run('codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', FIXTURE_APP])
-  return { path: FIXTURE_APP, bundleId: 'io.anionex.dsh-computer-use-fixture', executable: basename(executable) }
+  await run('xcrun', [
+    'swiftc', '-swift-version', '5', '-O',
+    '-target', `${targetArch}-apple-macos14.0`,
+    '-framework', 'AppKit',
+    '-framework', 'CoreGraphics',
+    MONITOR_SOURCE,
+    '-o', MONITOR_OUTPUT,
+  ], 180000)
+  await chmod(MONITOR_OUTPUT, 0o755)
+  await run('codesign', ['--force', '--sign', '-', '--timestamp=none', MONITOR_OUTPUT])
+  return {
+    path: FIXTURE_APP,
+    bundleId: 'io.anionex.dsh-computer-use-fixture',
+    executable: basename(executable),
+    monitor: MONITOR_OUTPUT,
+  }
 }
 
 await mkdir(BUILD, { recursive: true })

@@ -4,6 +4,7 @@ import type { ApprovalOutcome, ApprovalPolicy } from '@deepseek-ai/dsh-user-appr
 import { resolveConfig, type ComputerUseConfig } from '../src/config.ts'
 import { ComputerUseService } from '../src/service.ts'
 import {
+  ComputerObservationId,
   ComputerConfirmationToken,
   type ComputerActionRequest,
   type ComputerUseContext,
@@ -68,13 +69,134 @@ describe('Computer Use Service', () => {
       const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
       expect(before.tree.mode).toBe('full')
       const result = await service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context)
-      expect(result).toMatchObject({ action: 'click', channel: 'accessibility' })
+      expect(result).toMatchObject({
+        action: 'click',
+        channel: 'accessibility',
+        activation: 'not-requested',
+        pointerInput: false,
+        pointerRouting: 'none',
+      })
       expect(result.observation.observationId).not.toBe(before.observationId)
       expect(result.observation.tree.mode).toBe('diff')
       expect(result.observation.tree.text).toContain('AXStaticText')
       expect(backend.actions).toHaveLength(1)
       await expect(service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context))
         .rejects.toMatchObject({ code: 'COMPUTER_STALE_OBSERVATION' })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it.each([
+    ['coordinate click', (observationId: ComputerObservationId) => ({
+      kind: 'click' as const,
+      observationId,
+      x: 1,
+      y: 2,
+    })],
+    ['coordinate fallback', (observationId: ComputerObservationId) => ({
+      kind: 'click' as const,
+      observationId,
+      elementIndex: 0,
+      allowCoordinateFallback: true,
+    })],
+    ['scroll', (observationId: ComputerObservationId) => ({
+      kind: 'scroll' as const,
+      observationId,
+      x: 1,
+      y: 2,
+      direction: 'down' as const,
+    })],
+    ['drag', (observationId: ComputerObservationId) => ({
+      kind: 'drag' as const,
+      observationId,
+      fromX: 1,
+      fromY: 2,
+      toX: 3,
+      toY: 4,
+    })],
+  ])('blocks %s before control approval or confirmation consumption', async (_name, actionOf) => {
+    const workspace = await temporaryDirectory('dsh-computer-pointer-policy-')
+    try {
+      const { backend, service, request } = serviceHarness({
+        interaction: { focusPolicy: 'preserve', pointerInputPolicy: 'deny' },
+        grants: [{ bundleId: FIXTURE_APP.bundleId, read: true, control: false }],
+      })
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      request.mockClear()
+      await expect(service.act({
+        ...actionOf(before.observationId),
+        sensitive: true,
+        confirmationToken: ComputerConfirmationToken('unconsumed-token'),
+      }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_ACTION_BLOCKED',
+      })
+      expect(request).not.toHaveBeenCalled()
+      expect(backend.actions).toHaveLength(0)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('keeps target-process pointer input available when the host enables it', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-pointer-allow-')
+    try {
+      const { backend, service } = serviceHarness({
+        interaction: { focusPolicy: 'preserve', pointerInputPolicy: 'targeted' },
+      })
+      backend.actionChannel = 'coordinates'
+      backend.actionActivation = 'not-requested'
+      backend.actionPointerInput = true
+      backend.actionPointerRouting = 'target-process'
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const result = await service.act({ kind: 'drag', observationId: before.observationId, fromX: 1, fromY: 2, toX: 3, toY: 4 }, context)
+      expect(result).toMatchObject({
+        channel: 'coordinates',
+        activation: 'not-requested',
+        pointerInput: true,
+        pointerRouting: 'target-process',
+      })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('blocks AXRaise before control approval when foreground activation is not authorized', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-raise-policy-')
+    try {
+      const { backend, service, request } = serviceHarness({
+        interaction: { focusPolicy: 'preserve', pointerInputPolicy: 'targeted' },
+        grants: [{ bundleId: FIXTURE_APP.bundleId, read: true, control: false }],
+      })
+      backend.observation = backendObservation({
+        elements: [{
+          index: 0,
+          locator: [],
+          role: 'AXWindow',
+          title: 'DSH Computer Use Fixture',
+          actions: ['AXRaise'],
+          frame: { x: 100, y: 200, width: 760, height: 592 },
+        }],
+      })
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      request.mockClear()
+      await expect(service.act({
+        kind: 'perform-action',
+        observationId: observation.observationId,
+        elementIndex: 0,
+        action: 'AXRaise',
+      }, context)).rejects.toMatchObject({ code: 'COMPUTER_ACTION_BLOCKED' })
+      expect(request).not.toHaveBeenCalled()
+      expect(backend.actions).toHaveLength(0)
     } finally {
       await workspace.cleanup()
     }

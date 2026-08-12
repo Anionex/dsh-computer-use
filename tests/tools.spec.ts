@@ -38,7 +38,14 @@ describe('model-facing Computer Use tools', () => {
     const service = {
       listApps: vi.fn(async () => [{ ...FIXTURE_APP, frontmost: true, accessibility: 'granted', screenRecording: 'granted' }]),
       observe: vi.fn(async () => current),
-      act: vi.fn(async (action: { kind: string }) => ({ action: action.kind, channel: 'accessibility', observation: current })),
+      act: vi.fn(async (action: { kind: string }) => ({
+        action: action.kind,
+        channel: 'accessibility',
+        activation: 'not-requested',
+        pointerInput: false,
+        pointerRouting: 'none',
+        observation: current,
+      })),
       confirm: vi.fn(async () => ({
         token: 'confirmation-1',
         observationId: current.observationId,
@@ -74,6 +81,16 @@ describe('model-facing Computer Use tools', () => {
       properties: {
         key: { enum: expect.arrayContaining(['return', 'escape', 'left', 'right']) },
         modifiers: { items: { enum: ['command', 'control', 'option', 'shift'] } },
+      },
+    })
+    expect(tools[2]?.parameters).not.toHaveProperty('properties.focusPolicy')
+    expect(tools[2]?.parameters).not.toHaveProperty('properties.pointerInputPolicy')
+    expect(tools[2]?.output.schema).toMatchObject({
+      required: ['action', 'channel', 'activation', 'pointerInput', 'pointerRouting', 'observation'],
+      properties: {
+        activation: { enum: ['not-requested', 'already-frontmost', 'activated'] },
+        pointerInput: { type: 'boolean' },
+        pointerRouting: { enum: ['none', 'target-process'] },
       },
     })
     const confirmationBranches = (tools[10]?.parameters as {

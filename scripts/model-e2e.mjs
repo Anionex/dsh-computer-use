@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { findComputerClickEvidence } from './session-transcript.mjs'
 
 const ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
 const HELPER = join(ROOT, 'native', 'macos', 'bin', 'dsh-computer-use-helper')
@@ -84,7 +85,7 @@ async function runCommand(name, command, args, options = {}) {
 
 async function helper(request) {
   return await new Promise((resolveResult, reject) => {
-    const child = spawn(HELPER, [], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn(HELPER, [], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     const timer = setTimeout(() => {
@@ -124,13 +125,12 @@ async function terminateFixtures() {
 }
 
 async function launchFixture(transcript) {
-  const opened = await runCommand(
-    'launch deterministic macOS fixture',
+  await runCommand(
+    'launch deterministic fixture without foreground activation',
     'open',
-    ['-n', FIXTURE_APP, '--args', '--transcript', transcript],
+    ['-g', '-n', FIXTURE_APP, '--args', '--background', '--transcript', transcript],
     { timeoutMs: 10_000 },
   )
-  if (opened.code !== 0) throw new Error(opened.stderr)
   const deadline = Date.now() + 10_000
   while (Date.now() < deadline) {
     const [app] = await fixtureApps()
@@ -205,7 +205,7 @@ async function realModelWorkflow() {
     '',
   ].join('\n'))
 
-  const prompt = `/computer-use\n\nUse the dsh-computer-use capability to operate the running deterministic macOS fixture whose bundle id is ${BUNDLE_ID}. Load the Skill, list running applications, select the exact fixture process, observe it with a required screenshot and full Accessibility state, locate the checkbox labelled "Enable deterministic option", click that current element using its observation id and element index, and confirm from the fresh post-action observation that the status reads "Status: option enabled". Use only the focused computer-use Tools for UI observation and input; do not use shell, AppleScript, JXA, direct file edits, or coordinate guessing. Finish immediately after confirming the enabled state.`
+  const prompt = `/computer-use\n\nUse the dsh-computer-use capability to operate the running deterministic macOS fixture whose bundle id is ${BUNDLE_ID}. Load the Skill, list running applications, select the exact fixture process, observe it with a required screenshot and full Accessibility state, locate the element labelled "Targeted pointer probe", and click that current element using its observation id and element index with allowCoordinateFallback=true. Confirm from the fresh post-action observation that the status reads "Status: pointer click". Use only the focused computer-use Tools for UI observation and input; do not use shell, AppleScript, JXA, direct file edits, or coordinate guessing. Finish immediately after confirming the pointer-click state.`
   const result = await runCommand(
     'DeepSeek V4 computer-use fixture workflow',
     'dsh',
@@ -224,17 +224,25 @@ async function realModelWorkflow() {
   )
 
   const state = JSON.parse(await readFile(transcript, 'utf8'))
-  if (state.checked !== true || state.status !== 'Status: option enabled') {
+  if (state.activationCount !== 0 || state.pointerClickCount !== 1 || state.status !== 'Status: pointer click') {
     throw new Error(`fixture state did not prove the requested action: ${JSON.stringify(state)}`)
   }
   const screenshots = await screenshotFiles(join(workspace, '.dsh-computer-use', 'artifacts'))
   if (screenshots.length === 0) throw new Error('computer_observe produced no screenshot Artifact')
+  const evidence = await findComputerClickEvidence(join(home, 'sessions'))
+  if (!evidence.allowCoordinateFallback
+      || evidence.activation !== 'not-requested'
+      || evidence.pointerInput !== true
+      || evidence.pointerRouting !== 'target-process') {
+    throw new Error(`real-model transcript did not expose the target-process action evidence: ${JSON.stringify(evidence)}`)
+  }
   RESULTS.push({
     name: 'DeepSeek V4 computer-use assertions',
     status: 'pass',
     bundleId: app.bundleId,
     pid: app.pid,
     fixtureState: state,
+    toolEvidence: evidence,
     screenshotArtifacts: screenshots,
     finalResponse: tail(result.stdout.trim(), 2000),
   })

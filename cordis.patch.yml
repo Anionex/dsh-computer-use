@@ -3,3 +3,7 @@
 - insert:
     - id: computer-use
       name: '@dsh-external/dsh-computer-use'
+      config:
+        interaction:
+          focusPolicy: preserve
+          pointerInputPolicy: targeted

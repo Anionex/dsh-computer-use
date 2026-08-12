@@ -174,6 +174,12 @@ export type ComputerActionRequest = ComputerClickAction | ComputerSetValueAction
 export interface ComputerActionResult {
     action: ComputerActionRequest['kind'];
     channel: 'accessibility' | 'coordinates' | 'keyboard' | 'wait';
+    /** Verifiable target-app foreground state transition requested by the helper for this action. */
+    activation: 'not-requested' | 'already-frontmost' | 'activated';
+    /** Whether the helper emitted mouse, drag, or scroll-wheel input to the target process. */
+    pointerInput: boolean;
+    /** Pointer-event route selected by the helper; global HID routing is not supported. */
+    pointerRouting: 'none' | 'target-process';
     observation: ComputerObservation;
 }
 /** Confirmation request binding an exact proposed action to human-readable impact. */

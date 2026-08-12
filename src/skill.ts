@@ -25,6 +25,16 @@ plugin; an API or CLI; browser automation for browser tasks; then Computer Use.
    before deciding the next step; do not add a redundant observe unless you need
    a full tree or screenshot that the returned state omitted.
 
+The host owns foreground and pointer policy; never ask for or invent policy
+overrides in Tool arguments. The default policy preserves the user's current
+frontmost app and routes coordinate click/fallback, scroll, drag, and keyboard
+events only to the selected process. It never uses the global HID event stream
+or moves the system cursor. Accessibility press, value, and advertised actions
+remain preferred. If a host disables targeted pointer input, do not retry a
+blocked coordinate action. If a compatibility deployment explicitly permits
+activation, the action result reports what happened in activation,
+pointerInput, and pointerRouting.
+
 If a stale-observation error occurs, observe again and reselect the target. Do
 not guess an equivalent index or retry a destructive action against old state.
 

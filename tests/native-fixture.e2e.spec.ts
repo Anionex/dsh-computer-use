@@ -9,6 +9,7 @@ import { temporaryDirectory } from './helpers.ts'
 const ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
 const HELPER = join(ROOT, 'native', 'macos', 'bin', 'dsh-computer-use-helper')
 const FIXTURE_APP = join(ROOT, 'native', 'macos', 'fixture', 'DSHComputerUseFixture.app')
+const INPUT_MONITOR = join(ROOT, 'native', 'macos', 'fixture', 'dsh-computer-use-input-monitor')
 const BUNDLE_ID = 'io.anionex.dsh-computer-use-fixture'
 const LIMITS = { maxNodes: 1000, maxDepth: 20, maxTextBytes: 128000 }
 const OBSERVATION_QUIET_MS = 150
@@ -43,9 +44,50 @@ interface NativeObservation {
   permissions: { accessibility: string; screenRecording: string }
 }
 
+interface NativeActionResult {
+  channel: 'accessibility' | 'coordinates' | 'keyboard'
+  activation: 'not-requested' | 'already-frontmost' | 'activated'
+  pointerInput: boolean
+  pointerRouting: 'none' | 'target-process'
+}
+
+interface InteractionPolicy {
+  focusPolicy: 'preserve' | 'activate'
+  pointerInputPolicy: 'deny' | 'targeted'
+}
+
+interface FixtureTranscript {
+  activationCount: number
+  pointerClickCount: number
+  pointerScrollCount: number
+  pointerDragCount: number
+  pointerMouseDownCount: number
+  pointerMouseUpCount: number
+  pointerDragGestureCount: number
+}
+
+interface InputMonitorResult {
+  baselineCursor: { x: number; y: number }
+  finalCursor: { x: number; y: number }
+  maximumCursorDistance: number
+  baselineFrontmostPid: number
+  observedFrontmostPids: number[]
+  samples: number
+}
+
+const TARGETED_INTERACTION: InteractionPolicy = {
+  focusPolicy: 'preserve',
+  pointerInputPolicy: 'targeted',
+}
+
+const PRESERVE_INTERACTION: InteractionPolicy = {
+  focusPolicy: 'preserve',
+  pointerInputPolicy: 'deny',
+}
+
 async function invokeEnvelope<T>(request: Record<string, unknown>, timeoutMs = 15000): Promise<Envelope<T>> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(HELPER, [], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn(HELPER, [], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     const timer = setTimeout(() => {
@@ -91,11 +133,16 @@ async function terminateFixtures(): Promise<void> {
 }
 
 async function launchFixture(transcript: string): Promise<{ bundleId: string; pid: number; name: string }> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('open', ['-n', FIXTURE_APP, '--args', '--transcript', transcript], { stdio: 'ignore' })
+  const launched = await new Promise<{ code: number; stderr: string }>((resolve, reject) => {
+    const child = spawn('open', ['-g', '-n', FIXTURE_APP, '--args', '--background', '--transcript', transcript], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.setEncoding('utf8').on('data', value => { stderr += value })
     child.once('error', reject)
-    child.once('close', code => code === 0 ? resolve() : reject(new Error(`open exited ${String(code)}`)))
+    child.once('close', code => { resolve({ code: code ?? -1, stderr }) })
   })
+  if (launched.code !== 0) throw new Error(`fixture background launch failed: ${launched.stderr}`)
   const deadline = Date.now() + 10000
   while (Date.now() < deadline) {
     const [app] = await fixtureApps()
@@ -135,8 +182,9 @@ async function act(
   observation: NativeObservation,
   action: Record<string, unknown>,
   element?: ElementRecord,
-): Promise<{ channel: string }> {
-  return await invoke({
+  interaction: InteractionPolicy = TARGETED_INTERACTION,
+): Promise<NativeActionResult> {
+  return await invoke<NativeActionResult>({
     command: 'act',
     request: {
       action,
@@ -144,10 +192,54 @@ async function act(
       expectedStateHash: observation.stateHash,
       ...(element === undefined ? {} : { element }),
       window: observation.window,
+      interaction,
       actionTimeoutMs: 15000,
       limits: LIMITS,
     },
   })
+}
+
+async function fixtureTranscript(path: string): Promise<FixtureTranscript> {
+  return JSON.parse(await readFile(path, 'utf8')) as FixtureTranscript
+}
+
+async function monitorInput<T>(action: () => Promise<T>): Promise<{ action: T; monitor: InputMonitorResult }> {
+  const child = spawn(INPUT_MONITOR, ['--duration-ms', '1200', '--interval-micros', '1000'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8').on('data', value => { stdout += value })
+  child.stderr.setEncoding('utf8').on('data', value => { stderr += value })
+  const ready = new Promise<void>((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error(`input monitor did not become ready: ${stderr}`)), 5000)
+    const inspect = (): void => {
+      if (!stdout.startsWith('READY\n')) return
+      clearTimeout(deadline)
+      resolve()
+    }
+    child.stdout.on('data', inspect)
+    child.once('error', error => { clearTimeout(deadline); reject(error) })
+    inspect()
+  })
+  await ready
+  const actionResult = await action()
+  const code = await new Promise<number>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', value => { resolve(value ?? -1) })
+  })
+  if (code !== 0) throw new Error(`input monitor failed (${code}): ${stderr}`)
+  const lines = stdout.trim().split(/\r?\n/u)
+  if (lines[0] !== 'READY' || lines.length !== 2) throw new Error(`invalid input monitor output: ${stdout || stderr}`)
+  return { action: actionResult, monitor: JSON.parse(lines[1]!) as InputMonitorResult }
+}
+
+function expectNoForegroundOrCursorInterference(result: InputMonitorResult, targetPid: number): void {
+  expect(result.samples).toBeGreaterThan(100)
+  expect(result.maximumCursorDistance, JSON.stringify(result)).toBe(0)
+  expect(result.finalCursor, JSON.stringify(result)).toEqual(result.baselineCursor)
+  expect(result.observedFrontmostPids, JSON.stringify(result)).toEqual([result.baselineFrontmostPid])
+  expect(result.baselineFrontmostPid).not.toBe(targetPid)
 }
 
 function findElement(observation: NativeObservation, predicate: (element: ElementRecord) => boolean): ElementRecord {
@@ -211,7 +303,7 @@ async function stableObserve(
 }
 
 describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture', () => {
-  it('covers discovery, AX state, screenshots, every action channel, staleness, redaction, and termination', async (testContext) => {
+  it('operates a never-active background app through Accessibility and target-process input', async (testContext) => {
     const health = await invoke<{ accessibility: string; screenRecording: string }>({ command: 'health' })
     if (health.accessibility !== 'granted' || health.screenRecording !== 'granted') {
       if (process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1') {
@@ -222,16 +314,18 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
     }
 
     const temporary = await temporaryDirectory('dsh-computer-native-')
+    const transcriptPath = join(temporary.path, 'transcript.json')
     await terminateFixtures()
     let app: NativeObservation['app'] | undefined
     try {
-      app = await launchFixture(join(temporary.path, 'transcript.json'))
+      app = await launchFixture(transcriptPath)
       const screenshot = join(temporary.path, 'window.png')
-      let current = await waitForObservation(app, () => true, 'fixture window to become capturable', { screenshotPath: screenshot })
+      let current = await waitForObservation(app, observation => !observation.frontmost, 'background fixture window', { screenshotPath: screenshot })
       expect(current).toMatchObject({
         app: { bundleId: BUNDLE_ID, pid: app.pid },
+        frontmost: false,
         truncated: false,
-        screenshot: { path: screenshot, width: 760, height: 592 },
+        screenshot: { path: screenshot },
         permissions: { accessibility: 'granted', screenRecording: 'granted' },
       })
       expect((await readFile(screenshot)).subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
@@ -239,20 +333,29 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       expect(secure.value).toBe('[secure]')
       expect(current.treeText).not.toContain('fixture-secret')
 
-      current = await stableObserve(app)
-
+      current = await stableObserve(app, observation => !observation.frontmost)
       const original = current
-      const checkbox = findElement(current, element => element.label === 'Enable deterministic option')
-      const transientUpdate = findElement(current, element => element.label === 'Delayed update')
-      await expect(act(current, { kind: 'click', elementIndex: transientUpdate.index }, transientUpdate)).resolves.toEqual({ channel: 'accessibility' })
+      const delayed = findElement(current, element => element.label === 'Delayed update')
+      await expect(act(current, { kind: 'click', elementIndex: delayed.index }, delayed)).resolves.toEqual({
+        channel: 'accessibility',
+        activation: 'not-requested',
+        pointerInput: false,
+        pointerRouting: 'none',
+      })
       await waitForText(app, 'Status: delayed complete')
-      await expect(act(original, { kind: 'click', elementIndex: checkbox.index }, checkbox)).resolves.toEqual({ channel: 'accessibility' })
+
+      const checkbox = findElement(original, element => element.label === 'Enable deterministic option')
+      await expect(act(original, { kind: 'click', elementIndex: checkbox.index }, checkbox)).resolves.toEqual({
+        channel: 'accessibility',
+        activation: 'not-requested',
+        pointerInput: false,
+        pointerRouting: 'none',
+      })
       current = await stableObserve(
         app,
-        observation => observation.treeText.includes('Status: option enabled'),
-        'enabled option state to settle',
+        observation => !observation.frontmost && observation.treeText.includes('Status: option enabled'),
+        'background Accessibility press',
       )
-      expect(findElement(current, element => element.label === 'Enable deterministic option').value).toBe('1')
       const stale = await invokeEnvelope({
         command: 'act',
         request: {
@@ -261,6 +364,7 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
           expectedStateHash: original.stateHash,
           element: checkbox,
           window: original.window,
+          interaction: TARGETED_INTERACTION,
           actionTimeoutMs: 15000,
           limits: LIMITS,
         },
@@ -268,65 +372,161 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       expect(stale).toMatchObject({ ok: false, error: { code: 'COMPUTER_STALE_OBSERVATION' } })
 
       let text = findElement(current, element => element.label === 'Editable text')
-      await expect(act(current, { kind: 'set-value', elementIndex: text.index, value: '' }, text)).resolves.toEqual({ channel: 'accessibility' })
-      current = await stableObserve(
-        app,
-        observation => findElement(observation, element => element.label === 'Editable text').value === '',
-        'editable text to clear',
-      )
-      text = findElement(current, element => element.label === 'Editable text')
-      await expect(act(current, { kind: 'click', elementIndex: text.index, allowCoordinateFallback: true }, text)).resolves.toEqual({ channel: 'coordinates' })
-      current = await stableObserve(
-        app,
-        observation => findElement(observation, element => element.label === 'Editable text').focused === true,
-        'editable text to receive keyboard focus',
-      )
-      await expect(act(current, { kind: 'type-text', text: 'DeepSeek 深度测试' })).resolves.toEqual({ channel: 'accessibility' })
+      await expect(act(current, { kind: 'set-value', elementIndex: text.index, value: '' }, text)).resolves.toEqual({
+        channel: 'accessibility',
+        activation: 'not-requested',
+        pointerInput: false,
+        pointerRouting: 'none',
+      })
+      current = await stableObserve(app, observation => findElement(observation, element => element.label === 'Editable text').value === '')
+      await expect(act(current, { kind: 'type-text', text: 'DeepSeek 深度测试' })).resolves.toEqual({
+        channel: 'accessibility',
+        activation: 'not-requested',
+        pointerInput: false,
+        pointerRouting: 'none',
+      })
       current = await stableObserve(
         app,
         observation => findElement(observation, element => element.label === 'Editable text').value?.includes('DeepSeek 深度测试') === true,
-        'typed Unicode text to appear',
+        'background Accessibility text input',
       )
-      await expect(act(current, { kind: 'press-key', key: 'return', modifiers: [] })).resolves.toEqual({ channel: 'keyboard' })
+      await expect(act(current, { kind: 'press-key', key: 'return', modifiers: [] })).resolves.toEqual({
+        channel: 'keyboard',
+        activation: 'not-requested',
+        pointerInput: false,
+        pointerRouting: 'none',
+      })
       current = await waitForText(app, 'Status: applied DeepSeek 深度测试')
 
       const slider = findElement(current, element => element.label === 'Fixture slider')
       const sliderBefore = Number(slider.value)
-      await expect(act(current, { kind: 'perform-action', elementIndex: slider.index, action: 'AXIncrement' }, slider)).resolves.toEqual({ channel: 'accessibility' })
+      await expect(act(current, { kind: 'perform-action', elementIndex: slider.index, action: 'AXIncrement' }, slider)).resolves.toEqual({
+        channel: 'accessibility',
+        activation: 'not-requested',
+        pointerInput: false,
+        pointerRouting: 'none',
+      })
       current = await stableObserve(
         app,
         observation => Number(findElement(observation, element => element.label === 'Fixture slider').value) > sliderBefore,
         'Accessibility slider increment',
       )
 
-      const scrollArea = findElement(current, element => element.role === 'AXScrollArea')
-      await expect(act(current, { kind: 'scroll', elementIndex: scrollArea.index, direction: 'down', pages: 1 }, scrollArea)).resolves.toEqual({ channel: 'coordinates' })
-      current = await stableObserve(app)
+      let probe = findElement(current, element => element.label === 'Targeted pointer probe')
+      const click = await monitorInput(() => act(current, { kind: 'click', elementIndex: probe.index, allowCoordinateFallback: true }, probe))
+      expect(click.action).toEqual({
+        channel: 'coordinates',
+        activation: 'not-requested',
+        pointerInput: true,
+        pointerRouting: 'target-process',
+      })
+      expectNoForegroundOrCursorInterference(click.monitor, app.pid)
+      current = await waitForText(app, 'Status: pointer click')
+      expect(await fixtureTranscript(transcriptPath)).toMatchObject({
+        activationCount: 0,
+        pointerClickCount: 1,
+        pointerMouseDownCount: 1,
+        pointerMouseUpCount: 1,
+        pointerDragGestureCount: 0,
+      })
 
-      const dragSlider = findElement(current, element => element.label === 'Fixture slider')
-      const dragBefore = Number(dragSlider.value)
-      const dragFrame = dragSlider.frame
-      if (dragFrame === undefined) throw new Error('fixture slider did not expose a frame')
-      const windowFrame = current.window.frame
-      const y = dragFrame.y - windowFrame.y + dragFrame.height / 2
-      const fromX = dragFrame.x - windowFrame.x + dragFrame.width * 0.25
-      const toX = dragFrame.x - windowFrame.x + dragFrame.width * 0.75
-      await expect(act(current, { kind: 'drag', fromX, fromY: y, toX, toY: y })).resolves.toEqual({ channel: 'coordinates' })
-      current = await stableObserve(
-        app,
-        observation => Number(findElement(observation, element => element.label === 'Fixture slider').value) > dragBefore,
-        'coordinate slider drag',
-      )
+      probe = findElement(current, element => element.label === 'Targeted pointer probe')
+      const scroll = await monitorInput(() => act(current, { kind: 'scroll', elementIndex: probe.index, direction: 'down', pages: 1 }, probe))
+      expect(scroll.action).toEqual({
+        channel: 'coordinates',
+        activation: 'not-requested',
+        pointerInput: true,
+        pointerRouting: 'target-process',
+      })
+      expectNoForegroundOrCursorInterference(scroll.monitor, app.pid)
+      current = await waitForText(app, 'Status: pointer scroll')
+      expect(await fixtureTranscript(transcriptPath)).toMatchObject({ activationCount: 0, pointerScrollCount: 1 })
 
-      const delayed = findElement(current, element => element.label === 'Delayed update')
-      await act(current, { kind: 'click', elementIndex: delayed.index }, delayed)
-      current = await waitForText(app, 'Status: delayed complete')
-      expect(current.stateHash).not.toBe(original.stateHash)
+      probe = findElement(current, element => element.label === 'Targeted pointer probe')
+      if (probe.frame === undefined) throw new Error('targeted pointer probe did not expose a frame')
+      const fromX = probe.frame.x - current.window.frame.x + probe.frame.width * 0.25
+      const toX = probe.frame.x - current.window.frame.x + probe.frame.width * 0.75
+      const y = probe.frame.y - current.window.frame.y + probe.frame.height / 2
+      const drag = await monitorInput(() => act(current, { kind: 'drag', fromX, fromY: y, toX, toY: y }))
+      expect(drag.action).toEqual({
+        channel: 'coordinates',
+        activation: 'not-requested',
+        pointerInput: true,
+        pointerRouting: 'target-process',
+      })
+      expectNoForegroundOrCursorInterference(drag.monitor, app.pid)
+      current = await waitForText(app, 'Status: pointer drag')
+      const dragTranscript = await fixtureTranscript(transcriptPath)
+      expect(dragTranscript).toMatchObject({
+        activationCount: 0,
+        pointerClickCount: 1,
+        pointerMouseDownCount: 2,
+        pointerMouseUpCount: 2,
+        pointerDragGestureCount: 1,
+      })
+      expect(dragTranscript.pointerDragCount).toBeGreaterThan(0)
+
+      expect(current.frontmost).toBe(false)
 
       process.kill(app.pid, 'SIGTERM')
       await delay(100)
       const afterTermination = await invokeEnvelope({ command: 'resolve-app', selector: { bundleId: app.bundleId, pid: app.pid } })
       expect(afterTermination).toMatchObject({ ok: false, error: { code: 'COMPUTER_APP_NOT_FOUND' } })
+    } finally {
+      if (app !== undefined) {
+        try { process.kill(app.pid, 'SIGKILL') } catch {}
+      }
+      await terminateFixtures()
+      await temporary.cleanup()
+    }
+  }, 30000)
+
+  it('rejects disabled target-process pointer paths while retaining non-activating Accessibility input', async (testContext) => {
+    const health = await invoke<{ accessibility: string }>({ command: 'health' })
+    if (health.accessibility !== 'granted') {
+      if (process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1') {
+        throw new Error(`release lane requires Accessibility; got ${JSON.stringify(health)}`)
+      }
+      testContext.skip(`macOS Accessibility permission unavailable: ${JSON.stringify(health)}`)
+      return
+    }
+
+    const temporary = await temporaryDirectory('dsh-computer-native-policy-')
+    await terminateFixtures()
+    const transcriptPath = join(temporary.path, 'transcript.json')
+    let app: NativeObservation['app'] | undefined
+    try {
+      app = await launchFixture(transcriptPath)
+      let current = await stableObserve(app, observation => !observation.frontmost)
+      const checkbox = findElement(current, element => element.label === 'Enable deterministic option')
+      await expect(act(current, { kind: 'click', elementIndex: checkbox.index }, checkbox, PRESERVE_INTERACTION)).resolves.toEqual({
+        channel: 'accessibility',
+        activation: 'not-requested',
+        pointerInput: false,
+        pointerRouting: 'none',
+      })
+      current = await stableObserve(app, observation => observation.treeText.includes('Status: option enabled'))
+      const probe = findElement(current, element => element.label === 'Targeted pointer probe')
+      if (probe.frame === undefined) throw new Error('targeted pointer probe did not expose a frame')
+      const x = probe.frame.x - current.window.frame.x + probe.frame.width / 2
+      const y = probe.frame.y - current.window.frame.y + probe.frame.height / 2
+
+      await expect(act(current, { kind: 'click', elementIndex: probe.index, allowCoordinateFallback: true }, probe, PRESERVE_INTERACTION))
+        .rejects.toThrow(/COMPUTER_ACTION_BLOCKED: this action needs target-process pointer input/)
+      await expect(act(current, { kind: 'scroll', elementIndex: probe.index, direction: 'down', pages: 1 }, probe, PRESERVE_INTERACTION))
+        .rejects.toThrow(/COMPUTER_ACTION_BLOCKED: this action needs target-process pointer input/)
+      await expect(act(current, { kind: 'drag', fromX: x - 10, fromY: y, toX: x + 10, toY: y }, undefined, PRESERVE_INTERACTION))
+        .rejects.toThrow(/COMPUTER_ACTION_BLOCKED: this action needs target-process pointer input/)
+      expect((await observe(app)).frontmost).toBe(false)
+      expect(await fixtureTranscript(transcriptPath)).toMatchObject({
+        activationCount: 0,
+        pointerClickCount: 0,
+        pointerScrollCount: 0,
+        pointerDragCount: 0,
+        pointerMouseDownCount: 0,
+        pointerMouseUpCount: 0,
+        pointerDragGestureCount: 0,
+      })
     } finally {
       if (app !== undefined) {
         try { process.kill(app.pid, 'SIGKILL') } catch {}

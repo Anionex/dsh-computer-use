@@ -58,10 +58,18 @@ describe('published package layout', () => {
       'scripts/check-native.mjs',
       'scripts/validate.mjs',
       'scripts/model-e2e.mjs',
+      'scripts/session-transcript.mjs',
+      'native/macos/Sources/Monitor/main.swift',
     ]) await expect(stat(join(ROOT, path))).resolves.toBeDefined()
+    const nativeCheck = await readFile(join(ROOT, 'scripts', 'check-native.mjs'), 'utf8')
+    expect(nativeCheck).toContain('SLEventPostToPid')
+    expect(nativeCheck).toContain('CGEventSetWindowLocation')
+    expect(nativeCheck).toContain("'_CGEventPost'")
+    expect(nativeCheck).toContain('CGWarpMouseCursorPosition')
+    expect(nativeCheck).toContain('allowedDynamicSymbols')
   })
 
-  it('ships runtime, source, native inputs, validation, docs, and license', () => {
+  it('ships runtime, source, native inputs, validation, docs, and license', async () => {
     for (const required of [
       'lib',
       'src',
@@ -70,11 +78,15 @@ describe('published package layout', () => {
       'native/macos/bin',
       'native/macos/manifest.json',
       'scripts',
+      'docs',
       'cordis.patch.yml',
       'README.md',
       'README.zh.md',
       'LICENSE',
     ]) expect(PACKAGE.files).toContain(required)
+    for (const path of ['docs/interaction-policy.md', 'docs/interaction-policy.zh.md']) {
+      await expect(stat(join(ROOT, path))).resolves.toBeDefined()
+    }
   })
 
   it('has build, prepack, tests, and one-command validation', () => {
@@ -124,5 +136,15 @@ describe('published package layout', () => {
     const source = await readFile(join(ROOT, 'scripts', 'model-e2e.mjs'), 'utf8')
     expect(source).toContain("DSH_PERMISSION_MODE: 'workspace-write'")
     expect(source).not.toContain("DSH_PERMISSION_MODE: 'danger-full-access'")
+    expect(source).toContain("findComputerClickEvidence(join(home, 'sessions'))")
+    expect(source).toContain("evidence.pointerRouting !== 'target-process'")
+    expect(source).toContain('pointerClickCount !== 1')
+  })
+
+  it('ships behavior-level native non-interference coverage', async () => {
+    const fixtureTest = await readFile(join(ROOT, 'tests', 'native-fixture.e2e.spec.ts'), 'utf8')
+    expect(fixtureTest).toContain('dsh-computer-use-input-monitor')
+    expect(fixtureTest).toContain('maximumCursorDistance')
+    expect(fixtureTest).toContain('observedFrontmostPids')
   })
 })

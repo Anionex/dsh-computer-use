@@ -14,8 +14,15 @@ describe('Computer Use configuration', () => {
       maxSettleMs: 5000,
       artifactRoot: '.dsh-computer-use/artifacts',
       helper: { allowSourceBuild: false },
+      interaction: { focusPolicy: 'preserve', pointerInputPolicy: 'targeted' },
       grants: [{ bundleId: 'com.example.Editor', read: true, control: true }],
     })
+  })
+
+  it('accepts an explicit foreground and target-process pointer policy', () => {
+    expect(resolveConfig({
+      interaction: { focusPolicy: 'activate', pointerInputPolicy: 'targeted' },
+    }).interaction).toEqual({ focusPolicy: 'activate', pointerInputPolicy: 'targeted' })
   })
 
   it.each([
@@ -23,6 +30,8 @@ describe('Computer Use configuration', () => {
     [{ settleMs: 5001, maxSettleMs: 5000 }, /settleMs/],
     [{ artifactRoot: '../outside' }, /artifactRoot/],
     [{ helper: { path: '   ' } }, /helper\.path/],
+    [{ interaction: { focusPolicy: 'invalid' } }, /interaction\.focusPolicy/],
+    [{ interaction: { pointerInputPolicy: 'invalid' } }, /interaction\.pointerInputPolicy/],
     [{ grants: [{ bundleId: '*' }] }, /non-wildcard/],
     [{ grants: [{ bundleId: 'com.example.App' }, { bundleId: 'com.example.App' }] }, /duplicate/],
   ] as const)('rejects invalid configuration %o', (value, pattern) => {

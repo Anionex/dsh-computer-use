@@ -1,5 +1,6 @@
 /** Provider-facing backend protocol kept below the public Computer Use Service. */
 import type { ComputerActionRequest, ComputerAppIdentity, ComputerAppSelector, ComputerAppSummary, ComputerElement, ComputerPermissionState, ComputerRect, ComputerScreenshotMode } from './types.ts';
+import type { ResolvedComputerUseConfig } from './config.ts';
 /** Internal element locator never exposed to the model or persisted in Session logs. */
 export interface BackendElement extends ComputerElement {
     locator: number[];
@@ -42,12 +43,16 @@ export interface BackendActionRequest {
     }>;
     app: ComputerAppIdentity;
     expectedStateHash: string;
+    interaction: ResolvedComputerUseConfig['interaction'];
     element?: BackendElement;
     window?: BackendObservation['window'];
 }
 /** Provider action outcome before the Service obtains the mandatory post-action observation. */
 export interface BackendActionResult {
     channel: 'accessibility' | 'coordinates' | 'keyboard';
+    activation: 'not-requested' | 'already-frontmost' | 'activated';
+    pointerInput: boolean;
+    pointerRouting: 'none' | 'target-process';
 }
 /** Health facts obtained without changing permissions. */
 export interface BackendHealth {

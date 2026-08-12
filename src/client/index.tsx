@@ -13,7 +13,7 @@ const ROUTE = '/_dsh/computer-use/settings'
 const en = {
   nav: 'Computer Use',
   title: 'macOS Computer Use',
-  intro: 'Inspect the native helper, macOS privacy permissions, observation limits, and exact per-app read/control grants.',
+  intro: 'Inspect the native helper, macOS privacy permissions, foreground/targeted-input policy, observation limits, and exact per-app read/control grants.',
   helper: 'Native helper',
   ready: 'Ready',
   unavailable: 'Unavailable',
@@ -37,6 +37,14 @@ const en = {
   artifactRoot: 'Artifact root',
   helperPath: 'External helper path',
   sourceBuild: 'Allow explicit source-build fallback',
+  interaction: 'Foreground and targeted input',
+  interactionHint: 'The default route sends pointer and keyboard events only to the selected process. It does not move the system cursor or activate the app.',
+  focusPolicy: 'Foreground policy',
+  focusPreserve: 'Preserve current foreground app',
+  focusActivate: 'Allow activating the target app',
+  pointerInputPolicy: 'Target-process pointer input',
+  pointerDeny: 'Deny mouse, drag, and wheel events',
+  pointerAllow: 'Route events only to the target process',
   grants: 'Application grants',
   grantsHint: 'One exact bundle id per line, followed by read or read,control. Wildcards are rejected.',
   save: 'Save and apply',
@@ -51,7 +59,7 @@ type LocaleKey = keyof typeof en
 const zh: Record<LocaleKey, string> = {
   nav: 'Computer Use',
   title: 'macOS Computer Use',
-  intro: '检查原生 helper、macOS 隐私权限、观察限制，以及按应用配置的精确 read/control grant。',
+  intro: '检查原生 helper、macOS 隐私权限、前台与定向输入策略、观察限制，以及按应用配置的精确 read/control grant。',
   helper: '原生 helper',
   ready: '可用',
   unavailable: '不可用',
@@ -75,6 +83,14 @@ const zh: Record<LocaleKey, string> = {
   artifactRoot: 'Artifact 目录',
   helperPath: '外部 helper 路径',
   sourceBuild: '允许显式源码构建 fallback',
+  interaction: '前台与定向输入',
+  interactionHint: '默认只把指针和键盘事件投递给选定进程，不移动系统光标，也不激活目标应用。',
+  focusPolicy: '前台策略',
+  focusPreserve: '保持当前前台应用',
+  focusActivate: '允许激活目标应用',
+  pointerInputPolicy: '目标进程指针输入',
+  pointerDeny: '禁止鼠标、拖拽和滚轮事件',
+  pointerAllow: '只向目标进程投递事件',
   grants: '应用授权',
   grantsHint: '每行一个精确 bundle id，后接 read 或 read,control；不接受通配符。',
   save: '保存并应用',
@@ -99,6 +115,10 @@ interface ConfigValue {
   maxScreenshotBytes?: number
   artifactRoot?: string
   helper?: { path?: string; allowSourceBuild?: boolean }
+  interaction?: {
+    focusPolicy?: 'preserve' | 'activate'
+    pointerInputPolicy?: 'deny' | 'targeted'
+  }
   grants?: Array<{ bundleId: string; read?: boolean; control?: boolean }>
 }
 
@@ -215,6 +235,8 @@ interface Draft {
   artifactRoot: string
   helperPath: string
   allowSourceBuild: boolean
+  focusPolicy: 'preserve' | 'activate'
+  pointerInputPolicy: 'deny' | 'targeted'
   grants: string
 }
 
@@ -232,6 +254,8 @@ function draftOf(value: ConfigValue): Draft {
     artifactRoot: value.artifactRoot ?? '.dsh-computer-use/artifacts',
     helperPath: value.helper?.path ?? '',
     allowSourceBuild: value.helper?.allowSourceBuild ?? false,
+    focusPolicy: value.interaction?.focusPolicy ?? 'preserve',
+    pointerInputPolicy: value.interaction?.pointerInputPolicy ?? 'targeted',
     grants: (value.grants ?? []).map(grant => `${grant.bundleId} ${grant.control === true ? 'read,control' : 'read'}`).join('\n'),
   }
 }
@@ -264,6 +288,10 @@ function configOf(draft: Draft): ConfigValue {
     helper: {
       ...(draft.helperPath.trim().length === 0 ? {} : { path: draft.helperPath.trim() }),
       allowSourceBuild: draft.allowSourceBuild,
+    },
+    interaction: {
+      focusPolicy: draft.focusPolicy,
+      pointerInputPolicy: draft.pointerInputPolicy,
     },
     grants,
   }
@@ -333,6 +361,23 @@ function LoadedSettings({ controller, t }: { controller: ComputerUseSettingsCont
       {snapshot.provider.helperSha256 === undefined ? null : <code className="dcu-path">sha256 {snapshot.provider.helperSha256}</code>}
     </section>
     <section className="dcu-panel">
+      <div className="dcu-panel-title"><div><h3>{t('interaction')}</h3><p>{t('interactionHint')}</p></div></div>
+      <div className="dcu-grid">
+        <Field label={t('focusPolicy')}>
+          <select value={draft.focusPolicy} onChange={event => update('focusPolicy', event.target.value as Draft['focusPolicy'])}>
+            <option value="preserve">{t('focusPreserve')}</option>
+            <option value="activate">{t('focusActivate')}</option>
+          </select>
+        </Field>
+        <Field label={t('pointerInputPolicy')}>
+          <select value={draft.pointerInputPolicy} onChange={event => update('pointerInputPolicy', event.target.value as Draft['pointerInputPolicy'])}>
+            <option value="deny">{t('pointerDeny')}</option>
+            <option value="targeted">{t('pointerAllow')}</option>
+          </select>
+        </Field>
+      </div>
+    </section>
+    <section className="dcu-panel">
       <div className="dcu-panel-title"><h3>{t('limits')}</h3></div>
       <div className="dcu-grid">
         {numberField('observationTtlMs', t('ttl'))}
@@ -358,7 +403,7 @@ function LoadedSettings({ controller, t }: { controller: ComputerUseSettingsCont
 }
 
 const CSS = `
-.dcu-settings{display:grid;gap:14px;max-width:920px;padding:2px 0 24px}.dcu-header{display:flex;justify-content:space-between;gap:22px;align-items:flex-start;padding:18px 20px;border-radius:16px;background:linear-gradient(135deg,var(--dsw-alias-bg-layer-2,#f5f4f1),var(--dsw-alias-bg-layer-1,#fff));border:1px solid var(--dsw-alias-border-subtle,#dedbd5)}.dcu-header h2{margin:4px 0 6px;font-size:20px}.dcu-header p{margin:0;max-width:610px;font-size:12px;line-height:1.55;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-kicker{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#687f74;font-weight:700}.dcu-release{display:grid;gap:5px;min-width:190px;padding:10px 12px;border-radius:11px;background:rgba(255,255,255,.58);font-size:10px}.dcu-release span{display:flex;justify-content:space-between;gap:12px}.dcu-release .ok{color:#277d52}.dcu-release .bad{color:#aa3939}.dcu-panel{display:grid;gap:13px;padding:16px;border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff)}.dcu-panel-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.dcu-panel-title h3{margin:0;font-size:14px}.dcu-panel-title p{margin:4px 0 0;font-size:10px;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-permissions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.dcu-permission{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px;border-radius:11px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);border-left:3px solid #cc5555}.dcu-permission[data-granted]{border-left-color:#3ca26b}.dcu-permission div{display:grid;gap:3px}.dcu-permission span{font-size:10px}.dcu-permission strong{font-size:11px}.dcu-path{display:block;overflow:auto;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);font-size:10px;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.dcu-field{display:grid;gap:5px}.dcu-field>span{font-size:10px;font-weight:650}.dcu-check{display:flex;align-items:center;gap:8px;padding-top:19px;font-size:11px}.dcu-panel textarea{min-height:110px;resize:vertical;padding:10px;border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:9px;background:var(--dsw-alias-bg-layer-1,#fff);color:inherit;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.dcu-alert{padding:10px 12px;border-radius:10px;font-size:11px}.dcu-alert.error{background:rgba(205,72,72,.1);color:#a13b3b}.dcu-alert.warning{background:rgba(211,151,49,.12);color:#8b651f}.dcu-alert.ok{background:rgba(48,154,100,.12);color:#267d52}.dcu-actions{display:flex;justify-content:flex-end}@media(max-width:720px){.dcu-header{display:grid}.dcu-release{width:auto}.dcu-grid,.dcu-permissions{grid-template-columns:1fr}}
+.dcu-settings{display:grid;gap:14px;max-width:920px;padding:2px 0 24px}.dcu-header{display:flex;justify-content:space-between;gap:22px;align-items:flex-start;padding:18px 20px;border-radius:16px;background:linear-gradient(135deg,var(--dsw-alias-bg-layer-2,#f5f4f1),var(--dsw-alias-bg-layer-1,#fff));border:1px solid var(--dsw-alias-border-subtle,#dedbd5)}.dcu-header h2{margin:4px 0 6px;font-size:20px}.dcu-header p{margin:0;max-width:610px;font-size:12px;line-height:1.55;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-kicker{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#687f74;font-weight:700}.dcu-release{display:grid;gap:5px;min-width:190px;padding:10px 12px;border-radius:11px;background:rgba(255,255,255,.58);font-size:10px}.dcu-release span{display:flex;justify-content:space-between;gap:12px}.dcu-release .ok{color:#277d52}.dcu-release .bad{color:#aa3939}.dcu-panel{display:grid;gap:13px;padding:16px;border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff)}.dcu-panel-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.dcu-panel-title h3{margin:0;font-size:14px}.dcu-panel-title p{margin:4px 0 0;font-size:10px;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-permissions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.dcu-permission{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px;border-radius:11px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);border-left:3px solid #cc5555}.dcu-permission[data-granted]{border-left-color:#3ca26b}.dcu-permission div{display:grid;gap:3px}.dcu-permission span{font-size:10px}.dcu-permission strong{font-size:11px}.dcu-path{display:block;overflow:auto;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);font-size:10px;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.dcu-field{display:grid;gap:5px}.dcu-field>span{font-size:10px;font-weight:650}.dcu-field select,.dcu-panel textarea{border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:9px;background:var(--dsw-alias-bg-layer-1,#fff);color:inherit}.dcu-field select{min-height:34px;padding:6px 9px;font:11px inherit}.dcu-check{display:flex;align-items:center;gap:8px;padding-top:19px;font-size:11px}.dcu-panel textarea{min-height:110px;resize:vertical;padding:10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.dcu-alert{padding:10px 12px;border-radius:10px;font-size:11px}.dcu-alert.error{background:rgba(205,72,72,.1);color:#a13b3b}.dcu-alert.warning{background:rgba(211,151,49,.12);color:#8b651f}.dcu-alert.ok{background:rgba(48,154,100,.12);color:#267d52}.dcu-actions{display:flex;justify-content:flex-end}@media(max-width:720px){.dcu-header{display:grid}.dcu-release{width:auto}.dcu-grid,.dcu-permissions{grid-template-columns:1fr}}
 `
 
 function installStyles(): () => void {

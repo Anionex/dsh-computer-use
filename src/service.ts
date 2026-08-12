@@ -68,6 +68,29 @@ function targetIndex(action: ComputerActionRequest): number | undefined {
   }
 }
 
+function requiresPointerInput(
+  action: Exclude<ComputerActionRequest, { kind: 'wait' }>,
+  element: BackendObservation['elements'][number] | undefined,
+): boolean {
+  switch (action.kind) {
+    case 'click':
+      if (action.x !== undefined || action.y !== undefined) return true
+      return element !== undefined
+        && !element.actions.includes('AXPress')
+        && action.allowCoordinateFallback === true
+    case 'scroll':
+    case 'drag': return true
+    case 'set-value':
+    case 'type-text':
+    case 'press-key':
+    case 'perform-action': return false
+  }
+}
+
+function requiresForegroundPermission(action: Exclude<ComputerActionRequest, { kind: 'wait' }>): boolean {
+  return action.kind === 'perform-action' && action.action === 'AXRaise'
+}
+
 /** Complete Service Definition plus provider-independent implementation. */
 export class ComputerUseService extends Service {
   private backend: ComputerUseBackend
@@ -182,19 +205,32 @@ export class ComputerUseService extends Service {
     const signal = AbortSignal.any([context.signal, this.lifecycle.signal])
     const stored = this.requireObservation(action.observationId, context.agent)
     if (action.kind === 'wait') return await this.wait(stored, action, context, signal)
-    await this.leases.ensure(context.agent, stored.backend.app, 'control', `computer_${action.kind}`, context.callId, signal)
-    this.confirmations.consume(context.agent, stored.backend.app, action)
     const index = targetIndex(action)
     const element = index === undefined ? undefined : stored.backend.elements.find(candidate => candidate.index === index)
     if (index !== undefined && element === undefined) {
       throw new ComputerUseError('COMPUTER_ELEMENT_UNAVAILABLE', `element ${index} is not part of observation ${String(action.observationId)}`)
     }
+    if (requiresPointerInput(action, element) && this.config.interaction.pointerInputPolicy === 'deny') {
+      throw new ComputerUseError(
+        'COMPUTER_ACTION_BLOCKED',
+        `${action.kind} requires target-process pointer input, which interaction.pointerInputPolicy denies; use an Accessibility action or enable targeted pointer input in host Settings`,
+      )
+    }
+    if (requiresForegroundPermission(action) && this.config.interaction.focusPolicy === 'preserve') {
+      throw new ComputerUseError(
+        'COMPUTER_ACTION_BLOCKED',
+        'AXRaise may raise the target window, which interaction.focusPolicy preserve denies; enable explicit activation in host Settings before using this action',
+      )
+    }
+    await this.leases.ensure(context.agent, stored.backend.app, 'control', `computer_${action.kind}`, context.callId, signal)
+    this.confirmations.consume(context.agent, stored.backend.app, action)
     let outcome
     try {
       outcome = await this.backend.act({
         action,
         app: stored.backend.app,
         expectedStateHash: stored.backend.stateHash,
+        interaction: this.config.interaction,
         ...(element === undefined ? {} : { element }),
         ...(stored.backend.window === undefined ? {} : { window: stored.backend.window }),
       }, signal)
@@ -220,7 +256,14 @@ export class ComputerUseService extends Service {
       'computer_action',
       latest,
     )
-    return { action: action.kind, channel: outcome.channel, observation }
+    return {
+      action: action.kind,
+      channel: outcome.channel,
+      activation: outcome.activation,
+      pointerInput: outcome.pointerInput,
+      pointerRouting: outcome.pointerRouting,
+      observation,
+    }
   }
 
   /** Release all scoped observations and confirmations for one disposed Agent. */
@@ -357,7 +400,14 @@ export class ComputerUseService extends Service {
       'computer_action',
       latest,
     )
-    return { action: 'wait', channel: 'wait', observation }
+    return {
+      action: 'wait',
+      channel: 'wait',
+      activation: 'not-requested',
+      pointerInput: false,
+      pointerRouting: 'none',
+      observation,
+    }
   }
 
   private clearState(): void {

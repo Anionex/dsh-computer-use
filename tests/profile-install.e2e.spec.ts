@@ -57,7 +57,7 @@ function run(
 
 async function helper<T>(request: Record<string, unknown>): Promise<T> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(HELPER, [], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn(HELPER, [], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('helper timeout')) }, 15000)
@@ -92,8 +92,8 @@ async function terminateFixtures(): Promise<void> {
 }
 
 async function launchFixture(transcript: string): Promise<{ bundleId: string; pid: number; name: string }> {
-  const opened = await run('open', ['-n', FIXTURE_APP, '--args', '--transcript', transcript], { timeoutMs: 10000 })
-  if (opened.code !== 0) throw new Error(opened.stderr)
+  const launched = await run('open', ['-g', '-n', FIXTURE_APP, '--args', '--background', '--transcript', transcript], { timeoutMs: 10000 })
+  if (launched.code !== 0) throw new Error(`fixture background launch failed: ${launched.stderr}`)
   const deadline = Date.now() + 10000
   while (Date.now() < deadline) {
     const [app] = await fixtureApps()
@@ -282,6 +282,8 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(dump.code, dump.stderr).toBe(0)
       expect(dump.stdout).toContain('- id: computer-use')
       expect(dump.stdout).toContain("name: '@dsh-external/dsh-computer-use'")
+      expect(dump.stdout).toContain('focusPolicy: preserve')
+      expect(dump.stdout).toContain('pointerInputPolicy: targeted')
     }
 
     await terminateFixtures()
@@ -312,12 +314,16 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       body => {
         const observation = recursiveObservation(body)
         if (observation === undefined) throw new Error('model request did not contain the computer_observe result')
-        const checkbox = observation.elements.find(element => element.label === 'Enable deterministic option' || element.title === 'Enable deterministic option')
-        if (checkbox === undefined) throw new Error('fixture checkbox was absent from model-visible observation')
+        const probe = observation.elements.find(element => element.label === 'Targeted pointer probe' || element.title === 'Targeted pointer probe')
+        if (probe === undefined) throw new Error('fixture pointer probe was absent from model-visible observation')
         return {
           kind: 'tool',
           name: 'computer_click',
-          arguments: JSON.stringify({ observationId: observation.observationId, elementIndex: checkbox.index }),
+          arguments: JSON.stringify({
+            observationId: observation.observationId,
+            elementIndex: probe.index,
+            allowCoordinateFallback: true,
+          }),
         }
       },
       { kind: 'text', text: 'computer-use profile e2e passed' },
@@ -346,10 +352,13 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(toolNames(server.requests[1])).toContain('computer_observe')
       expect(toolNames(server.requests[1])).not.toContain(COMPUTER_USE_ACTIVATE)
       expect(toolNames(server.requests[2])).toContain('computer_click')
+      const actionToolResult = latestToolResult(server.requests[3]) as { content?: unknown } | undefined
+      const actionContent = JSON.parse(String(actionToolResult?.content)) as { activation?: unknown; pointerInput?: unknown; pointerRouting?: unknown }
+      expect(actionContent).toMatchObject({ activation: 'not-requested', pointerInput: true, pointerRouting: 'target-process' })
       expect(
         JSON.parse(await readFile(transcript, 'utf8')),
         `model-visible action result:\n${JSON.stringify(latestToolResult(server.requests[3]), null, 2)}`,
-      ).toMatchObject({ checked: true, status: 'Status: option enabled' })
+      ).toMatchObject({ activationCount: 0, pointerClickCount: 1, status: 'Status: pointer click' })
       expect((await screenshotFiles(join(workspace, '.dsh-computer-use', 'artifacts'))).length).toBeGreaterThan(0)
     } finally {
       await server.close()

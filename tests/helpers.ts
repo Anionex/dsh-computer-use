@@ -71,6 +71,9 @@ export class FakeBackend implements ComputerUseBackend {
     screenRecording: 'granted',
   }
   actionChannel: BackendActionResult['channel'] = 'accessibility'
+  actionActivation: BackendActionResult['activation'] = 'not-requested'
+  actionPointerInput = false
+  actionPointerRouting: BackendActionResult['pointerRouting'] = 'none'
 
   resolveApp(selector: ComputerAppSelector): Promise<ComputerAppIdentity> {
     const matches = selector.bundleId === undefined || selector.bundleId === this.observation.app.bundleId
@@ -123,7 +126,12 @@ export class FakeBackend implements ComputerUseBackend {
         actions: [],
       }],
     })
-    return Promise.resolve({ channel: this.actionChannel })
+    return Promise.resolve({
+      channel: this.actionChannel,
+      activation: this.actionActivation,
+      pointerInput: this.actionPointerInput,
+      pointerRouting: this.actionPointerRouting,
+    })
   }
 
   health(): Promise<BackendHealth> {

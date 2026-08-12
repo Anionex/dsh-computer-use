@@ -55,6 +55,79 @@ function abortingHandle(signal: AbortSignal | undefined) {
 }
 
 describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
+  it('contains no global pointer warp or HID-post implementation', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    const pointerSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'TargetedPointer.swift'), 'utf8')
+    const combined = `${helperSource}\n${pointerSource}`
+    expect(combined).not.toMatch(/CGWarpMouseCursorPosition|CGAssociateMouseAndMouseCursorPosition/u)
+    expect(combined).not.toMatch(/\.post\s*\(\s*tap:|cghidEventTap/u)
+    expect(pointerSource).toContain('SLEventPostToPid')
+    expect(pointerSource).toContain('CGEventSetWindowLocation')
+    expect(helperSource).toContain('proc_pidfdinfo')
+    expect(helperSource).toContain('getpgrp() == getpid()')
+    expect(helperSource).toContain('parentOwnsStandardTransport()')
+    const dynamicSymbols = [...combined.matchAll(/Self\.resolve\s*\(\s*handle\s*,\s*"([^"]+)"/gu)]
+      .map(match => match[1])
+      .sort()
+    expect(dynamicSymbols).toEqual(['CGEventSetWindowLocation', 'SLEventPostToPid', 'SLEventSetIntegerValueField'])
+    expect(combined.match(/\bdlsym\s*\(/gu)).toHaveLength(1)
+
+    const symbols = await execFileAsync('nm', ['-u', HELPER])
+    expect(symbols.stdout).not.toMatch(/(?:^|\s)_CGEventPost$/mu)
+    expect(symbols.stdout).not.toMatch(/(?:^|\s)_CGWarpMouseCursorPosition$/mu)
+    expect(symbols.stdout).not.toMatch(/(?:^|\s)_CGAssociateMouseAndMouseCursorPosition$/mu)
+    const strings = await execFileAsync('strings', [HELPER])
+    const binaryStrings = strings.stdout.split(/\r?\n/u)
+    expect(binaryStrings).toEqual(expect.arrayContaining(['CGEventSetWindowLocation', 'SLEventPostToPid', 'SLEventSetIntegerValueField']))
+    expect(binaryStrings).not.toContain('CGEventPost')
+    expect(binaryStrings).not.toContain('CGWarpMouseCursorPosition')
+    expect(binaryStrings).not.toContain('CGAssociateMouseAndMouseCursorPosition')
+  })
+
+  it('re-observes and validates after explicit activation before emitting input', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    const inputContextStart = helperSource.indexOf('private func inputContext(')
+    const actionResultStart = helperSource.indexOf('private func actionResult(', inputContextStart)
+    expect(inputContextStart).toBeGreaterThanOrEqual(0)
+    expect(actionResultStart).toBeGreaterThan(inputContextStart)
+    const inputContextSource = helperSource.slice(inputContextStart, actionResultStart)
+    const activation = inputContextSource.indexOf('try activate(app, timeoutMs: timeoutMs)')
+    const observation = inputContextSource.indexOf('let refreshed = try observeSnapshot(app: app, limits: limits)')
+    const elementValidation = inputContextSource.indexOf('refreshedRecord = try validateTarget(request, snapshot: refreshed)')
+    const stateValidation = inputContextSource.indexOf('guard activationStateMatches(snapshot, current: refreshed)')
+    const activatedResult = inputContextSource.indexOf('return (refreshed, refreshedRecord, "activated")')
+    expect(activation).toBeGreaterThanOrEqual(0)
+    expect(observation).toBeGreaterThan(activation)
+    expect(elementValidation).toBeGreaterThan(observation)
+    expect(stateValidation).toBeGreaterThan(observation)
+    expect(activatedResult).toBeGreaterThan(Math.max(elementValidation, stateValidation))
+  })
+
+  it('requires complete frame and title evidence when resolving a missing AX window number', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).toContain('guard let bounds = window[kCGWindowBounds as String] as? [String: Any]')
+    expect(helperSource).toContain('let candidate = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }')
+    expect(helperSource).toContain('guard let candidateTitle = window[kCGWindowName as String] as? String,')
+    expect(helperSource).toContain('candidateTitle == title else { return false }')
+    expect(helperSource).toContain('guard candidates.count == 1 else { return nil }')
+  })
+
+  it('routes AXRaise through explicit foreground authorization and refreshed target validation', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).toContain('action == (kAXRaiseAction as String)')
+    expect(helperSource).toContain('focusPolicy != "activate"')
+    expect(helperSource).toContain('the requested Accessibility action may raise the target window')
+    expect(helperSource).toMatch(/requiresForegroundPermission\(actionName\)[\s\S]*?inputContext\([\s\S]*?AXUIElementPerformAction\(currentRecord\.element/u)
+  })
+
+  it('rejects direct shell-style helper invocation without managed parent transport', async () => {
+    const direct = await execFileAsync(HELPER, [], {
+      input: `${JSON.stringify({ protocolVersion: 1, command: 'health' })}\n`,
+    }).catch((error: NodeJS.ErrnoException & { stdout?: string }) => error)
+    expect(direct).toHaveProperty('code', 2)
+    expect(String((direct as { stdout?: string }).stdout)).toContain('native helper requires managed parent transport')
+  })
+
   it('matches its source/binary manifest, universal architectures, and code signature', async () => {
     const manifest = JSON.parse(await readFile(join(NATIVE, 'manifest.json'), 'utf8')) as {
       schemaVersion: number

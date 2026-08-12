@@ -1,6 +1,62 @@
 import AppKit
 import Foundation
 
+private final class InputProbeView: NSView {
+    var onEvent: ((String) -> Void)?
+    private var dragging = false
+
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 8
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Targeted pointer probe")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        dragging = true
+        onEvent?("pointer down")
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard dragging else { return }
+        onEvent?("pointer drag")
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let wasDragging = dragging
+        dragging = false
+        onEvent?(wasDragging ? "pointer up" : "pointer up without down")
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        onEvent?("pointer scroll")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let text = "Targeted pointer probe"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let size = text.size(withAttributes: attributes)
+        text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2), withAttributes: attributes)
+    }
+}
+
 private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var textField: NSTextField!
@@ -9,8 +65,18 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private var popup: NSPopUpButton!
     private var slider: NSSlider!
     private var statusLabel: NSTextField!
+    private var inputProbe: InputProbeView!
     private var keyMonitor: Any?
+    private var pointerClickCount = 0
+    private var pointerScrollCount = 0
+    private var pointerDragCount = 0
+    private var pointerMouseDownCount = 0
+    private var pointerMouseUpCount = 0
+    private var pointerDragGestureCount = 0
+    private var activeDragGesture = false
+    private var activationCount = 0
     private let transcriptPath: String?
+    private let launchInBackground: Bool
 
     override init() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -19,6 +85,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         } else {
             transcriptPath = nil
         }
+        launchInBackground = arguments.contains("--background")
         super.init()
     }
 
@@ -29,9 +96,19 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             self?.applyValues()
             return nil
         }
+        if launchInBackground {
+            window.orderFrontRegardless()
+            window.orderBack(nil)
+        } else {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
         writeTranscript(event: "ready")
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        activationCount += 1
+        writeTranscript(event: "activated")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -105,6 +182,38 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         statusLabel.setAccessibilityLabel("Fixture status")
         statusLabel.identifier = NSUserInterfaceItemIdentifier("fixture.status")
 
+        inputProbe = InputProbeView(frame: .zero)
+        inputProbe.translatesAutoresizingMaskIntoConstraints = false
+        inputProbe.heightAnchor.constraint(equalToConstant: 54).isActive = true
+        inputProbe.onEvent = { [weak self] event in
+            guard let self else { return }
+            switch event {
+            case "pointer down":
+                self.pointerMouseDownCount += 1
+                self.activeDragGesture = false
+                return
+            case "pointer drag":
+                self.pointerDragCount += 1
+                self.activeDragGesture = true
+                self.statusLabel.stringValue = "Status: pointer drag"
+            case "pointer up":
+                self.pointerMouseUpCount += 1
+                if self.activeDragGesture {
+                    self.pointerDragGestureCount += 1
+                    self.statusLabel.stringValue = "Status: pointer drag"
+                } else {
+                    self.pointerClickCount += 1
+                    self.statusLabel.stringValue = "Status: pointer click"
+                }
+                self.activeDragGesture = false
+            case "pointer scroll":
+                self.pointerScrollCount += 1
+                self.statusLabel.stringValue = "Status: pointer scroll"
+            default: break
+            }
+            self.writeTranscript(event: event)
+        }
+
         let longText = (1...80).map { "Scrollable row \($0)" }.joined(separator: "\n")
         let textView = NSTextView()
         textView.string = longText
@@ -131,7 +240,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         buttons.orientation = .horizontal
         buttons.spacing = 10
 
-        let stack = NSStackView(views: [title, fields, checkbox, buttons, statusLabel, scroll])
+        let stack = NSStackView(views: [title, fields, checkbox, buttons, statusLabel, inputProbe, scroll])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -143,7 +252,9 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            inputProbe.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        window.makeFirstResponder(textField)
     }
 
     @objc private func applyValues() {
@@ -196,6 +307,13 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             "selection": popup?.titleOfSelectedItem ?? "",
             "slider": Int(slider?.doubleValue ?? 0),
             "status": statusLabel?.stringValue ?? "",
+            "pointerClickCount": pointerClickCount,
+            "pointerScrollCount": pointerScrollCount,
+            "pointerDragCount": pointerDragCount,
+            "pointerMouseDownCount": pointerMouseDownCount,
+            "pointerMouseUpCount": pointerMouseUpCount,
+            "pointerDragGestureCount": pointerDragGestureCount,
+            "activationCount": activationCount,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
         try? data.write(to: URL(fileURLWithPath: transcriptPath), options: .atomic)

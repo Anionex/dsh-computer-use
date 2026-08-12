@@ -3,7 +3,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
 declare const en: {
     readonly nav: "Computer Use";
     readonly title: "macOS Computer Use";
-    readonly intro: "Inspect the native helper, macOS privacy permissions, observation limits, and exact per-app read/control grants.";
+    readonly intro: "Inspect the native helper, macOS privacy permissions, foreground/targeted-input policy, observation limits, and exact per-app read/control grants.";
     readonly helper: "Native helper";
     readonly ready: "Ready";
     readonly unavailable: "Unavailable";
@@ -27,6 +27,14 @@ declare const en: {
     readonly artifactRoot: "Artifact root";
     readonly helperPath: "External helper path";
     readonly sourceBuild: "Allow explicit source-build fallback";
+    readonly interaction: "Foreground and targeted input";
+    readonly interactionHint: "The default route sends pointer and keyboard events only to the selected process. It does not move the system cursor or activate the app.";
+    readonly focusPolicy: "Foreground policy";
+    readonly focusPreserve: "Preserve current foreground app";
+    readonly focusActivate: "Allow activating the target app";
+    readonly pointerInputPolicy: "Target-process pointer input";
+    readonly pointerDeny: "Deny mouse, drag, and wheel events";
+    readonly pointerAllow: "Route events only to the target process";
     readonly grants: "Application grants";
     readonly grantsHint: "One exact bundle id per line, followed by read or read,control. Wildcards are rejected.";
     readonly save: "Save and apply";

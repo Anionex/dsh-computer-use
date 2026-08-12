@@ -10,6 +10,7 @@ import type {
   ComputerRect,
   ComputerScreenshotMode,
 } from './types.ts'
+import type { ResolvedComputerUseConfig } from './config.ts'
 
 /** Internal element locator never exposed to the model or persisted in Session logs. */
 export interface BackendElement extends ComputerElement {
@@ -54,6 +55,7 @@ export interface BackendActionRequest {
   action: Exclude<ComputerActionRequest, { kind: 'wait' }>
   app: ComputerAppIdentity
   expectedStateHash: string
+  interaction: ResolvedComputerUseConfig['interaction']
   element?: BackendElement
   window?: BackendObservation['window']
 }
@@ -61,6 +63,9 @@ export interface BackendActionRequest {
 /** Provider action outcome before the Service obtains the mandatory post-action observation. */
 export interface BackendActionResult {
   channel: 'accessibility' | 'coordinates' | 'keyboard'
+  activation: 'not-requested' | 'already-frontmost' | 'activated'
+  pointerInput: boolean
+  pointerRouting: 'none' | 'target-process'
 }
 
 /** Health facts obtained without changing permissions. */

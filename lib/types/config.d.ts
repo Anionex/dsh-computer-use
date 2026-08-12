@@ -8,6 +8,11 @@ export interface ComputerUseAppGrant {
     read?: boolean;
     control?: boolean;
 }
+/** Host-owned policy for foreground activation and target-process pointer input. */
+export interface ComputerUseInteractionConfig {
+    focusPolicy?: 'preserve' | 'activate';
+    pointerInputPolicy?: 'deny' | 'targeted';
+}
 /** User-facing configuration; schema defaults are repeated by {@link resolveConfig}. */
 export interface ComputerUseConfig {
     observationTtlMs?: number;
@@ -24,6 +29,7 @@ export interface ComputerUseConfig {
         path?: string;
         allowSourceBuild?: boolean;
     };
+    interaction?: ComputerUseInteractionConfig;
     grants?: ComputerUseAppGrant[];
 }
 /** Configuration schema used by Cordis and the Settings provider. */
@@ -43,6 +49,10 @@ export interface ResolvedComputerUseConfig {
     helper: {
         path?: string;
         allowSourceBuild: boolean;
+    };
+    interaction: {
+        focusPolicy: 'preserve' | 'activate';
+        pointerInputPolicy: 'deny' | 'targeted';
     };
     grants: Array<{
         bundleId: string;
