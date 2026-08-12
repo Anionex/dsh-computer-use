@@ -15,16 +15,17 @@ export interface ComputerUseAppGrant {
   control?: boolean
 }
 
-/** Host-owned policy for foreground activation, target-process input, and the visible Agent cursor. */
+/** Host-owned policy for foreground activation, keyboard routing, target-process input, and the visible Agent cursor. */
 export interface ComputerUseInteractionConfig {
   focusPolicy?: 'preserve' | 'activate'
+  keyboardPolicy?: 'preserve' | 'activate'
   pointerInputPolicy?: 'deny' | 'targeted'
   cursorVisualization?: 'hidden' | 'visible'
   cursorMotionMs?: number
   cursorAutoHideMs?: number
 }
 
-/** User-facing configuration; schema defaults are repeated by {@link resolveConfig}. */
+/** User-facing configuration; schema defaults are repeated by {@link resolveConfig}. `observationTtlMs: 0` disables observation expiry. */
 export interface ComputerUseConfig {
   observationTtlMs?: number
   confirmationTtlMs?: number
@@ -41,6 +42,7 @@ export interface ComputerUseConfig {
     allowSourceBuild?: boolean
   }
   interaction?: ComputerUseInteractionConfig
+  allowAllApps?: boolean
   grants?: ComputerUseAppGrant[]
 }
 
@@ -62,11 +64,13 @@ export const Config: Schema<ComputerUseConfig> = z.object({
   }),
   interaction: z.object({
     focusPolicy: z.union(['preserve', 'activate']).default('preserve'),
+    keyboardPolicy: z.union(['preserve', 'activate']).default('preserve'),
     pointerInputPolicy: z.union(['deny', 'targeted']).default('targeted'),
     cursorVisualization: z.union(['hidden', 'visible']).default('visible'),
     cursorMotionMs: z.number().default(180),
     cursorAutoHideMs: z.number().default(1400),
   }),
+  allowAllApps: z.boolean().default(false),
   grants: z.array(z.object({
     bundleId: z.string(),
     read: z.boolean().default(false),
@@ -92,11 +96,13 @@ export interface ResolvedComputerUseConfig {
   }
   interaction: {
     focusPolicy: 'preserve' | 'activate'
+    keyboardPolicy: 'preserve' | 'activate'
     pointerInputPolicy: 'deny' | 'targeted'
     cursorVisualization: 'hidden' | 'visible'
     cursorMotionMs: number
     cursorAutoHideMs: number
   }
+  allowAllApps: boolean
   grants: Array<{
     bundleId: string
     read: boolean
@@ -120,7 +126,8 @@ function option<T extends string>(name: string, value: string, allowed: readonly
 
 /** Validate and normalize one raw config object. */
 export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerUseConfig {
-  const observationTtlMs = integer('observationTtlMs', config.observationTtlMs ?? 15000, 1000, 120000)
+  const observationTtl = config.observationTtlMs ?? 15000
+  const observationTtlMs = observationTtl === 0 ? 0 : integer('observationTtlMs', observationTtl, 1000, 86400000)
   const confirmationTtlMs = integer('confirmationTtlMs', config.confirmationTtlMs ?? 300000, 1000, 900000)
   const actionTimeoutMs = integer('actionTimeoutMs', config.actionTimeoutMs ?? 15000, 1000, 120000)
   const settleMs = integer('settleMs', config.settleMs ?? 250, 0, 10000)
@@ -141,10 +148,12 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
     throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'helper.path must not be empty')
   }
   const focusPolicy = option('interaction.focusPolicy', config.interaction?.focusPolicy ?? 'preserve', ['preserve', 'activate'] as const)
+  const keyboardPolicy = option('interaction.keyboardPolicy', config.interaction?.keyboardPolicy ?? 'preserve', ['preserve', 'activate'] as const)
   const pointerInputPolicy = option('interaction.pointerInputPolicy', config.interaction?.pointerInputPolicy ?? 'targeted', ['deny', 'targeted'] as const)
   const cursorVisualization = option('interaction.cursorVisualization', config.interaction?.cursorVisualization ?? 'visible', ['hidden', 'visible'] as const)
   const cursorMotionMs = integer('interaction.cursorMotionMs', config.interaction?.cursorMotionMs ?? 180, 0, 2000)
   const cursorAutoHideMs = integer('interaction.cursorAutoHideMs', config.interaction?.cursorAutoHideMs ?? 1400, 0, 30000)
+  const allowAllApps = config.allowAllApps ?? false
   const seen = new Set<string>()
   const grants = (config.grants ?? []).map((grant) => {
     const bundleId = grant.bundleId.trim()
@@ -175,11 +184,13 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
     },
     interaction: {
       focusPolicy,
+      keyboardPolicy,
       pointerInputPolicy,
       cursorVisualization,
       cursorMotionMs,
       cursorAutoHideMs,
     },
+    allowAllApps,
     grants,
   }
 }

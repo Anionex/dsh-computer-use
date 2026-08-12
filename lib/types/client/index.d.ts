@@ -4,6 +4,10 @@ declare const en: {
     readonly nav: "Computer Use";
     readonly title: "macOS Computer Use";
     readonly intro: "Inspect the native helper, macOS privacy permissions, foreground/targeted-input policy, observation limits, and exact per-app read/control grants.";
+    readonly privacy: "macOS privacy";
+    readonly advanced: "Advanced options";
+    readonly advancedHint: "Limits, helper path, cursor timing, and application grants.";
+    readonly cursorTiming: "Cursor timing";
     readonly helper: "Native helper";
     readonly ready: "Ready";
     readonly unavailable: "Unavailable";
@@ -32,6 +36,9 @@ declare const en: {
     readonly focusPolicy: "Foreground policy";
     readonly focusPreserve: "Preserve current foreground app";
     readonly focusActivate: "Allow activating the target app";
+    readonly keyboardPolicy: "Keyboard policy";
+    readonly keyboardPreserve: "Preserve foreground; typing compatibility varies";
+    readonly keyboardActivate: "Activate the target app before typing";
     readonly pointerInputPolicy: "Target-process pointer input";
     readonly pointerDeny: "Deny mouse, drag, and wheel events";
     readonly pointerAllow: "Route events only to the target process";
@@ -42,6 +49,8 @@ declare const en: {
     readonly cursorAutoHide: "Cursor auto-hide (ms)";
     readonly grants: "Application grants";
     readonly grantsHint: "One exact bundle id per line, followed by read or read,control. Wildcards are rejected.";
+    readonly allowAllApps: "Allow read and control for every app";
+    readonly allowAllAppsHint: "When enabled, exact grants are ignored and every running app is readable and controllable.";
     readonly save: "Save and apply";
     readonly saving: "Applying...";
     readonly saved: "Settings applied.";

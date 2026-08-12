@@ -8,15 +8,16 @@ export interface ComputerUseAppGrant {
     read?: boolean;
     control?: boolean;
 }
-/** Host-owned policy for foreground activation, target-process input, and the visible Agent cursor. */
+/** Host-owned policy for foreground activation, keyboard routing, target-process input, and the visible Agent cursor. */
 export interface ComputerUseInteractionConfig {
     focusPolicy?: 'preserve' | 'activate';
+    keyboardPolicy?: 'preserve' | 'activate';
     pointerInputPolicy?: 'deny' | 'targeted';
     cursorVisualization?: 'hidden' | 'visible';
     cursorMotionMs?: number;
     cursorAutoHideMs?: number;
 }
-/** User-facing configuration; schema defaults are repeated by {@link resolveConfig}. */
+/** User-facing configuration; schema defaults are repeated by {@link resolveConfig}. `observationTtlMs: 0` disables observation expiry. */
 export interface ComputerUseConfig {
     observationTtlMs?: number;
     confirmationTtlMs?: number;
@@ -33,6 +34,7 @@ export interface ComputerUseConfig {
         allowSourceBuild?: boolean;
     };
     interaction?: ComputerUseInteractionConfig;
+    allowAllApps?: boolean;
     grants?: ComputerUseAppGrant[];
 }
 /** Configuration schema used by Cordis and the Settings provider. */
@@ -55,11 +57,13 @@ export interface ResolvedComputerUseConfig {
     };
     interaction: {
         focusPolicy: 'preserve' | 'activate';
+        keyboardPolicy: 'preserve' | 'activate';
         pointerInputPolicy: 'deny' | 'targeted';
         cursorVisualization: 'hidden' | 'visible';
         cursorMotionMs: number;
         cursorAutoHideMs: number;
     };
+    allowAllApps: boolean;
     grants: Array<{
         bundleId: string;
         read: boolean;

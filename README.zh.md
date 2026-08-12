@@ -5,7 +5,7 @@
 ![Universal binary](https://img.shields.io/badge/native-arm64%20%2B%20x86__64-2563eb.svg)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-Bundle-5b50ed.svg)
 
-**为 DeepSeek Harness 提供原生 macOS 控制能力，默认不碰你的真实光标，也不抢占前台应用。**
+**为 DeepSeek Harness 提供原生 macOS 控制能力，默认不碰你的真实光标，也不因指针动作抢占前台；Bundle 可以在键盘输入前把目标应用带到前台，保证输入可靠。**
 
 DSH Computer Use 为 Agent 提供新鲜的 Accessibility observation、准确进程/窗口定向、stale state 拒绝、按应用限制的访问，以及动作后的可验证状态。语义化 Accessibility 始终优先；鼠标、拖拽、滚轮与键盘 fallback 会投递给选定进程，而不是全局桌面。
 
@@ -19,7 +19,7 @@ DSH Computer Use 的默认路由有意避免干扰：
 
 - **不移动系统光标：** helper 中没有 cursor warp 路径。
 - **不做全局指针注入：** click、scroll 与 drag fallback 使用 pid/window 定向的 SkyLight 路由，不进入全局 HID 事件流。
-- **默认不激活应用：** 语义化 Accessibility、进程定向键盘输入与目标进程指针输入都使用 `focusPolicy: preserve`。
+- **指针动作不激活应用：** 语义化 Accessibility、目标进程指针输入与 `keyboardPolicy: preserve` 都不激活；`keyboardPolicy: activate`（Bundle 默认）在键盘 fallback 前把目标应用带到前台，与 Codex Computer Use 对齐。
 - **独立 Agent 光标：** click、scroll 与 drag 动作会移动一个点击穿透、不会激活应用的软件光标，同时保持系统真实光标不变。默认显示，并在动作后自动隐藏。
 - **不盲目重放：** 每个动作都绑定准确、未过期的 observation，并返回新鲜状态。
 
@@ -30,7 +30,7 @@ DSH Computer Use 的默认路由有意避免干扰：
 - **先观察再动作。** 返回有界 Accessibility tree、带 index 的元素、准确 app/process/window metadata、权限状态和可选截图 Artifact。
 - **把动作绑定到状态。** 每个元素 index 只属于一个 opaque `observationId`；进程、窗口、locator 或目标身份变化都会 fail closed。
 - **优先语义输入。** 先使用 `AXPress`、可编辑 value、selected-text 赋值和元素声明的 Accessibility action，再考虑指针 fallback。
-- **把 fallback 投递给目标。** 键盘输入发给选定 pid；指针输入携带窗口本地坐标，发给选定 pid 和 `CGWindowID`。
+- **把 fallback 投递给目标。** 键盘输入发给选定 pid；指针输入携带窗口本地坐标，发给选定 pid 和 `CGWindowID`，并通过点解析应用窗口，任意屏幕坐标都可以点击。
 - **返回新鲜证据。** 每个成功动作都会经过有界 settle，并返回新的完整或差分 observation。
 - **按应用限制访问。** read/control lease 按 Agent、Session、turn 与准确 bundle id 分离；高影响动作另需一次性确认。
 - **保持模型表面聚焦。** 只有当前 Agent 加载 Computer Use Skill 后才暴露执行 Tool。
@@ -52,7 +52,7 @@ observe exact bundle id + pid
   <img src="assets/computer-use-fixture.png" width="760" alt="目标进程指针输入前、从未激活的确定性原生 fixture，显示专用 pointer probe 与 ready 状态。" />
 </p>
 
-Fixture 会记录每次 `applicationDidBecomeActive` 回调。独立 native monitor 还会在 click、scroll 与 drag 整个动作期间每毫秒采样系统光标和前台 pid。默认发布路径要求 `activationCount: 0`、光标坐标不变、前台 pid 不变、click/scroll 精确计数，并且 drag 只有一组完整 down/up gesture。
+Fixture 会记录每次 `applicationDidBecomeActive` 回调。独立 native monitor 还会在 click、scroll 与 drag 整个动作期间每毫秒采样系统光标和前台 pid。默认发布路径不得增加 `activationCount`，并要求光标坐标不变、前台 pid 不变、click/scroll 精确计数，并且 drag 只有一组完整 down/up gesture。
 
 需求、架构、关键决策、验证证据和兼容性边界见[前台安全输入策略](docs/interaction-policy.zh.md)。
 
@@ -126,15 +126,16 @@ flowchart LR
 ```yaml
 interaction:
   focusPolicy: preserve
+  keyboardPolicy: activate
   pointerInputPolicy: targeted
   cursorVisualization: visible
   cursorMotionMs: 180
   cursorAutoHideMs: 1400
 ```
 
-`cursorVisualization: visible` 会在 click、scroll 与 drag 时显示 Agent 自己的非交互光标；它不会替代或移动 macOS 系统光标。不需要视觉反馈时可设为 `hidden`。`pointerInputPolicy: deny` 会禁用坐标点击/fallback、滚动与拖拽。`focusPolicy: activate` 是显式兼容模式，可能把目标应用带到前台；激活后 helper 会重新观察并校验准确目标，之后才发出输入。
+`cursorVisualization: visible` 会在 click、scroll 与 drag 时显示 Agent 自己的非交互光标；它不会替代或移动 macOS 系统光标。不需要视觉反馈时可设为 `hidden`。`pointerInputPolicy: deny` 会禁用坐标点击/fallback、滚动与拖拽。`keyboardPolicy: activate`（Bundle 默认）会先激活目标应用，让 `type-text` 键盘 fallback 与 `press-key` 可靠工作；`focusPolicy: activate` 是更宽的兼容模式，还会在指针输入前激活。激活后 helper 会重新观察并校验准确目标，之后才发出输入。
 
-Agent 光标是 56x56 的白色箭头，带深色描边、阴影和固定 Agent badge。它由独立进程运行，点击穿透、不激活应用，并绑定准确已观察的 pid、窗口与 frame；目标窗口关闭、移动、缩放或最小化时会自动隐藏。
+Agent 光标是 28x28 的透明整图光标（Cursor 箭头加 DeepSeek 鲸鱼，`assets/cursor.png`），热点位于图片左上角。它由独立进程运行，点击穿透、不激活应用，并绑定准确已观察的 pid、窗口与 frame；目标窗口关闭、移动、缩放或最小化时会自动隐藏。
 
 Helper executable 是 DSH 内部传输实现，不是公共授权 API。它要求独立进程组和父进程持有的标准传输，因此普通 shell 重定向会在解析命令前 fail closed。这个检查只属于纵深防御，不会认证同一 macOS 用户下运行的任意代码：专门构造的 detached 父进程仍能复现这类传输拓扑。应通过已注册 Tool 使用该能力，以保留应用 lease、敏感动作 confirmation 与宿主策略检查；不能把 `danger-full-access` 当作阻止直接 native 调用的保护。
 
@@ -159,12 +160,12 @@ Bundle 初始只贡献 `computer_use_activate`。加载 Skill 后，才为当前
 |---|---|
 | `computer_list_apps` | 列出有界用户应用及 bundle id、pid、前台状态和权限诊断 |
 | `computer_observe` | 返回新鲜的 full/diff Accessibility observation 与可选截图 Artifact |
-| `computer_click` | 优先使用 `AXPress`；也可通过目标进程指针输入点击已观察元素 frame 或窗口坐标 |
+| `computer_click` | 优先使用 `AXPress`；也可通过目标进程指针输入点击已观察元素 frame 或窗口/屏幕坐标（`coordinateSpace`） |
 | `computer_set_value` | 不使用剪贴板，设置或清空可编辑 Accessibility value |
 | `computer_type_text` | 支持时通过 Accessibility 插入 Unicode，否则使用进程定向键盘 fallback |
 | `computer_press_key` | 向选定进程发送有限词表中的按键，并支持可选 modifier |
-| `computer_scroll` | 向选定进程与窗口发送有界方向滚动 |
-| `computer_drag` | 在引用 observation 的窗口空间内拖拽 |
+| `computer_scroll` | 在窗口/屏幕坐标处向选定进程与窗口发送有界方向滚动 |
+| `computer_drag` | 在引用 observation 的窗口/屏幕两点之间拖拽 |
 | `computer_perform_action` | 执行选定元素声明的准确 Accessibility action |
 | `computer_wait` | 轮询一个有界 text/role/title 条件，不修改应用并返回新鲜状态 |
 | `computer_confirm` | 获取绑定准确敏感动作的一次性 token |
@@ -203,7 +204,7 @@ Accessibility 与 Screen Recording 是 UI 权限，不是文件系统权限。�
 
 | 字段 | 用途 |
 |---|---|
-| `observationTtlMs` | observation 允许复用的生命周期 |
+| `observationTtlMs` | observation 允许复用的生命周期；`0` 关闭过期 |
 | `confirmationTtlMs` | 一次性敏感动作 confirmation 的生命周期 |
 | `actionTimeoutMs` | `1000` 到 `120000` ms 的 native action 硬超时 |
 | `settleMs` | `0` 到 `10000` ms 的动作后状态检查间隔 |
@@ -214,10 +215,12 @@ Accessibility 与 Screen Recording 是 UI 权限，不是文件系统权限。�
 | `helper.path` | 可选的显式外部 helper executable |
 | `helper.allowSourceBuild` | 提交 helper 缺失时允许显式托管源码重建；默认 `false` |
 | `interaction.focusPolicy` | `preserve`（默认）避免激活目标应用；`activate` 显式允许激活，并要求重新观察/校验 |
+| `interaction.keyboardPolicy` | `preserve` 不激活地把键盘事件定向投递；`activate`（Bundle 默认）在键盘 fallback 前激活目标应用 |
 | `interaction.pointerInputPolicy` | `targeted`（默认）允许 pid/window 定向指针输入；`deny` 禁用 click fallback、scroll 和 drag |
 | `interaction.cursorVisualization` | `visible`（默认）显示独立 Agent 光标；`hidden` 只关闭 overlay，不影响输入 |
 | `interaction.cursorMotionMs` | Agent 光标移动动画时长，默认 `180` 毫秒 |
 | `interaction.cursorAutoHideMs` | Agent 光标空闲后隐藏时间，默认 `1400` 毫秒；`0` 表示保持显示 |
+| `allowAllApps` | 向所有运行中的应用授予 `read` 与 `control`；默认 `false`。开启后忽略精确 `grants` |
 | `grants` | 准确、无通配符的 bundle-id read/control policy；`control: true` 隐含 read |
 
 </details>
@@ -229,9 +232,9 @@ Settings 更新只有在校验与健康检查通过后才替换当前 provider g
 - 状态：早期 `0.1.0`；稳定版本发布前，模型可见和 provider 行为仍可能变化。
 - 当前 provider 只支持 macOS；Windows UI Automation 和 Linux provider 尚未实现。
 - 目标进程指针投递使用动态解析的 SkyLight SPI。该路由不可用时，pointer fallback 会 fail closed，不会切换到全局输入。
-- Pointer fallback 需要一个能唯一识别的屏幕内窗口。最小化、隐藏、有歧义或无窗口目标会 fail closed。
+- 点击点必须落在选定应用的某个屏幕内窗口中；helper 会解析该点下最上层的匹配窗口，frame/title 匹配有歧义不再阻塞坐标动作。最小化、隐藏或无窗口目标会 fail closed。
 - 自定义 canvas、游戏、强化输入 surface 与未来 macOS 版本可能拒绝目标进程指针或键盘事件。应尽量优先使用语义化 Accessibility。
-- `focusPolicy: activate` 会有意打断前台工作，只作为操作方显式选择的兼容模式。
+- `focusPolicy: activate` 与 `keyboardPolicy: activate` 会有意打断前台工作，只作为操作方显式选择的兼容模式。
 - 目标应用可能因接受动作而自行改变 activation 或 focus。
 - 软件包按请求捕获离散 observation，不提供实时桌面流。
 - 浏览器工作应继续使用 browser automation，因为 DOM/CDP 状态更窄、更精确。

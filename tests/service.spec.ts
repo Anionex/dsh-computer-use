@@ -263,6 +263,23 @@ describe('Computer Use Service', () => {
     }
   })
 
+  it('keeps observations reusable when observationTtlMs is zero', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-11T04:00:00Z'))
+    const workspace = await temporaryDirectory('dsh-computer-ttl-off-')
+    try {
+      const { service } = serviceHarness({ observationTtlMs: 0 })
+      const agent = fakeAgent(workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, callContext(agent, workspace.path))
+      expect(observation.expiresAt).toBe('9999-12-31T23:59:59.999Z')
+      vi.setSystemTime(new Date('2026-08-11T05:00:00Z'))
+      await expect(service.act({ kind: 'click', observationId: observation.observationId, elementIndex: 1 }, callContext(agent, workspace.path)))
+        .resolves.toMatchObject({ action: 'click' })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
   it('invalidates observations when the provider generation changes', async () => {
     const workspace = await temporaryDirectory('dsh-computer-generation-')
     try {
@@ -355,6 +372,19 @@ describe('Computer Use Service', () => {
         .rejects.toMatchObject({ code: 'COMPUTER_PERMISSION_REQUIRED' })
       expect(request).not.toHaveBeenCalled()
       expect(agent.session.events.filter(event => event.type === 'computer-use/denied')).toEqual([])
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('allows every app when allowAllApps is enabled, even with approval prompts disabled', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-allow-all-')
+    try {
+      const { service, request } = serviceHarness({ grants: [], allowAllApps: true }, 'allowed-once', 'never')
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      await expect(service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)).resolves.toBeDefined()
+      expect(request).not.toHaveBeenCalled()
     } finally {
       await workspace.cleanup()
     }

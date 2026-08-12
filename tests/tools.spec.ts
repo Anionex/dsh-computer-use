@@ -85,6 +85,9 @@ describe('model-facing Computer Use tools', () => {
     })
     expect(tools[2]?.parameters).not.toHaveProperty('properties.focusPolicy')
     expect(tools[2]?.parameters).not.toHaveProperty('properties.pointerInputPolicy')
+    expect(tools[2]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
+    expect(tools[6]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
+    expect(tools[7]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
     expect(tools[2]?.output.schema).toMatchObject({
       required: ['action', 'channel', 'activation', 'pointerInput', 'pointerRouting', 'observation'],
       properties: {
@@ -108,12 +111,12 @@ describe('model-facing Computer Use tools', () => {
     }
     await tools[0]!.execute({}, exec as never)
     await tools[1]!.execute({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required', full: true }, exec as never)
-    await tools[2]!.execute({ observationId: 'observation-1', elementIndex: 4, allowCoordinateFallback: true }, exec as never)
+    await tools[2]!.execute({ observationId: 'observation-1', elementIndex: 4, allowCoordinateFallback: true, coordinateSpace: 'screen' }, exec as never)
     await tools[3]!.execute({ observationId: 'observation-1', elementIndex: 5, value: 'secret-value' }, exec as never)
     await tools[4]!.execute({ observationId: 'observation-1', text: 'typed-secret' }, exec as never)
     await tools[5]!.execute({ observationId: 'observation-1', key: 'return', modifiers: ['command'] }, exec as never)
-    await tools[6]!.execute({ observationId: 'observation-1', direction: 'down', x: 1, y: 2, pages: 2 }, exec as never)
-    await tools[7]!.execute({ observationId: 'observation-1', fromX: 1, fromY: 2, toX: 3, toY: 4 }, exec as never)
+    await tools[6]!.execute({ observationId: 'observation-1', direction: 'down', x: 1, y: 2, pages: 2, coordinateSpace: 'screen' }, exec as never)
+    await tools[7]!.execute({ observationId: 'observation-1', fromX: 1, fromY: 2, toX: 3, toY: 4, coordinateSpace: 'screen' }, exec as never)
     await tools[8]!.execute({ observationId: 'observation-1', elementIndex: 6, action: 'AXShowMenu' }, exec as never)
     await tools[9]!.execute({ observationId: 'observation-1', condition: { text: 'ready' }, timeoutMs: 500 }, exec as never)
     await tools[10]!.execute({
@@ -129,12 +132,12 @@ describe('model-facing Computer Use tools', () => {
       expect.objectContaining({ workspace: process.cwd(), callId: 'call-1' }),
     )
     expect(service.act.mock.calls.map(call => call[0])).toEqual([
-      expect.objectContaining({ kind: 'click', observationId: 'observation-1', elementIndex: 4, allowCoordinateFallback: true }),
+      expect.objectContaining({ kind: 'click', observationId: 'observation-1', elementIndex: 4, allowCoordinateFallback: true, coordinateSpace: 'screen' }),
       expect.objectContaining({ kind: 'set-value', value: 'secret-value' }),
       expect.objectContaining({ kind: 'type-text', text: 'typed-secret' }),
       expect.objectContaining({ kind: 'press-key', key: 'return', modifiers: ['command'] }),
-      expect.objectContaining({ kind: 'scroll', direction: 'down', x: 1, y: 2, pages: 2 }),
-      expect.objectContaining({ kind: 'drag', fromX: 1, toY: 4 }),
+      expect.objectContaining({ kind: 'scroll', direction: 'down', x: 1, y: 2, pages: 2, coordinateSpace: 'screen' }),
+      expect.objectContaining({ kind: 'drag', fromX: 1, toY: 4, coordinateSpace: 'screen' }),
       expect.objectContaining({ kind: 'perform-action', elementIndex: 6, action: 'AXShowMenu' }),
       expect.objectContaining({ kind: 'wait', condition: { text: 'ready' }, timeoutMs: 500 }),
     ])

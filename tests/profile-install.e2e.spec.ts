@@ -91,6 +91,14 @@ async function terminateFixtures(): Promise<void> {
   while ((await fixtureApps()).length > 0 && Date.now() < deadline) await delay(50)
 }
 
+async function waitForTranscript(path: string): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + 10000
+  while (Date.now() < deadline) {
+    try { return JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown> } catch { await delay(50) }
+  }
+  throw new Error(`fixture transcript was not written: ${path}`)
+}
+
 async function launchFixture(transcript: string): Promise<{ bundleId: string; pid: number; name: string }> {
   const launched = await run('open', ['-g', '-n', FIXTURE_APP, '--args', '--background', '--transcript', transcript], { timeoutMs: 10000 })
   if (launched.code !== 0) throw new Error(`fixture background launch failed: ${launched.stderr}`)
@@ -283,6 +291,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(dump.stdout).toContain('- id: computer-use')
       expect(dump.stdout).toContain("name: '@dsh-external/dsh-computer-use'")
       expect(dump.stdout).toContain('focusPolicy: preserve')
+      expect(dump.stdout).toContain('keyboardPolicy: activate')
       expect(dump.stdout).toContain('pointerInputPolicy: targeted')
       expect(dump.stdout).toContain('cursorVisualization: visible')
     }
@@ -290,6 +299,8 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     await terminateFixtures()
     const transcript = join(workspace, 'fixture-transcript.json')
     const app = await launchFixture(transcript)
+    const baselineTranscript = await waitForTranscript(transcript)
+    const baselineActivationCount = baselineTranscript.activationCount ?? 0
     const patch = join(home, 'computer-use.patch.yml')
     await writeFile(patch, [
       '- id: computer-use',
@@ -359,7 +370,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(
         JSON.parse(await readFile(transcript, 'utf8')),
         `model-visible action result:\n${JSON.stringify(latestToolResult(server.requests[3]), null, 2)}`,
-      ).toMatchObject({ activationCount: 0, pointerClickCount: 1, status: 'Status: pointer click' })
+      ).toMatchObject({ activationCount: baselineActivationCount, pointerClickCount: 1, status: 'Status: pointer click' })
       expect((await screenshotFiles(join(workspace, '.dsh-computer-use', 'artifacts'))).length).toBeGreaterThan(0)
     } finally {
       await server.close()

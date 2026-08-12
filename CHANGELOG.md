@@ -7,7 +7,12 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 ### Added
 
 - Added a Codex-aligned, click-through Agent cursor overlay that animates independently from the macOS system cursor, remains nonactivating, binds to the exact observed window, and can be configured or hidden from Web Settings.
+- Added `AXPress` descendant retry for `click`: when a target advertises `AXPress` but macOS rejects it, the helper retries pressable descendants within a bounded depth before falling back to coordinates.
 - Added host-owned `interaction.focusPolicy` and `interaction.pointerInputPolicy` settings with default `preserve` / `targeted` behavior and matching Web Settings controls.
+- Added `allowAllApps` configuration and Web Settings switch for granting `read` and `control` to every running app without per-bundle-id grants.
+- Added `interaction.keyboardPolicy` (`preserve` / `activate`, Bundle default `activate`) so `type-text` keyboard fallback and `press-key` can reliably activate the target app before input, matching Codex Computer Use.
+- Added `coordinateSpace: screen` for click, scroll, and drag; the helper resolves the topmost on-screen window of the selected app under the point, so arbitrary screen coordinates work without a unique observed window id.
+- Allowed `observationTtlMs: 0` to disable observation expiry and raised the accepted upper bound to 86400000 ms (24 hours).
 - Added target-process pointer delivery for click, scroll, and drag, bound to the exact pid, `CGWindowID`, and window-local point through dynamically resolved SkyLight APIs.
 - Added action-result evidence through `activation`, `pointerInput`, and `pointerRouting`.
 - Added a bilingual foreground-safe input design record and release checks for forbidden global pointer primitives.
@@ -16,8 +21,10 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 ### Fixed
 
 - Removed global HID pointer posting and system-cursor movement from the native helper.
+- Fixed `AXPress` clicks failing on container elements that advertise `AXPress` but reject the press even though a pressable child exists (for example App Store sidebar cells).
 - Removed unconditional target-app activation from semantic Accessibility actions and process-targeted input.
 - Added exact CoreGraphics window-id resolution when Accessibility omits `AXWindowNumber`; ambiguous or missing window identity now fails closed.
+- Relaxed post-activation validation for keyboard actions: activation may move focus to the app's default control, so typing targets the refreshed focused element instead of requiring full pre-activation state equality.
 - Prevented duplicate target clicks by using one SkyLight delivery route instead of posting the same pointer event through two APIs.
 - Treated `approval/policy: never` as a policy block instead of a user rejection: ungranted apps fail with an actionable message, no denial is recorded, and sensitive confirmation is refused without an ask.
 - Applied persisted Settings grants at startup so `settings.yaml` grants take effect without a prior Settings write.
@@ -27,11 +34,14 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 - The deterministic fixture now starts through `open -g` in background mode, records target activation, and probes click, scroll, and drag delivery without taking the foreground.
 - Added a native millisecond-sampling monitor that requires the system cursor and frontmost pid to remain unchanged throughout every target-process pointer action.
 - Clean Profile and real-model lanes now require the fixture to remain never-active on the default route.
+- Added a native fixture case that clicks an arbitrary Quartz screen coordinate without an observed window id and asserts the target-process route.
+- Added a native fixture case that proves `keyboardPolicy: activate` brings a background fixture forward and delivers the key event.
 
 ### Documentation
 
 - Reworked the public repository facade around non-interfering target-process input, the fresh-observation protocol, deterministic native proof, permissions, security, support, and contribution paths.
 - Added a reusable native-integrity command and structured community intake.
+- Documented the Codex Computer Use alignment evidence (`SynthesizedEvent.send(to: pid)` and `CGWindow.window(at:)`) behind the screen-coordinate and keyboard-policy behavior.
 
 ## [0.1.0] - 2026-08-11
 

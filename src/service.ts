@@ -109,9 +109,12 @@ function cursorAction(
         x: element.frame.x + element.frame.width / 2,
         y: element.frame.y + element.frame.height / 2,
       }
+  const coordinateSpace = action.kind === 'click' || action.kind === 'scroll' || action.kind === 'drag'
+    ? action.coordinateSpace
+    : undefined
   const windowPoint = (x: number | undefined, y: number | undefined): { x: number; y: number } | undefined => {
     if (x === undefined || y === undefined || window === undefined) return undefined
-    return { x: window.frame.x + x, y: window.frame.y + y }
+    return coordinateSpace === 'screen' ? { x, y } : { x: window.frame.x + x, y: window.frame.y + y }
   }
   switch (action.kind) {
     case 'click':
@@ -409,7 +412,9 @@ export class ComputerUseService extends Service {
       observationId,
       app: backend.app,
       createdAt: new Date(createdAt).toISOString(),
-      expiresAt: new Date(createdAt + this.config.observationTtlMs).toISOString(),
+      expiresAt: this.config.observationTtlMs === 0
+        ? '9999-12-31T23:59:59.999Z'
+        : new Date(createdAt + this.config.observationTtlMs).toISOString(),
       frontmost: backend.frontmost,
       ...(backend.window === undefined ? {} : { window: backend.window }),
       tree: {

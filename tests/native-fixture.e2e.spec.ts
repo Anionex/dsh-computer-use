@@ -53,6 +53,7 @@ interface NativeActionResult {
 
 interface InteractionPolicy {
   focusPolicy: 'preserve' | 'activate'
+  keyboardPolicy: 'preserve' | 'activate'
   pointerInputPolicy: 'deny' | 'targeted'
 }
 
@@ -82,12 +83,20 @@ interface InputMonitorResult {
 
 const TARGETED_INTERACTION: InteractionPolicy = {
   focusPolicy: 'preserve',
+  keyboardPolicy: 'preserve',
   pointerInputPolicy: 'targeted',
 }
 
 const PRESERVE_INTERACTION: InteractionPolicy = {
   focusPolicy: 'preserve',
+  keyboardPolicy: 'preserve',
   pointerInputPolicy: 'deny',
+}
+
+const ACTIVATE_KEYBOARD_INTERACTION: InteractionPolicy = {
+  focusPolicy: 'preserve',
+  keyboardPolicy: 'activate',
+  pointerInputPolicy: 'targeted',
 }
 
 async function invokeEnvelope<T>(
@@ -509,7 +518,7 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       expect(result.baselineFrontmostPid).not.toBe(protocol.pid)
       expect(result.maximumMatchingWindowCount).toBe(1)
       expect(result.matchingWindowFrames).toHaveLength(1)
-      expect(result.matchingWindowFrames[0]).toMatchObject({ Width: 56, Height: 56 })
+      expect(result.matchingWindowFrames[0]).toMatchObject({ Width: 28, Height: 28 })
     } finally {
       if (app !== undefined) {
         try { process.kill(app.pid, 'SIGKILL') } catch {}
@@ -693,6 +702,97 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       await delay(100)
       const afterTermination = await invokeEnvelope({ command: 'resolve-app', selector: { bundleId: app.bundleId, pid: app.pid } })
       expect(afterTermination).toMatchObject({ ok: false, error: { code: 'COMPUTER_APP_NOT_FOUND' } })
+    } finally {
+      if (app !== undefined) {
+        try { process.kill(app.pid, 'SIGKILL') } catch {}
+      }
+      await terminateFixtures()
+      await temporary.cleanup()
+    }
+  }, 30000)
+
+  it('clicks an arbitrary screen coordinate by resolving the selected app window under the point', async (testContext) => {
+    const health = await invoke<{ accessibility: string }>({ command: 'health' })
+    if (health.accessibility !== 'granted') {
+      if (process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1') {
+        throw new Error(`release lane requires Accessibility; got ${JSON.stringify(health)}`)
+      }
+      testContext.skip(`macOS Accessibility permission unavailable: ${JSON.stringify(health)}`)
+      return
+    }
+
+    const temporary = await temporaryDirectory('dsh-computer-native-screen-coordinate-')
+    await terminateFixtures()
+    const transcriptPath = join(temporary.path, 'transcript.json')
+    let app: NativeObservation['app'] | undefined
+    try {
+      app = await launchFixture(transcriptPath)
+      const current = await stableObserve(app, observation => !observation.frontmost)
+      const probe = findElement(current, element => element.label === 'Targeted pointer probe')
+      if (probe.frame === undefined) throw new Error('targeted pointer probe did not expose a frame')
+      const x = probe.frame.x + probe.frame.width / 2
+      const y = probe.frame.y + probe.frame.height / 2
+      const result = await invoke<NativeActionResult>({
+        command: 'act',
+        request: {
+          action: { kind: 'click', x, y, coordinateSpace: 'screen' },
+          app: current.app,
+          expectedStateHash: current.stateHash,
+          interaction: TARGETED_INTERACTION,
+          actionTimeoutMs: 15000,
+          limits: LIMITS,
+        },
+      })
+      expect(result).toEqual({
+        channel: 'coordinates',
+        activation: 'not-requested',
+        pointerInput: true,
+        pointerRouting: 'target-process',
+      })
+      await waitForText(app, 'Status: pointer click')
+      expect(await fixtureTranscript(transcriptPath)).toMatchObject({
+        activationCount: 0,
+        pointerClickCount: 1,
+        pointerMouseDownCount: 1,
+        pointerMouseUpCount: 1,
+        pointerDragGestureCount: 0,
+      })
+    } finally {
+      if (app !== undefined) {
+        try { process.kill(app.pid, 'SIGKILL') } catch {}
+      }
+      await terminateFixtures()
+      await temporary.cleanup()
+    }
+  }, 30000)
+
+  it('activates the target application for reliable keyboard input when keyboardPolicy is activate', async (testContext) => {
+    const health = await invoke<{ accessibility: string }>({ command: 'health' })
+    if (health.accessibility !== 'granted') {
+      if (process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1') {
+        throw new Error(`release lane requires Accessibility; got ${JSON.stringify(health)}`)
+      }
+      testContext.skip(`macOS Accessibility permission unavailable: ${JSON.stringify(health)}`)
+      return
+    }
+
+    const temporary = await temporaryDirectory('dsh-computer-native-keyboard-activate-')
+    await terminateFixtures()
+    const transcriptPath = join(temporary.path, 'transcript.json')
+    let app: NativeObservation['app'] | undefined
+    try {
+      app = await launchFixture(transcriptPath)
+      const current = await stableObserve(app, observation => !observation.frontmost)
+      const result = await act(current, { kind: 'press-key', key: 'return', modifiers: [] }, undefined, ACTIVATE_KEYBOARD_INTERACTION)
+      expect(result).toEqual({
+        channel: 'keyboard',
+        activation: 'activated',
+        pointerInput: false,
+        pointerRouting: 'none',
+      })
+      await waitForText(app, 'Status: applied')
+      const transcript = await fixtureTranscript(transcriptPath)
+      expect(transcript.activationCount).toBeGreaterThan(0)
     } finally {
       if (app !== undefined) {
         try { process.kill(app.pid, 'SIGKILL') } catch {}

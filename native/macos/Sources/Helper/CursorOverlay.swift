@@ -127,6 +127,10 @@ private final class CursorPanel: NSPanel {
 }
 
 private final class CursorView: NSView {
+    override var isFlipped: Bool { true }
+
+    private let image: NSImage? = EmbeddedCursorImage.image
+
     var pressed = false {
         didSet { needsDisplay = true }
     }
@@ -135,57 +139,22 @@ private final class CursorView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        NSGraphicsContext.current?.shouldAntialias = true
-        NSGraphicsContext.saveGraphicsState()
-        if pressed {
-            let pressTransform = NSAffineTransform()
-            pressTransform.translateX(by: 10, yBy: 43)
-            pressTransform.scale(by: 0.96)
-            pressTransform.translateX(by: -9, yBy: -44)
-            pressTransform.concat()
-        }
-        let cursor = NSBezierPath()
-        cursor.move(to: NSPoint(x: 10, y: 43))
-        cursor.line(to: NSPoint(x: 10, y: 11))
-        cursor.line(to: NSPoint(x: 32, y: 33))
-        cursor.line(to: NSPoint(x: 21, y: 33))
-        cursor.line(to: NSPoint(x: 27.5, y: 46))
-        cursor.line(to: NSPoint(x: 20.5, y: 49))
-        cursor.line(to: NSPoint(x: 14, y: 35))
-        cursor.close()
-
-        NSGraphicsContext.saveGraphicsState()
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.42)
-        shadow.shadowBlurRadius = 3
-        shadow.shadowOffset = NSSize(width: 1, height: -1)
-        shadow.set()
-        NSColor.white.setFill()
-        cursor.fill()
-        NSGraphicsContext.restoreGraphicsState()
-        NSColor(calibratedWhite: 0.05, alpha: 0.92).setStroke()
-        cursor.lineWidth = 2
-        cursor.stroke()
-
-        // A small identity badge keeps the virtual pointer distinguishable from the system cursor.
-        let badge = NSRect(x: 34, y: 5, width: 15, height: 15)
-        NSColor(calibratedRed: 0.36, green: 0.31, blue: 0.93, alpha: 0.98).setFill()
-        NSBezierPath(ovalIn: badge).fill()
-        NSColor.white.setFill()
-        let diamond = NSBezierPath()
-        diamond.move(to: NSPoint(x: 41.5, y: 8.5))
-        diamond.line(to: NSPoint(x: 45.5, y: 12.5))
-        diamond.line(to: NSPoint(x: 41.5, y: 16.5))
-        diamond.line(to: NSPoint(x: 37.5, y: 12.5))
-        diamond.close()
-        diamond.fill()
-        NSGraphicsContext.restoreGraphicsState()
+        guard let image else { return }
+        let imageRect = pressed ? bounds.insetBy(dx: 2, dy: 2) : bounds
+        image.draw(
+            in: imageRect,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: pressed ? 0.85 : 1,
+            respectFlipped: true,
+            hints: nil
+        )
     }
 }
 
 @MainActor
 private final class CursorOverlayController: NSObject {
-    private static let size = NSSize(width: 56, height: 56)
+    private static let size = NSSize(width: 28, height: 28)
 
     private let window: CursorPanel
     private let cursorView: CursorView
@@ -238,8 +207,8 @@ private final class CursorOverlayController: NSObject {
         scheduleTargetChecks()
         let point = appKitPoint(fromQuartz: quartzPoint)
         let targetOrigin = NSPoint(
-            x: point.x - 10,
-            y: point.y - 43
+            x: point.x,
+            y: point.y - Self.size.height
         )
         if window.isVisible && durationMs > 0 {
             NSAnimationContext.runAnimationGroup { context in

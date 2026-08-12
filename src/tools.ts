@@ -168,6 +168,7 @@ const confirmationActionSchema = {
         elementIndex: { type: 'integer' },
         x: { type: 'number' },
         y: { type: 'number' },
+        coordinateSpace: { type: 'string', enum: ['window', 'screen'] },
         button: { type: 'string', enum: ['left', 'right', 'middle'] },
         clickCount: { type: 'integer' },
         allowCoordinateFallback: { type: 'boolean' },
@@ -203,6 +204,7 @@ const confirmationActionSchema = {
         elementIndex: { type: 'integer' },
         x: { type: 'number' },
         y: { type: 'number' },
+        coordinateSpace: { type: 'string', enum: ['window', 'screen'] },
         direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], required: true },
         pages: { type: 'integer' },
       },
@@ -215,6 +217,7 @@ const confirmationActionSchema = {
         fromY: { type: 'number', required: true },
         toX: { type: 'number', required: true },
         toY: { type: 'number', required: true },
+        coordinateSpace: { type: 'string', enum: ['window', 'screen'] },
       },
     },
     {
@@ -306,19 +309,20 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const click = defineTool({
     name: 'computer_click',
-    description: 'Click an element from the exact observation, preferring AXPress without foreground activation, or use an observed-window coordinate only when host pointer policy allows it. The successful result reports activation/pointer input and already contains the fresh post-click observation.',
+    description: 'Click an element from the exact observation, preferring AXPress without foreground activation, or use a window-relative or screen-global coordinate when host pointer policy allows it. coordinateSpace screen matches Codex-style arbitrary-coordinate clicking: the helper resolves the selected app window under the point and posts target-process input. The successful result reports activation/pointer input and already contains the fresh post-click observation.',
     parameters: {
       observationId: { type: 'string', required: true },
       elementIndex: { type: 'integer' },
       x: { type: 'number' },
       y: { type: 'number' },
+      coordinateSpace: { type: 'string', enum: ['window', 'screen'], description: 'Default window interprets x/y inside the observed window frame; screen uses Quartz screen-global coordinates.' },
       button: { type: 'string', enum: ['left', 'right', 'middle'] },
       clickCount: { type: 'integer' },
       allowCoordinateFallback: { type: 'boolean' },
       ...sensitiveParameters,
     },
     output: actionOutput(),
-    execute: (args, exec) => service.act({ kind: 'click', ...actionBase(args), ...args.elementIndex === undefined ? {} : { elementIndex: args.elementIndex }, ...args.x === undefined ? {} : { x: args.x }, ...args.y === undefined ? {} : { y: args.y }, ...args.button === undefined ? {} : { button: args.button }, ...args.clickCount === undefined ? {} : { clickCount: args.clickCount }, ...args.allowCoordinateFallback === undefined ? {} : { allowCoordinateFallback: args.allowCoordinateFallback } }, contextOf(exec)),
+    execute: (args, exec) => service.act({ kind: 'click', ...actionBase(args), ...args.elementIndex === undefined ? {} : { elementIndex: args.elementIndex }, ...args.x === undefined ? {} : { x: args.x }, ...args.y === undefined ? {} : { y: args.y }, ...args.coordinateSpace === undefined ? {} : { coordinateSpace: args.coordinateSpace }, ...args.button === undefined ? {} : { button: args.button }, ...args.clickCount === undefined ? {} : { clickCount: args.clickCount }, ...args.allowCoordinateFallback === undefined ? {} : { allowCoordinateFallback: args.allowCoordinateFallback } }, contextOf(exec)),
     presentCall: () => ({ card: 'generic', title: 'Click macOS app', kind: 'execute' }),
   })
 
@@ -365,34 +369,36 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const scroll = defineTool({
     name: 'computer_scroll',
-    description: 'Scroll by routing a wheel event only to the selected app process at an observed element or observed-window coordinate. The system cursor is not moved.',
+    description: 'Scroll by routing a wheel event only to the selected app process at an observed element or window-relative/screen-global coordinate. The system cursor is not moved.',
     parameters: {
       observationId: { type: 'string', required: true },
       elementIndex: { type: 'integer' },
       x: { type: 'number' },
       y: { type: 'number' },
+      coordinateSpace: { type: 'string', enum: ['window', 'screen'], description: 'Default window interprets x/y inside the observed window frame; screen uses Quartz screen-global coordinates.' },
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], required: true },
       pages: { type: 'integer' },
       ...sensitiveParameters,
     },
     output: actionOutput(),
-    execute: (args, exec) => service.act({ kind: 'scroll', ...actionBase(args), direction: args.direction, ...args.elementIndex === undefined ? {} : { elementIndex: args.elementIndex }, ...args.x === undefined ? {} : { x: args.x }, ...args.y === undefined ? {} : { y: args.y }, ...args.pages === undefined ? {} : { pages: args.pages } }, contextOf(exec)),
+    execute: (args, exec) => service.act({ kind: 'scroll', ...actionBase(args), direction: args.direction, ...args.elementIndex === undefined ? {} : { elementIndex: args.elementIndex }, ...args.x === undefined ? {} : { x: args.x }, ...args.y === undefined ? {} : { y: args.y }, ...args.coordinateSpace === undefined ? {} : { coordinateSpace: args.coordinateSpace }, ...args.pages === undefined ? {} : { pages: args.pages } }, contextOf(exec)),
     presentCall: () => ({ card: 'generic', title: 'Scroll macOS app', kind: 'execute' }),
   })
 
   const drag = defineTool({
     name: 'computer_drag',
-    description: 'Drag by routing mouse events only to the selected app process between two points in the exact observed-window coordinate space. The system cursor is not moved.',
+    description: 'Drag by routing mouse events only to the selected app process between two points in the observed-window or screen-global coordinate space. The system cursor is not moved.',
     parameters: {
       observationId: { type: 'string', required: true },
       fromX: { type: 'number', required: true },
       fromY: { type: 'number', required: true },
       toX: { type: 'number', required: true },
       toY: { type: 'number', required: true },
+      coordinateSpace: { type: 'string', enum: ['window', 'screen'], description: 'Default window interprets the points inside the observed window frame; screen uses Quartz screen-global coordinates.' },
       ...sensitiveParameters,
     },
     output: actionOutput(),
-    execute: (args, exec) => service.act({ kind: 'drag', ...actionBase(args), fromX: args.fromX, fromY: args.fromY, toX: args.toX, toY: args.toY }, contextOf(exec)),
+    execute: (args, exec) => service.act({ kind: 'drag', ...actionBase(args), fromX: args.fromX, fromY: args.fromY, toX: args.toX, toY: args.toY, ...args.coordinateSpace === undefined ? {} : { coordinateSpace: args.coordinateSpace } }, contextOf(exec)),
     presentCall: () => ({ card: 'generic', title: 'Drag in macOS app', kind: 'execute' }),
   })
 

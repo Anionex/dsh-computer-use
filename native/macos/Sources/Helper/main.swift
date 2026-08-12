@@ -271,6 +271,28 @@ private func axChildren(_ element: AXUIElement) -> [AXUIElement] {
     }
 }
 
+private func pressWithDescendantFallback(_ element: AXUIElement) -> Bool {
+    // Only descend when the selected element advertised AXPress; otherwise the
+    // element/coordinate fallback below owns the click decision.
+    guard axActions(element).contains(kAXPressAction as String) else { return false }
+    var visited = Set<CFHashCode>()
+    return pressRecursive(element, remainingDepth: 4, visited: &visited)
+}
+
+private func pressRecursive(_ element: AXUIElement, remainingDepth: Int, visited: inout Set<CFHashCode>) -> Bool {
+    guard remainingDepth >= 0 else { return false }
+    let identity = CFHash(element)
+    guard visited.insert(identity).inserted else { return false }
+    if axActions(element).contains(kAXPressAction as String),
+       AXUIElementPerformAction(element, kAXPressAction as CFString) == .success {
+        return true
+    }
+    for child in axChildren(element) {
+        if pressRecursive(child, remainingDepth: remainingDepth - 1, visited: &visited) { return true }
+    }
+    return false
+}
+
 private func sanitize(_ value: String, max: Int = 240) -> String {
     let collapsed = value.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
     guard collapsed.count > max else { return collapsed }
@@ -535,21 +557,56 @@ private func targetedEventSource() throws -> CGEventSource {
     return source
 }
 
-private func pointerTarget(app: NSRunningApplication, window: [String: Any]?) throws -> TargetedPointerTarget {
-    guard let window,
-          let windowNumber = (window["id"] as? NSNumber)?.int64Value,
-          let frame = window["frame"] as? [String: Any] else {
-        throw fail("COMPUTER_TARGET_UNAVAILABLE", "target-process pointer input needs an observed window id and frame")
+private func cgRect(_ frame: [String: Any]) throws -> CGRect {
+    CGRect(
+        x: try double(frame["x"], "window.x"),
+        y: try double(frame["y"], "window.y"),
+        width: try double(frame["width"], "window.width"),
+        height: try double(frame["height"], "window.height")
+    )
+}
+
+private func windowAtPoint(app: NSRunningApplication, point: CGPoint) throws -> (windowNumber: Int64, frame: CGRect) {
+    guard let windows = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements],
+        kCGNullWindowID
+    ) as? [[String: Any]] else {
+        throw fail("COMPUTER_TARGET_UNAVAILABLE", "CoreGraphics window list is unavailable")
     }
+    // CGWindowListCopyWindowInfo orders on-screen windows front to back, so the
+    // first match is the topmost window of the selected app at the point.
+    guard let window = windows.first(where: { candidate in
+        guard (candidate[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier,
+              (candidate[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+              let bounds = candidate[kCGWindowBounds as String] as? [String: Any],
+              let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+              frame.contains(point) else { return false }
+        return true
+    }),
+    let windowNumber = (window[kCGWindowNumber as String] as? NSNumber)?.int64Value,
+    let bounds = window[kCGWindowBounds as String] as? [String: Any],
+    let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else {
+        throw fail("COMPUTER_TARGET_UNAVAILABLE", "no on-screen window of the selected app contains the requested coordinate")
+    }
+    return (windowNumber, frame)
+}
+
+private func pointerTarget(app: NSRunningApplication, window: [String: Any]?, at point: CGPoint) throws -> TargetedPointerTarget {
+    if let windowNumber = (window?["id"] as? NSNumber)?.int64Value,
+       let frame = window?["frame"] as? [String: Any],
+       let windowFrame = try? cgRect(frame),
+       windowFrame.contains(point) {
+        return TargetedPointerTarget(
+            pid: app.processIdentifier,
+            windowNumber: windowNumber,
+            windowFrame: windowFrame
+        )
+    }
+    let resolved = try windowAtPoint(app: app, point: point)
     return TargetedPointerTarget(
         pid: app.processIdentifier,
-        windowNumber: windowNumber,
-        windowFrame: CGRect(
-            x: try double(frame["x"], "window.x"),
-            y: try double(frame["y"], "window.y"),
-            width: try double(frame["width"], "window.width"),
-            height: try double(frame["height"], "window.height")
-        )
+        windowNumber: resolved.windowNumber,
+        windowFrame: resolved.frame
     )
 }
 
@@ -561,18 +618,25 @@ private func pointerAction(_ body: () throws -> Void) throws {
     }
 }
 
-private func windowPoint(_ action: [String: Any], window: [String: Any]?, xKey: String, yKey: String) throws -> CGPoint {
+private func windowPoint(_ action: [String: Any], window: [String: Any]?, xKey: String, yKey: String, coordinateSpace: String = "window") throws -> CGPoint {
+    let x = try double(action[xKey], "action.\(xKey)")
+    let y = try double(action[yKey], "action.\(yKey)")
+    if coordinateSpace == "screen" {
+        return CGPoint(x: x, y: y)
+    }
+    guard coordinateSpace == "window" else {
+        throw fail("COMPUTER_PROVIDER_FAILURE", "action coordinateSpace must be one of window, screen")
+    }
     guard let frame = window?["frame"] as? [String: Any] else {
         throw fail("COMPUTER_TARGET_UNAVAILABLE", "the observation has no current window coordinate space")
     }
-    let x = try double(action[xKey], "action.\(xKey)")
-    let y = try double(action[yKey], "action.\(yKey)")
     let width = try double(frame["width"], "window.width")
     let height = try double(frame["height"], "window.height")
     guard x >= 0, y >= 0, x <= width, y <= height else {
         throw fail("COMPUTER_TARGET_UNAVAILABLE", "coordinate is outside the observed window")
     }
-    return CGPoint(x: try double(frame["x"], "window.x") + x, y: try double(frame["y"], "window.y") + y)
+    let origin = try cgRect(frame)
+    return CGPoint(x: origin.origin.x + x, y: origin.origin.y + y)
 }
 
 private func mouseButton(_ value: String?) throws -> CGMouseButton {
@@ -735,9 +799,13 @@ private func inputContext(
     snapshot: ObservationSnapshot,
     record: ElementRecord?,
     focusPolicy: String,
+    keyboardPolicy: String,
+    actionKind: String,
     timeoutMs: Int,
 ) throws -> (snapshot: ObservationSnapshot, record: ElementRecord?, activation: String) {
-    guard focusPolicy == "activate" else {
+    let keyboardAction = actionKind == "type-text" || actionKind == "press-key"
+    let effectiveFocusPolicy = keyboardAction && keyboardPolicy == "activate" ? "activate" : focusPolicy
+    guard effectiveFocusPolicy == "activate" else {
         return (snapshot, record, "not-requested")
     }
     if app.isActive {
@@ -748,6 +816,12 @@ private func inputContext(
     let refreshedRecord: ElementRecord?
     if request["element"] != nil {
         refreshedRecord = try validateTarget(request, snapshot: refreshed)
+    } else if keyboardAction {
+        // Activation may move focus to the app's default control; typing targets
+        // the refreshed focused element. The app identity is already revalidated
+        // by the fresh observation, so full pre-activation state equality would
+        // only make reliable keyboard input fail.
+        refreshedRecord = nil
     } else {
         guard activationStateMatches(snapshot, current: refreshed) else {
             throw fail("COMPUTER_STALE_OBSERVATION", "the application UI changed while the target application was activated")
@@ -788,20 +862,19 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
     }
     let interaction = try dictionary(request["interaction"], "request.interaction")
     let focusPolicy = try interactionValue(interaction, "focusPolicy", ["preserve", "activate"])
+    let keyboardPolicy = try interactionValue(interaction, "keyboardPolicy", ["preserve", "activate"])
     let pointerInputPolicy = try interactionValue(interaction, "pointerInputPolicy", ["deny", "targeted"])
     let record = try validateTarget(request, snapshot: snapshot)
 
     switch kind {
     case "click":
-        if let record, let available = record.json["actions"] as? [String], available.contains(kAXPressAction as String) {
-            let result = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
-            guard result == .success else { throw fail("COMPUTER_ACTION_BLOCKED", "Accessibility press was rejected") }
+        if let record, pressWithDescendantFallback(record.element) {
             return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
         }
         let elementFallback = record != nil && bool(action["allowCoordinateFallback"])
         let coordinateFallback = action["x"] != nil && action["y"] != nil
         guard elementFallback || coordinateFallback else {
-            throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "element does not support AXPress and coordinate fallback was not requested")
+            throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "element does not support an actionable AXPress and coordinate fallback was not requested")
         }
         try requirePointerInput(pointerInputPolicy)
         let current = try inputContext(
@@ -811,13 +884,16 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
             snapshot: snapshot,
             record: record,
             focusPolicy: focusPolicy,
+            keyboardPolicy: keyboardPolicy,
+            actionKind: kind,
             timeoutMs: actionTimeoutMs,
         )
         if let record = current.record, elementFallback, let frame = axFrame(record.element) {
-            let target = try pointerTarget(app: app, window: current.snapshot.windowJSON)
+            let point = CGPoint(x: frame.midX, y: frame.midY)
+            let target = try pointerTarget(app: app, window: current.snapshot.windowJSON, at: point)
             try pointerAction {
                 try targetedClick(
-                    at: CGPoint(x: frame.midX, y: frame.midY),
+                    at: point,
                     button: try mouseButton(action["button"] as? String),
                     count: min(max((action["clickCount"] as? NSNumber)?.intValue ?? 1, 1), 3),
                     target: target
@@ -826,8 +902,9 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
             return actionResult(channel: "coordinates", activation: current.activation, pointerInput: true, pointerRouting: "target-process")
         }
         if action["x"] != nil, action["y"] != nil {
-            let point = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "x", yKey: "y")
-            let target = try pointerTarget(app: app, window: current.snapshot.windowJSON)
+            let coordinateSpace = action["coordinateSpace"] as? String ?? "window"
+            let point = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "x", yKey: "y", coordinateSpace: coordinateSpace)
+            let target = try pointerTarget(app: app, window: current.snapshot.windowJSON, at: point)
             try pointerAction {
                 try targetedClick(
                     at: point,
@@ -857,6 +934,8 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
             snapshot: snapshot,
             record: record,
             focusPolicy: focusPolicy,
+            keyboardPolicy: keyboardPolicy,
+            actionKind: kind,
             timeoutMs: actionTimeoutMs,
         )
         if current.activation == "activated", setSelectedText(text, app: app) {
@@ -872,6 +951,8 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
             snapshot: snapshot,
             record: record,
             focusPolicy: focusPolicy,
+            keyboardPolicy: keyboardPolicy,
+            actionKind: kind,
             timeoutMs: actionTimeoutMs,
         )
         let modifiers = action["modifiers"] as? [String] ?? []
@@ -886,17 +967,22 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
             snapshot: snapshot,
             record: record,
             focusPolicy: focusPolicy,
+            keyboardPolicy: keyboardPolicy,
+            actionKind: kind,
             timeoutMs: actionTimeoutMs,
         )
         let point: CGPoint
         if let record = current.record, let frame = axFrame(record.element) { point = CGPoint(x: frame.midX, y: frame.midY) }
-        else { point = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "x", yKey: "y") }
+        else {
+            let coordinateSpace = action["coordinateSpace"] as? String ?? "window"
+            point = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "x", yKey: "y", coordinateSpace: coordinateSpace)
+        }
         let direction = try string(action["direction"], "action.direction")
         let pages = min(max((action["pages"] as? NSNumber)?.intValue ?? 1, 1), 10)
         let vertical = direction == "up" ? 10 * pages : direction == "down" ? -10 * pages : 0
         let horizontal = direction == "left" ? 10 * pages : direction == "right" ? -10 * pages : 0
         guard vertical != 0 || horizontal != 0 else { throw fail("COMPUTER_PROVIDER_FAILURE", "unsupported scroll direction") }
-        let target = try pointerTarget(app: app, window: current.snapshot.windowJSON)
+        let target = try pointerTarget(app: app, window: current.snapshot.windowJSON, at: point)
         try pointerAction {
             try targetedScroll(
                 at: point,
@@ -915,11 +1001,14 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
             snapshot: snapshot,
             record: record,
             focusPolicy: focusPolicy,
+            keyboardPolicy: keyboardPolicy,
+            actionKind: kind,
             timeoutMs: actionTimeoutMs,
         )
-        let from = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "fromX", yKey: "fromY")
-        let to = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "toX", yKey: "toY")
-        let target = try pointerTarget(app: app, window: current.snapshot.windowJSON)
+        let coordinateSpace = action["coordinateSpace"] as? String ?? "window"
+        let from = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "fromX", yKey: "fromY", coordinateSpace: coordinateSpace)
+        let to = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "toX", yKey: "toY", coordinateSpace: coordinateSpace)
+        let target = try pointerTarget(app: app, window: current.snapshot.windowJSON, at: from)
         try pointerAction {
             try targetedDrag(from: from, to: to, target: target)
         }
@@ -940,6 +1029,8 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
                 snapshot: snapshot,
                 record: record,
                 focusPolicy: focusPolicy,
+                keyboardPolicy: keyboardPolicy,
+                actionKind: kind,
                 timeoutMs: actionTimeoutMs
             )
             : (snapshot, record, "not-requested")

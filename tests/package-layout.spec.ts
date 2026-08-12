@@ -61,6 +61,7 @@ describe('published package layout', () => {
       'scripts/session-transcript.mjs',
       'native/macos/Sources/Monitor/main.swift',
       'native/macos/Sources/Helper/CursorOverlay.swift',
+      'native/macos/Sources/Helper/CursorImage.swift',
     ]) await expect(stat(join(ROOT, path))).resolves.toBeDefined()
     const nativeCheck = await readFile(join(ROOT, 'scripts', 'check-native.mjs'), 'utf8')
     expect(nativeCheck).toContain('SLEventPostToPid')

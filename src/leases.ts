@@ -54,6 +54,7 @@ export class ComputerLeaseManager {
     callId: CallId | undefined,
     signal: AbortSignal,
   ): Promise<ComputerLeaseSource> {
+    if (this.config().allowAllApps) return 'configured'
     const configured = this.config().grants.find(grant => grant.bundleId === app.bundleId)
     if (configured?.[scope] === true) return 'configured'
     const turn = currentTurn(agent.session.events)

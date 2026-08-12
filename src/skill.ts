@@ -20,7 +20,9 @@ plugin; an API or CLI; browser automation for browser tasks; then Computer Use.
 3. Treat every elementIndex as valid only inside its observationId. Never reuse
    an index after any action, external UI change, timeout, or fresh observation.
 4. Use an element action before coordinate fallback. Coordinates are relative
-   to the observed window and must carry the same observationId.
+   to the observed window by default (\`coordinateSpace: window\`);
+   \`coordinateSpace: screen\` accepts Quartz screen-global points and still
+   carries the same observationId.
 5. Every successful action returns the fresh post-action observation. Read it
    before deciding the next step; do not add a redundant observe unless you need
    a full tree or screenshot that the returned state omitted.
@@ -30,10 +32,12 @@ overrides in Tool arguments. The default policy preserves the user's current
 frontmost app and routes coordinate click/fallback, scroll, drag, and keyboard
 events only to the selected process. It never uses the global HID event stream
 or moves the system cursor. Accessibility press, value, and advertised actions
-remain preferred. If a host disables targeted pointer input, do not retry a
-blocked coordinate action. If a compatibility deployment explicitly permits
-activation, the action result reports what happened in activation,
-pointerInput, and pointerRouting.
+remain preferred. A host may set \`interaction.keyboardPolicy: activate\` (or
+\`focusPolicy: activate\`) so the target app is brought to the foreground before
+keyboard input; the action result reports that in \`activation\`. If a host
+disables targeted pointer input, do not retry a blocked coordinate action. If a
+compatibility deployment explicitly permits activation, the action result
+reports what happened in activation, pointerInput, and pointerRouting.
 
 If a stale-observation error occurs, observe again and reselect the target. Do
 not guess an equivalent index or retry a destructive action against old state.
@@ -45,8 +49,10 @@ app; ask the user or choose a different target.
 When the error says approval prompts are disabled (approval/policy: never, for
 example under the danger-full-access permission preset), no user rejection
 happened and DSH answered without a prompt. Do not retry the same tool. Add the
-app's exact bundleId to the computer-use grants in Settings, or ask the user to
-switch the permission preset to one with approval ask.
+app's exact bundleId to the computer-use grants in Settings, enable
+allowAllApps in Computer Use Settings to grant read and control to every
+running app, or ask the user to switch the permission preset to one with
+approval ask.
 
 ## Sensitive actions
 

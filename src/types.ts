@@ -118,6 +118,9 @@ export type ComputerKeyModifier = 'command' | 'control' | 'option' | 'shift'
 /** Closed set of supported mouse buttons. */
 export type ComputerMouseButton = 'left' | 'right' | 'middle'
 
+/** Coordinate space accepted by coordinate-based pointer actions. */
+export type ComputerCoordinateSpace = 'window' | 'screen'
+
 /** Shared fields carried by every action against an existing observation. */
 export interface ComputerActionBase {
   observationId: ComputerObservationId
@@ -133,6 +136,8 @@ export interface ComputerClickAction extends ComputerActionBase {
   elementIndex?: number
   x?: number
   y?: number
+  /** `window` (default) resolves `x`/`y` inside the observed window frame; `screen` treats them as Quartz screen-global points. */
+  coordinateSpace?: ComputerCoordinateSpace
   button?: ComputerMouseButton
   clickCount?: number
   allowCoordinateFallback?: boolean
@@ -164,17 +169,19 @@ export interface ComputerScrollAction extends ComputerActionBase {
   elementIndex?: number
   x?: number
   y?: number
+  coordinateSpace?: ComputerCoordinateSpace
   direction: 'up' | 'down' | 'left' | 'right'
   pages?: number
 }
 
-/** Drag inside the observed window coordinate space. */
+/** Drag between two points in the observed window or screen coordinate space. */
 export interface ComputerDragAction extends ComputerActionBase {
   kind: 'drag'
   fromX: number
   fromY: number
   toX: number
   toY: number
+  coordinateSpace?: ComputerCoordinateSpace
 }
 
 /** Perform one Accessibility action advertised by an observed element. */

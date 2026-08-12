@@ -16,19 +16,26 @@ describe('Computer Use configuration', () => {
       helper: { allowSourceBuild: false },
       interaction: {
         focusPolicy: 'preserve',
+        keyboardPolicy: 'preserve',
         pointerInputPolicy: 'targeted',
         cursorVisualization: 'visible',
         cursorMotionMs: 180,
         cursorAutoHideMs: 1400,
       },
       grants: [{ bundleId: 'com.example.Editor', read: true, control: true }],
+      allowAllApps: false,
     })
   })
 
-  it('accepts an explicit foreground and target-process pointer policy', () => {
+  it('resolves allowAllApps independently of per-app grants', () => {
+    expect(resolveConfig({ allowAllApps: true })).toMatchObject({ allowAllApps: true })
+  })
+
+  it('accepts an explicit foreground, keyboard, and target-process pointer policy', () => {
     expect(resolveConfig({
       interaction: {
         focusPolicy: 'activate',
+        keyboardPolicy: 'activate',
         pointerInputPolicy: 'targeted',
         cursorVisualization: 'hidden',
         cursorMotionMs: 0,
@@ -36,6 +43,7 @@ describe('Computer Use configuration', () => {
       },
     }).interaction).toEqual({
       focusPolicy: 'activate',
+      keyboardPolicy: 'activate',
       pointerInputPolicy: 'targeted',
       cursorVisualization: 'hidden',
       cursorMotionMs: 0,
@@ -43,12 +51,19 @@ describe('Computer Use configuration', () => {
     })
   })
 
+  it('accepts an observation TTL of zero to disable expiry and raises the upper bound', () => {
+    expect(resolveConfig({ observationTtlMs: 0 }).observationTtlMs).toBe(0)
+    expect(resolveConfig({ observationTtlMs: 86400000 }).observationTtlMs).toBe(86400000)
+  })
+
   it.each([
     [{ observationTtlMs: 999 }, /observationTtlMs/],
+    [{ observationTtlMs: 86400001 }, /observationTtlMs/],
     [{ settleMs: 5001, maxSettleMs: 5000 }, /settleMs/],
     [{ artifactRoot: '../outside' }, /artifactRoot/],
     [{ helper: { path: '   ' } }, /helper\.path/],
     [{ interaction: { focusPolicy: 'invalid' } }, /interaction\.focusPolicy/],
+    [{ interaction: { keyboardPolicy: 'invalid' } }, /interaction\.keyboardPolicy/],
     [{ interaction: { pointerInputPolicy: 'invalid' } }, /interaction\.pointerInputPolicy/],
     [{ interaction: { cursorVisualization: 'invalid' } }, /interaction\.cursorVisualization/],
     [{ interaction: { cursorMotionMs: 2001 } }, /interaction\.cursorMotionMs/],

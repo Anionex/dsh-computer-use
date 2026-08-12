@@ -5,7 +5,7 @@
 ![Universal binary](https://img.shields.io/badge/native-arm64%20%2B%20x86__64-2563eb.svg)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-Bundle-5b50ed.svg)
 
-**Native macOS control for DeepSeek Harness that keeps your real cursor and foreground application alone by default.**
+**Native macOS control for DeepSeek Harness that keeps your real cursor and foreground application alone by default; the Bundle may bring the target app forward before keyboard input for reliable typing.**
 
 DSH Computer Use gives an Agent fresh Accessibility observations, exact process/window targeting, stale-state rejection, scoped application access, and verified post-action state. Semantic Accessibility comes first; mouse, drag, wheel, and keyboard fallback are routed to the selected process instead of the global desktop.
 
@@ -19,7 +19,7 @@ The default DSH Computer Use route is deliberately non-interfering:
 
 - **No system-cursor movement:** the helper contains no cursor-warp path.
 - **No global pointer injection:** click, scroll, and drag fallback use a pid/window-targeted SkyLight route, not the global HID event stream.
-- **No default app activation:** semantic Accessibility, process-targeted keyboard input, and target-process pointer input run with `focusPolicy: preserve`.
+- **No pointer-triggered activation:** semantic Accessibility, process-targeted pointer input, and `keyboardPolicy: preserve` run without activation; `keyboardPolicy: activate` (Bundle default) brings the target app forward before keyboard fallback, matching Codex Computer Use.
 - **A separate Agent cursor:** click, scroll, and drag actions animate a click-through, nonactivating software cursor while the macOS system cursor remains untouched. It is visible by default and auto-hides after the action.
 - **No blind replay:** every action is tied to an exact, unexpired observation and returns fresh state.
 
@@ -30,7 +30,7 @@ The result is a native action layer that can operate many background application
 - **Observe before acting.** Return a bounded Accessibility tree, indexed elements, exact app/process/window metadata, permission state, and an optional screenshot Artifact.
 - **Bind actions to state.** Every element index belongs to one opaque `observationId`; changed processes, windows, locators, and target identities fail closed.
 - **Prefer semantic input.** Use `AXPress`, editable values, selected-text assignment, and advertised Accessibility actions before pointer fallback.
-- **Route fallback to the target.** Keyboard input goes to the selected pid; pointer input goes to the selected pid and `CGWindowID` with window-local coordinates.
+- **Route fallback to the target.** Keyboard input goes to the selected pid; pointer input goes to the selected pid and `CGWindowID` with window-local coordinates, resolving the app window under the point so arbitrary screen coordinates work.
 - **Return fresh evidence.** Every successful action settles for a bounded interval and returns a new full or diff observation.
 - **Scope application access.** Read and control leases are separated by Agent, Session, turn, and exact bundle id; high-impact actions require one-use confirmation.
 - **Keep the model surface focused.** Execution Tools appear only after the current Agent loads the Computer Use Skill.
@@ -52,7 +52,7 @@ observe exact bundle id + pid
   <img src="assets/computer-use-fixture.png" width="760" alt="The never-active deterministic native fixture before target-process pointer input, showing the dedicated pointer probe and ready status." />
 </p>
 
-The fixture records every `applicationDidBecomeActive` callback. An independent native monitor also samples the system cursor and frontmost pid every millisecond throughout click, scroll, and drag. The default release path requires `activationCount: 0`, unchanged cursor coordinates, an unchanged frontmost pid, exact click/scroll counts, and one complete down/up drag gesture.
+The fixture records every `applicationDidBecomeActive` callback. An independent native monitor also samples the system cursor and frontmost pid every millisecond throughout click, scroll, and drag. The default release path must not increase `activationCount`; it also requires unchanged cursor coordinates, an unchanged frontmost pid, exact click/scroll counts, and one complete down/up drag gesture.
 
 See [Foreground-safe input policy](docs/interaction-policy.md) for the requirements, architecture, decisions, evidence, and compatibility limits.
 
@@ -126,15 +126,16 @@ The default interaction policy is:
 ```yaml
 interaction:
   focusPolicy: preserve
+  keyboardPolicy: activate
   pointerInputPolicy: targeted
   cursorVisualization: visible
   cursorMotionMs: 180
   cursorAutoHideMs: 1400
 ```
 
-`cursorVisualization: visible` displays the Agent's own non-interactive cursor for click, scroll, and drag. It never replaces or moves the macOS system cursor. Set it to `hidden` when visual feedback is unwanted. `pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag. `focusPolicy: activate` is an explicit compatibility mode that may bring the target application to the foreground; after activation, the helper observes and validates the exact target again before input.
+`cursorVisualization: visible` displays the Agent's own non-interactive cursor for click, scroll, and drag. It never replaces or moves the macOS system cursor. Set it to `hidden` when visual feedback is unwanted. `pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag. `keyboardPolicy: activate` (Bundle default) makes `type-text` keyboard fallback and `press-key` reliable by activating the target app first; `focusPolicy: activate` is the broader compatibility mode that also activates before pointer input. After activation, the helper re-observes and revalidates the exact target before input.
 
-The cursor is a 56x56 white arrow with a dark outline, shadow, and fixed Agent badge. It is a separate process, click-through, nonactivating, and bound to the exact observed pid, window, and frame so it disappears if the target window closes, moves, resizes, or is minimized.
+The cursor is a 28x28 transparent whole-image cursor (Cursor arrow plus DeepSeek whale, `assets/cursor.png`) with the hotspot at the image's top-left corner. It is a separate process, click-through, nonactivating, and bound to the exact observed pid, window, and frame so it disappears if the target window closes, moves, resizes, or is minimized.
 
 The helper executable is an internal DSH transport rather than a public authorization API. It requires an isolated process group plus parent-owned standard transports, so ordinary shell redirection fails closed before command parsing. This is defense in depth, not authentication against arbitrary code running as the same macOS user: a deliberately constructed detached parent can reproduce that transport topology. Use the registered Tools so application leases, sensitive-action confirmation, and host policy checks remain in force; `danger-full-access` must not be treated as protection against direct native invocation.
 
@@ -159,12 +160,12 @@ The Bundle initially contributes only `computer_use_activate`. Loading the Skill
 |---|---|
 | `computer_list_apps` | List bounded user-facing applications with bundle id, pid, frontmost state, and permission diagnostics |
 | `computer_observe` | Return a fresh full/diff Accessibility observation and optional screenshot Artifact |
-| `computer_click` | Prefer `AXPress`; optionally use an observed element frame or observed-window coordinate through target-process pointer input |
+| `computer_click` | Prefer `AXPress`; optionally use an observed element frame or window/screen coordinate (`coordinateSpace`) through target-process pointer input |
 | `computer_set_value` | Set or clear an editable Accessibility value without using the clipboard |
 | `computer_type_text` | Insert Unicode through Accessibility when supported, with a process-targeted keyboard fallback |
 | `computer_press_key` | Send one key from a finite vocabulary to the selected process, with optional modifiers |
-| `computer_scroll` | Send bounded directional scrolling to the selected process and window |
-| `computer_drag` | Drag between two points in the referenced observation's window space |
+| `computer_scroll` | Send bounded directional scrolling to the selected process and window at a window/screen coordinate |
+| `computer_drag` | Drag between two window/screen points in the referenced observation |
 | `computer_perform_action` | Execute one exact Accessibility action advertised by the selected element |
 | `computer_wait` | Poll one bounded text/role/title condition and return fresh state without modifying the app |
 | `computer_confirm` | Obtain a one-use token bound to one exact sensitive action |
@@ -203,7 +204,7 @@ The committed helper is an ad-hoc-signed universal `arm64` + `x86_64` binary tar
 
 | Field | Purpose |
 |---|---|
-| `observationTtlMs` | Lifetime of an observation before reuse is rejected |
+| `observationTtlMs` | Lifetime of an observation before reuse is rejected; `0` disables expiry |
 | `confirmationTtlMs` | Lifetime of a one-use sensitive-action confirmation |
 | `actionTimeoutMs` | Hard native action timeout from `1000` to `120000` ms |
 | `settleMs` | Interval between post-action state checks from `0` to `10000` ms |
@@ -214,10 +215,12 @@ The committed helper is an ad-hoc-signed universal `arm64` + `x86_64` binary tar
 | `helper.path` | Optional explicit external helper executable |
 | `helper.allowSourceBuild` | Permit an explicit managed-source rebuild when the committed helper is absent; default `false` |
 | `interaction.focusPolicy` | `preserve` (default) avoids target-app activation; `activate` explicitly permits it and requires re-observation/revalidation |
+| `interaction.keyboardPolicy` | `preserve` keeps keyboard events routed without activation; `activate` (Bundle default) activates the target app before keyboard fallback |
 | `interaction.pointerInputPolicy` | `targeted` (default) permits pid/window-targeted pointer input; `deny` disables click fallback, scroll, and drag |
 | `interaction.cursorVisualization` | `visible` (default) shows the separate Agent cursor; `hidden` disables only the overlay |
 | `interaction.cursorMotionMs` | Animated Agent-cursor travel duration, default `180` ms |
 | `interaction.cursorAutoHideMs` | Idle time before the Agent cursor hides, default `1400` ms; `0` keeps it visible |
+| `allowAllApps` | Grant `read` and `control` to every running app; default `false`. When enabled, exact `grants` are ignored |
 | `grants` | Exact non-wildcard bundle-id read/control policy; `control: true` implies read |
 
 </details>
@@ -229,9 +232,9 @@ Settings updates replace the active provider generation only after validation an
 - Status: early `0.1.0`; model-facing and provider behavior may change before a stable release.
 - The current provider is macOS-only. Windows UI Automation and Linux providers are not implemented.
 - Target-process pointer delivery uses dynamically resolved SkyLight SPI. If it is unavailable, pointer fallback fails closed rather than switching to global input.
-- Pointer fallback requires one uniquely identifiable on-screen window. Minimized, hidden, ambiguous, or windowless targets fail closed.
+- The clicked point must fall inside an on-screen window of the selected app; the helper resolves the topmost matching window so ambiguous frame/title matches no longer block coordinate actions. Minimized, hidden, or windowless targets fail closed.
 - Custom canvases, games, hardened input surfaces, and future macOS releases may reject target-process pointer or keyboard events. Prefer semantic Accessibility whenever possible.
-- `focusPolicy: activate` is intentionally disruptive and exists only as an operator-selected compatibility mode.
+- `focusPolicy: activate` and `keyboardPolicy: activate` are intentionally disruptive and exist as operator-selected compatibility modes.
 - A target application may change its own activation or focus as a side effect of an accepted action.
 - The package captures requested discrete observations, not a live desktop feed.
 - Browser work should continue to use browser automation because DOM/CDP state is narrower and more precise.
