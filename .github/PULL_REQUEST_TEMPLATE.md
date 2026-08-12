@@ -15,6 +15,8 @@ Describe the user-visible problem and why native Computer Use is the correct cap
 - [ ] Actions remain bound to an exact app, process, observation, window, and target.
 - [ ] Stale or ambiguous state fails closed instead of selecting a similar target.
 - [ ] Accessibility actions remain preferred over coordinates.
+- [ ] Coordinate input remains pid/window-targeted, with no system-cursor warp or global HID pointer-post fallback.
+- [ ] The default path remains never-active in the deterministic fixture.
 - [ ] Read/control leases and sensitive-action confirmation were considered.
 - [ ] Secure values, screenshots, error messages, and diagnostics do not disclose unnecessary data.
 - [ ] Teardown aborts helper work and releases observations, confirmations, routes, and registrations.

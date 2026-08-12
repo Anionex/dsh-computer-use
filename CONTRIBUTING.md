@@ -38,7 +38,11 @@ The TCC-required test lane needs Accessibility and Screen Recording permission f
 - Bind every action to an exact app, pid, observation, window, and selected element or observed-window coordinate.
 - Reject stale or ambiguous targets. Do not search for a visually or textually similar replacement.
 - Prefer advertised Accessibility actions and values over coordinate or keyboard fallback.
-- Keep coordinate input bounded to the referenced observed window and foreground process.
+- Preserve the user's current frontmost application by default. Host configuration, not model arguments, owns activation and pointer policy.
+- Route coordinate input only to the exact referenced pid and observed window; never add a system-cursor warp or global HID pointer-post fallback.
+- Fail closed when the exact `CGWindowID`, window frame, or target-process pointer route is unavailable or ambiguous.
+- After an explicitly permitted activation, observe and validate the exact target again before emitting input.
+- Keep the native cursor/frontmost monitor in the TCC-required lane; static symbol checks do not replace behavior-level non-interference evidence.
 - Preserve secure-field redaction and minimize screenshot, tree, Tool-result, and diagnostic disclosure.
 - Keep read and control leases scoped; configured grants must not bypass sensitive-action confirmation.
 - Validate every deployment-varying limit in configuration.
@@ -55,7 +59,7 @@ After changing Swift sources:
 ```sh
 pnpm run native:build
 pnpm run check:native
-DSH_COMPUTER_USE_REQUIRE_TCC=1 pnpm exec vitest run tests/native-fixture.e2e.spec.ts
+DSH_COMPUTER_USE_REQUIRE_TCC=1 pnpm exec vitest run tests/native-helper.spec.ts tests/native-fixture.e2e.spec.ts
 ```
 
 Inspect the updated manifest, architectures, deployment target, code signature, and binary diff before committing.
@@ -65,7 +69,7 @@ Inspect the updated manifest, architectures, deployment target, code signature, 
 Match evidence to the changed surface:
 
 - observation, lease, confirmation, and lifecycle rules: focused Service tests;
-- native protocol or input: real deterministic fixture behavior plus stale rejection;
+- native protocol or input: static global-input rejection plus real never-active fixture behavior and stale rejection;
 - Web Settings: browser-safe snapshot, write validation, generation replacement, and client build checks;
 - package changes: package-layout tests and `pnpm pack --dry-run`;
 - DSH composition: clean Web and Headless Profile install/disable/re-enable/remove;

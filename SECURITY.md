@@ -16,12 +16,15 @@ The following properties are intentional and a regression in them is security-re
 
 - every native action remains bound to an exact application, pid, observation, window, and element or observed-window coordinate;
 - stale, replaced, expired, or ambiguous state fails closed without guessing a target;
-- Accessibility actions are preferred and coordinate input is emitted only after exact foreground-process validation;
+- the default `preserve` policy does not request target-app activation; any explicit `activate` compatibility mode re-observes and revalidates before input;
+- pointer fallback is bound to the exact pid, `CGWindowID`, and observed-window coordinates; the helper has no system-cursor warp or global HID pointer-post route;
+- missing, ambiguous, or unavailable target-process pointer routing fails closed instead of falling back to the global cursor;
 - secure-field values are redacted from trees, Tool results, metadata, and native errors;
 - screenshots are workspace-fenced, size-bounded Artifacts and are captured only when requested;
 - read and control leases remain scoped to the exact Agent and bundle id, with control bounded to the current turn;
 - sensitive actions require a short-lived one-use confirmation that configured grants cannot bypass;
 - the helper accepts only the fixed JSON protocol and never arbitrary scripts, selectors, native constants, or source code;
+- the helper's detached-process and parent-transport check rejects ordinary shell redirection, but is defense in depth rather than authentication against deliberately constructed same-user code; `danger-full-access` is outside that protection;
 - managed helper identity, source digest, SHA-256, architectures, deployment target, and code signature are checked;
 - disabling or removing the plugin aborts helper work and releases observations, confirmations, routes, and registrations.
 

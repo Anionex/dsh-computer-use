@@ -5,50 +5,64 @@
 ![Universal binary](https://img.shields.io/badge/native-arm64%20%2B%20x86__64-2563eb.svg)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-Bundle-5b50ed.svg)
 
-Give DeepSeek Harness a native macOS action layer that operates on fresh Accessibility state.
+**Native macOS control for DeepSeek Harness that keeps your real cursor and foreground application alone by default.**
 
-DSH Computer Use lets an Agent identify an exact running application, inspect its current UI structure, bind an action to one replayable observation, reject stale targets, acquire scoped access, and return fresh post-action state. It is a DSH capability bundle.
+DSH Computer Use gives an Agent fresh Accessibility observations, exact process/window targeting, stale-state rejection, scoped application access, and verified post-action state. Semantic Accessibility comes first; mouse, drag, wheel, and keyboard fallback are routed to the selected process instead of the global desktop.
 
 English | [中文](README.zh.md)
 
-## Why this exists
+## Why it is different
 
-Shell Tools can launch an application, and browser Tools can operate a web page. Neither exposes a general native macOS UI protocol. A desktop Agent needs to know which process and window it is controlling, prefer semantic controls over coordinates, avoid replaying actions against changed state, protect secure values, request appropriate access, and verify what happened.
+Accessibility permission lets a process inspect and operate macOS UI elements, but the permission itself does not prevent focus stealing or cursor movement. Those behaviors depend on the input route.
 
-DSH Computer Use provides that action layer with one DSH Service, a native macOS provider, a portable Skill, progressively exposed model Tools, screenshot Artifacts, and a Web Settings surface. Domain workflows can compose it when work crosses into a native application; browser and API tasks keep using narrower capabilities.
+The default DSH Computer Use route is deliberately non-interfering:
+
+- **No system-cursor movement:** the helper contains no cursor-warp path.
+- **No global pointer injection:** click, scroll, and drag fallback use a pid/window-targeted SkyLight route, not the global HID event stream.
+- **No default app activation:** semantic Accessibility, process-targeted keyboard input, and target-process pointer input run with `focusPolicy: preserve`.
+- **No blind replay:** every action is tied to an exact, unexpired observation and returns fresh state.
+
+The result is a native action layer that can operate many background applications while the user continues working in the current foreground application.
 
 ## What it adds
 
-- Observe before acting. Returns a bounded Accessibility tree, indexed elements, exact app/process/window metadata, permission state, and an optional screenshot Artifact.
-- Bind actions to state. Every element index belongs to one opaque `observationId`; modifying Tools reject changed processes, windows, locators, or target identities.
-- Prefer semantic input. Uses `AXPress`, editable values, and advertised Accessibility actions before an explicit observed-window coordinate fallback.
-- Return fresh evidence. Every successful action settles for a bounded interval and returns a new full or diff observation.
-- Scope access by application. Read and control leases are separated by Agent, Session, turn, and exact bundle id, with one-use confirmation for sensitive actions.
-- Keep the model surface focused. The execution vocabulary appears only after the Computer Use Skill is loaded for that Agent.
+- **Observe before acting.** Return a bounded Accessibility tree, indexed elements, exact app/process/window metadata, permission state, and an optional screenshot Artifact.
+- **Bind actions to state.** Every element index belongs to one opaque `observationId`; changed processes, windows, locators, and target identities fail closed.
+- **Prefer semantic input.** Use `AXPress`, editable values, selected-text assignment, and advertised Accessibility actions before pointer fallback.
+- **Route fallback to the target.** Keyboard input goes to the selected pid; pointer input goes to the selected pid and `CGWindowID` with window-local coordinates.
+- **Return fresh evidence.** Every successful action settles for a bounded interval and returns a new full or diff observation.
+- **Scope application access.** Read and control leases are separated by Agent, Session, turn, and exact bundle id; high-impact actions require one-use confirmation.
+- **Keep the model surface focused.** Execution Tools appear only after the current Agent loads the Computer Use Skill.
 
-## Example: one observation-bound native action
+## Proof: a never-active background fixture
 
-The repository includes a deterministic AppKit fixture and a universal native helper. The real fixture test and release runner discover the exact process, observe its Accessibility state, act through an observed element, and require the returned fresh state to confirm the result.
-
-The recorded state is produced through the same protocol exposed to the Agent:
+The repository includes a deterministic AppKit fixture and a universal native helper. Release tests start the fixture with `open -g` in background mode, then use the same protocol exposed to the Agent.
 
 ```text
 observe exact bundle id + pid
--> element 10: "Enable deterministic option", value 0
--> click using observationId + element index
+-> element: "Targeted pointer probe", no AXPress action
+-> computer_click with observationId + element index + allowCoordinateFallback
 -> fresh observation
--> checkbox value 1; status "Status: option enabled"
+-> activation "not-requested"; pointerRouting "target-process"
+-> status "Status: pointer click"
 ```
 
 <p align="center">
-  <img src="assets/computer-use-fixture.png" width="760" alt="Native DSH Computer Use Fixture after an observation-bound checkbox action; the checkbox is enabled and the application reports Status: option enabled." />
+  <img src="assets/computer-use-fixture.png" width="760" alt="The never-active deterministic native fixture before target-process pointer input, showing the dedicated pointer probe and ready status." />
 </p>
 
-The fixture also covers application discovery, screenshots, Accessibility click/value/action, Unicode typing without clipboard replacement, key input, scrolling, dragging, delayed state, stale-observation rejection, secure-field redaction, and process termination. The screenshot is a discrete test artifact; it is not a continuous desktop stream.
+The fixture records every `applicationDidBecomeActive` callback. An independent native monitor also samples the system cursor and frontmost pid every millisecond throughout click, scroll, and drag. The default release path requires `activationCount: 0`, unchanged cursor coordinates, an unchanged frontmost pid, exact click/scroll counts, and one complete down/up drag gesture.
+
+See [Foreground-safe input policy](docs/interaction-policy.md) for the requirements, architecture, decisions, evidence, and compatibility limits.
 
 ## Scope
 
-`dsh-computer-use` is the action layer. Visual facts, OCR, grounding, and pixel evidence come from the independently installed `dsh-vision-toolkit`. Browser tasks use browser automation, and domain workflows compose this bundle when they need native UI.
+`dsh-computer-use` is the native **action layer**. It does not replace narrower interfaces:
+
+- browser tasks should use browser automation and DOM/CDP state;
+- APIs, CLIs, and purpose-built application plugins remain preferable when available;
+- OCR, visual grounding, and pixel interpretation can come from the separately installed `dsh-vision-toolkit`;
+- domain bundles such as `dsh-design` can compose Computer Use when a workflow crosses into a native application.
 
 ## Quick start
 
@@ -56,9 +70,9 @@ The fixture also covers application discovery, screenshots, Accessibility click/
 
 - macOS 14 or newer.
 - DeepSeek Harness with a Web or Headless Profile and the Skill Tool mounted.
-- Node.js `^22.19.0` or `>=24.0.0` when building the repository.
-- macOS Accessibility permission for structural observation and UI actions.
-- macOS Screen Recording permission only when screenshots are requested.
+- macOS Accessibility permission for observation and native actions.
+- macOS Screen Recording permission only when a screenshot is requested.
+- Node.js `^22.19.0` or `>=24.0.0` when building this repository.
 
 The package is not published to npm yet. Install it from a checkout:
 
@@ -73,43 +87,64 @@ dsh --profile web --dump-config | grep computer-use
 dsh --profile headless --dump-config | grep computer-use
 ```
 
-In a Session with the Skill Tool, load Computer Use:
+Restart a running `dsh web` host after changing the installed plugin, then start a new Session so the host reloads the Bundle and Skill catalog.
+
+Load the Skill in that Session:
 
 ```text
 /computer-use
 ```
 
-The Skill activates the focused execution schemas only for that Agent. A first verification request:
+Then try:
 
 > Use Computer Use to inspect the running DSH Computer Use Fixture, enable its deterministic option, and report the fresh status. Prefer Accessibility elements and do not reuse an old observation.
-
-## Usage examples
-
-These prompts assume `/computer-use` was loaded.
-
-- Observe. "List the running applications, then observe the frontmost one and report its window title, UI elements, and Accessibility permission state."
-- Act through an element. "In the DSH Computer Use Fixture, enable the deterministic option through an Accessibility element, then report the fresh status."
-- Type without the clipboard. "In the frontmost application's focused text field, type `dsh computer use`, then scroll up one screen and return the fresh observation."
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    A[Select exact bundle id and pid] --> B[Acquire scoped read access]
-    B --> C[Observe AX tree and optional screenshot]
-    C --> D[Choose indexed element or observed-window point]
-    D --> E[Acquire control and optional one-use confirmation]
-    E --> F[Rebuild and validate current target]
-    F --> G[Send bounded native input]
-    G --> H[Wait for settlement]
-    H --> I[Return fresh full or diff observation]
+    A["Select exact bundle id and pid"] --> B["Acquire scoped read access"]
+    B --> C["Observe AX tree and optional screenshot"]
+    C --> D["Choose indexed element or window-relative point"]
+    D --> E["Acquire control and optional one-use confirmation"]
+    E --> F["Re-observe and validate exact target"]
+    F --> G{"Input route"}
+    G -->|"Semantic"| H["Accessibility action or value"]
+    G -->|"Keyboard"| I["Post to target pid"]
+    G -->|"Pointer"| J["Post to target pid + window"]
+    H --> K["Wait for settlement"]
+    I --> K
+    J --> K
+    K --> L["Return fresh full or diff observation"]
 ```
 
-Every element index is valid only inside its originating observation. Element actions tolerate unrelated tree changes but reject a changed process, window, locator, or target identity. Coordinate and focus-dependent actions require the complete observed state to remain current. A stale operation fails with `COMPUTER_STALE_OBSERVATION`; it never searches for a similar replacement.
+Every element index is valid only inside its originating observation. Element actions tolerate unrelated tree changes but reject a changed process, window, locator, or target identity. Coordinate actions require the complete referenced window state to remain current. A stale operation returns `COMPUTER_STALE_OBSERVATION`; it never searches for a similar replacement.
+
+The default interaction policy is:
+
+```yaml
+interaction:
+  focusPolicy: preserve
+  pointerInputPolicy: targeted
+```
+
+`pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag. `focusPolicy: activate` is an explicit compatibility mode that may bring the target application to the foreground; after activation, the helper observes and validates the exact target again before input.
+
+The helper executable is an internal DSH transport rather than a public authorization API. It requires an isolated process group plus parent-owned standard transports, so ordinary shell redirection fails closed before command parsing. This is defense in depth, not authentication against arbitrary code running as the same macOS user: a deliberately constructed detached parent can reproduce that transport topology. Use the registered Tools so application leases, sensitive-action confirmation, and host policy checks remain in force; `danger-full-access` must not be treated as protection against direct native invocation.
+
+Successful action results include:
+
+```ts
+activation: 'not-requested' | 'already-frontmost' | 'activated'
+pointerInput: boolean
+pointerRouting: 'none' | 'target-process'
+```
+
+The model cannot override these host policies through Tool arguments.
 
 ## Model Tools
 
-The deployment initially contributes only `computer_use_activate`. After the Agent loads the bundled Skill, it receives the focused Tools below.
+The Bundle initially contributes only `computer_use_activate`. Loading the Skill exposes the focused execution vocabulary for that Agent.
 
 <details>
 <summary>Show the complete Tool vocabulary</summary>
@@ -118,11 +153,11 @@ The deployment initially contributes only `computer_use_activate`. After the Age
 |---|---|
 | `computer_list_apps` | List bounded user-facing applications with bundle id, pid, frontmost state, and permission diagnostics |
 | `computer_observe` | Return a fresh full/diff Accessibility observation and optional screenshot Artifact |
-| `computer_click` | Prefer `AXPress`; optionally click an observed element frame or observed-window coordinate |
+| `computer_click` | Prefer `AXPress`; optionally use an observed element frame or observed-window coordinate through target-process pointer input |
 | `computer_set_value` | Set or clear an editable Accessibility value without using the clipboard |
 | `computer_type_text` | Insert Unicode through Accessibility when supported, with a process-targeted keyboard fallback |
-| `computer_press_key` | Send one key from a finite vocabulary with optional command/control/option/shift modifiers |
-| `computer_scroll` | Send bounded directional scrolling at an observed element or coordinate |
+| `computer_press_key` | Send one key from a finite vocabulary to the selected process, with optional modifiers |
+| `computer_scroll` | Send bounded directional scrolling to the selected process and window |
 | `computer_drag` | Drag between two points in the referenced observation's window space |
 | `computer_perform_action` | Execute one exact Accessibility action advertised by the selected element |
 | `computer_wait` | Poll one bounded text/role/title condition and return fresh state without modifying the app |
@@ -132,66 +167,38 @@ No Tool accepts AppleScript, JXA, shell, Swift, Objective-C, native selectors, a
 
 </details>
 
-## Observation model
+## Observation, permissions, and sensitive actions
 
-An observation contains:
+An observation contains an opaque id and expiry, exact app identity, frontmost/window metadata, bounded tree text, current indexed elements, optional screenshot metadata, and permission state. Secure text values are emitted as `[secure]`; they do not enter tree text, Tool results, screenshot metadata, or native errors. A screenshot can still contain other visible application data and should be treated as sensitive.
 
-- opaque `observationId`, creation time, and expiry;
-- exact application `bundleId`, current `pid`, and display name;
-- frontmost and current-window metadata;
-- bounded Accessibility tree text;
-- current indexed elements with role, label, redacted value, state, frame, and advertised actions;
-- optional screenshot Artifact with dimensions and file metadata;
-- Accessibility and Screen Recording status.
+The technical access model has two exact-bundle-id leases:
 
-The first observation for an Agent/application pair is full. Later observations may be diffs whose indexes always refer to the newly returned state. Request `full: true` after context compaction or whenever a complete tree is required.
+- `read`: inspect Accessibility state and a requested screenshot;
+- `control`: send UI input to the selected application.
 
-Secure text values are emitted as `[secure]`; they do not enter tree text, Tool results, screenshot metadata, or native errors. A requested screenshot can still contain other data visible in the application, so screenshot access remains scoped and should be treated as sensitive.
+Without a configured grant, DSH asks for approval. Read approval lasts for the Session; control approval lasts for the current turn. A user rejection is final for that app and scope for the rest of the Session.
 
-## Permissions and sensitive actions
+The DSH `danger-full-access` preset uses `approval/policy: never`, so an ungranted app is policy-blocked before any prompt. The plugin reports an actionable `COMPUTER_PERMISSION_REQUIRED` error and does not record that outcome as a user rejection. Add the exact bundle id in Computer Use Settings or use a preset whose approval policy is `ask`.
 
-The technical access model uses two application leases:
+High-impact communication, sensitive-data transmission, irreversible deletion, account/security/privacy changes, unrequested installation, legal acceptance, and financial completion beyond explicit authorization require `computer_confirm` immediately before execution. The token is short-lived, one-use, and bound to the exact app, process, observation, and action. Grants do not bypass it.
 
-- read: inspect Accessibility state and a requested screenshot;
-- control: send UI input to the selected application.
+## macOS permissions and native integrity
 
-Without a configured grant, the plugin asks through DSH approval. Read approval lasts for the Session; control approval lasts for the current turn. Both are scoped to the exact Agent and bundle id. Headless execution without an approval answerer fails closed.
+The Web Settings section reports helper integrity, Accessibility and Screen Recording status, active generation, interaction policy, limits, and exact application grants. Its buttons can open the relevant macOS privacy pane after a user click; the plugin cannot grant TCC permission itself.
 
-A user-rejected request is final for the rest of the Session for that app and scope; the same request is not asked again.
+Accessibility and Screen Recording are UI permissions, not filesystem permissions. Normal use stays under DSH `workspace-write`: screenshots remain in the Session workspace, transient files use Session-private temporary storage, and the Bundle does not require `danger-full-access`.
 
-The DSH `danger-full-access` permission preset maps to `approval/policy: never`, so DSH rejects every approval ask before any prompt appears. An un-granted app then fails with `COMPUTER_PERMISSION_REQUIRED` and a message that names the exact grant or preset change. This is not a user rejection and is not recorded as one: the same app can be asked again after a grant is added or the preset switches to `ask`. Add exact bundle-id grants in Settings when you run with prompts disabled.
-
-High-impact external communication, transmission of sensitive data, irreversible deletion, account/security/privacy changes, unrequested installation, legal acceptance, and financial completion beyond explicit user authorization also require semantic confirmation immediately before execution. `computer_confirm` returns a short-lived token bound to the exact app, process, observation, and action fields. Configured grants do not bypass this confirmation.
-
-## macOS permissions
-
-The Web Settings section reports helper integrity, Accessibility status, Screen Recording status, active generation, limits, and exact per-application grants. Its buttons can open the relevant macOS privacy pane after a user click; the plugin cannot grant TCC permission itself.
-
-When a permission is missing:
-
-1. Open DSH Settings → Computer Use.
-2. Use **Open macOS Settings** for Accessibility or Screen Recording.
-3. Grant permission to the process identity macOS reports for the active DSH host/helper launch path.
-4. Restart the affected host if macOS requires it, then use **Refresh health**.
-
-Accessibility is required for `computer_observe` and native actions. Screen Recording is optional for `screenshot: "optional"` and mandatory for `screenshot: "required"`.
-
-These TCC grants are UI permissions, not filesystem permissions. Normal use stays under DSH `workspace-write`: screenshot Artifacts remain in the Session workspace, transient plugin files use Session-private temporary storage, and the bundle does not require `danger-full-access`.
-
-## Native helper integrity
-
-The committed helper is an ad-hoc-signed universal `arm64` + `x86_64` binary with a minimum deployment target of macOS 14. Its SHA-256, source digest, architectures, and deployment target are pinned in [`native/macos/manifest.json`](native/macos/manifest.json); source is included under `native/macos/Sources/Helper/`.
-
-An external helper path must be an executable regular file, not a symbolic link. The managed helper must match the committed manifest hash. If a package archive removes its execute bit, the provider restores only the owner's execute permission after validating file identity and hash.
+The committed helper is an ad-hoc-signed universal `arm64` + `x86_64` binary targeting macOS 14 or newer. [`native/macos/manifest.json`](native/macos/manifest.json) pins its SHA-256, source digest, architectures, and deployment target. `pnpm run check:native` also checks the target-process-only pointer route and rejects system-cursor warp or global pointer-post symbols.
 
 ## Configuration
 
 <details>
-<summary>Bundle configuration fields</summary>
+<summary>Show Bundle configuration fields</summary>
 
 | Field | Purpose |
 |---|---|
 | `observationTtlMs` | Lifetime of an observation before reuse is rejected |
+| `confirmationTtlMs` | Lifetime of a one-use sensitive-action confirmation |
 | `actionTimeoutMs` | Hard native action timeout from `1000` to `120000` ms |
 | `settleMs` | Interval between post-action state checks from `0` to `10000` ms |
 | `maxSettleMs` | Maximum post-action settlement budget from `100` to `60000` ms |
@@ -200,52 +207,30 @@ An external helper path must be an executable regular file, not a symbolic link.
 | `artifactRoot` | Workspace-relative screenshot directory |
 | `helper.path` | Optional explicit external helper executable |
 | `helper.allowSourceBuild` | Permit an explicit managed-source rebuild when the committed helper is absent; default `false` |
+| `interaction.focusPolicy` | `preserve` (default) avoids target-app activation; `activate` explicitly permits it and requires re-observation/revalidation |
+| `interaction.pointerInputPolicy` | `targeted` (default) permits pid/window-targeted pointer input; `deny` disables click fallback, scroll, and drag |
 | `grants` | Exact non-wildcard bundle-id read/control policy; `control: true` implies read |
 
 </details>
 
-Settings updates are generation-based. A candidate helper and configuration must pass validation and health before replacing the active generation; replacement invalidates existing observations and pending confirmations.
-
-## Stable error codes
-
-<details>
-<summary>Show recovery guidance</summary>
-
-| Code | Correct next step |
-|---|---|
-| `COMPUTER_UNSUPPORTED_PLATFORM` | Use a supported provider or another capability |
-| `COMPUTER_PERMISSION_REQUIRED` | Grant the named macOS permission or DSH application lease. A user rejection is final for the Session; a policy-disabled ask clears when a grant is added or the preset switches to `ask` |
-| `COMPUTER_APP_NOT_FOUND` | List apps and select an exact bundle id and pid |
-| `COMPUTER_STALE_OBSERVATION` | Observe again and reselect the target |
-| `COMPUTER_ELEMENT_UNAVAILABLE` | Use an advertised action or an explicit coordinate fallback |
-| `COMPUTER_TARGET_UNAVAILABLE` | Use a narrower capability, visual grounding, or ask the user |
-| `COMPUTER_CONFIRMATION_REQUIRED` | Confirm the exact proposed action immediately before execution |
-| `COMPUTER_ACTION_BLOCKED` | Inspect fresh state and select another supported action |
-| `COMPUTER_TIMEOUT` | Inspect current state; retry only when doing so is safe |
-| `COMPUTER_CANCELLED` | Stop or reassess the task |
-| `COMPUTER_PROVIDER_FAILURE` | Inspect bounded diagnostics; do not infer that the action succeeded |
-
-</details>
-
-## Web and Headless behavior
-
-- Web: contributes a `dsh.client` Settings section for health, limits, helper selection, and exact bundle-id grants. Tool output uses generic cards and screenshot Artifact metadata; there is no continuous desktop stream.
-- Headless: exposes the same Skill, Tools, observation semantics, errors, and Artifacts. Missing interactive approval returns a stable permission or confirmation error and does not allow control.
+Settings updates replace the active provider generation only after validation and health checks pass. Replacement invalidates existing observations and pending confirmations.
 
 ## Status and limitations
 
-- Status: early `0.1.0` release; model-facing and provider behavior may still change before a stable release.
+- Status: early `0.1.0`; model-facing and provider behavior may change before a stable release.
 - The current provider is macOS-only. Windows UI Automation and Linux providers are not implemented.
-- Accessibility quality depends on the target application. Custom canvases may expose incomplete structure and require screenshot/vision fallback.
-- Browser work should continue to use browser automation because DOM/CDP state is narrower and more precise.
+- Target-process pointer delivery uses dynamically resolved SkyLight SPI. If it is unavailable, pointer fallback fails closed rather than switching to global input.
+- Pointer fallback requires one uniquely identifiable on-screen window. Minimized, hidden, ambiguous, or windowless targets fail closed.
+- Custom canvases, games, hardened input surfaces, and future macOS releases may reject target-process pointer or keyboard events. Prefer semantic Accessibility whenever possible.
+- `focusPolicy: activate` is intentionally disruptive and exists only as an operator-selected compatibility mode.
+- A target application may change its own activation or focus as a side effect of an accepted action.
 - The package captures requested discrete observations, not a live desktop feed.
-- Coordinate actions are constrained to the referenced observed window but remain less reliable than Accessibility actions.
-- Application leases establish technical access, not business-impact classification; the Skill and one-use confirmation protocol handle the latter.
-- The npm package name is reserved in metadata but is not currently published; install from a checkout or locally produced tarball.
+- Browser work should continue to use browser automation because DOM/CDP state is narrower and more precise.
+- The npm package name is reserved in metadata, but the package is not published yet; install from a checkout or local tarball.
 
-## Development and verification
+## Development and release verification
 
-Place this repository next to a DeepSeek Harness checkout so TypeScript and Vitest can resolve the exact DSH peer declarations and runtime modules:
+Place this repository beside a DeepSeek Harness checkout so TypeScript and Vitest resolve the exact DSH peer declarations and runtime modules:
 
 ```text
 workspace/
@@ -260,21 +245,18 @@ Then run:
 pnpm install --frozen-lockfile
 pnpm run build
 DSH_COMPUTER_USE_REQUIRE_TCC=1 pnpm test
+pnpm run check:native
 pnpm pack --dry-run
 pnpm run validate
 ```
 
-`pnpm run build` compiles and ad-hoc signs the universal helper, builds the deterministic fixture application, emits ESM runtime and types, and produces the loader-compatible Web client. `pnpm run validate` adds native integrity, package, clean Profile, progressive-exposure, lifecycle, and real fixture checks under `workspace-write`.
-
-The real-model lane requires `DEEPSEEK_API_KEY` and accepts an optional `DEEPSEEK_BASE_URL`:
+`pnpm run validate` runs the keyless local and clean Web/Headless Profile lanes. The real-model release lane needs `DEEPSEEK_API_KEY` and accepts an optional `DEEPSEEK_BASE_URL`:
 
 ```sh
 pnpm run validate:model
-# or deterministic plus real-model validation
+# or keyless validation followed by the real-model lane
 pnpm run validate:release
 ```
-
-A clean standalone checkout can run `pnpm exec vitest run tests/package-layout.spec.ts` and `pnpm run check:native`. Full TypeScript build, clean DSH Profile validation, TCC-required native actions, and the real-model lane remain release checks because they require the sibling DSH source tree, macOS permissions, or credentials.
 
 ## Removal
 
@@ -283,16 +265,16 @@ dsh plugin --profile web remove @dsh-external/dsh-computer-use
 dsh plugin --profile headless remove @dsh-external/dsh-computer-use
 ```
 
-Removing or disabling the bundle unregisters the Skill and Tools, aborts in-flight helper work, releases Agent observations and confirmations, and removes the Web route/client contribution. Generated screenshot files remain in the Session workspace for explicit user cleanup.
+Removing or disabling the Bundle unregisters the Skill and Tools, cancels helper work, releases Agent observations and confirmations, and removes Web contributions. Existing screenshot files remain in the Session workspace for explicit user cleanup.
 
 ## Security, community, and support
 
 - Report suspected vulnerabilities privately through [SECURITY.md](SECURITY.md).
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a code or documentation change.
-- Use [SUPPORT.md](SUPPORT.md) to choose the right support channel and include actionable diagnostics.
-- Follow the [Code of Conduct](CODE_OF_CONDUCT.md) in all project spaces.
-- Review release history in [CHANGELOG.md](CHANGELOG.md).
-- See [FUNDING.md](FUNDING.md) if you want to support maintenance without purchasing roadmap control or private support.
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing code or documentation.
+- Use [SUPPORT.md](SUPPORT.md) for installation, permission, configuration, and workflow questions.
+- Follow the [Code of Conduct](CODE_OF_CONDUCT.md) in project spaces.
+- See [CHANGELOG.md](CHANGELOG.md) for release history.
+- See [FUNDING.md](FUNDING.md) to support maintenance without purchasing roadmap control or private support.
 
 ## License
 
