@@ -4,8 +4,10 @@
     - id: computer-use
       name: '@dsh-external/dsh-computer-use'
       config:
+        observationTtlMs: 0
         interaction:
           focusPolicy: preserve
           keyboardPolicy: activate
           pointerInputPolicy: targeted
           cursorVisualization: visible
+          cursorAutoHideMs: 0

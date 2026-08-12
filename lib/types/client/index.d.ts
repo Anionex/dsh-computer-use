@@ -19,7 +19,7 @@ declare const en: {
     readonly openSettings: "Open macOS Settings";
     readonly refresh: "Refresh health";
     readonly limits: "Observation and action limits";
-    readonly ttl: "Observation TTL (ms)";
+    readonly ttl: "Observation TTL (ms; 0 = no expiry)";
     readonly confirmationTtl: "Confirmation TTL (ms)";
     readonly actionTimeout: "Action timeout (ms)";
     readonly settle: "Settlement interval (ms)";
@@ -46,7 +46,7 @@ declare const en: {
     readonly cursorVisible: "Show a separate click-through Agent cursor";
     readonly cursorHidden: "Hide the Agent cursor";
     readonly cursorMotion: "Cursor travel (ms)";
-    readonly cursorAutoHide: "Cursor auto-hide (ms)";
+    readonly cursorAutoHide: "Cursor auto-hide (ms; 0 = stay visible)";
     readonly grants: "Application grants";
     readonly grantsHint: "One exact bundle id per line, followed by read or read,control. Wildcards are rejected.";
     readonly allowAllApps: "Allow read and control for every app";

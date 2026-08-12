@@ -12,7 +12,6 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 - Added `allowAllApps` configuration and Web Settings switch for granting `read` and `control` to every running app without per-bundle-id grants.
 - Added `interaction.keyboardPolicy` (`preserve` / `activate`, Bundle default `activate`) so `type-text` keyboard fallback and `press-key` can reliably activate the target app before input, matching Codex Computer Use.
 - Added `coordinateSpace: screen` for click, scroll, and drag; the helper resolves the topmost on-screen window of the selected app under the point, so arbitrary screen coordinates work without a unique observed window id.
-- Allowed `observationTtlMs: 0` to disable observation expiry and raised the accepted upper bound to 86400000 ms (24 hours).
 - Added target-process pointer delivery for click, scroll, and drag, bound to the exact pid, `CGWindowID`, and window-local point through dynamically resolved SkyLight APIs.
 - Added action-result evidence through `activation`, `pointerInput`, and `pointerRouting`.
 - Added a bilingual foreground-safe input design record and release checks for forbidden global pointer primitives.
@@ -36,6 +35,11 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 - Clean Profile and real-model lanes now require the fixture to remain never-active on the default route.
 - Added a native fixture case that clicks an arbitrary Quartz screen coordinate without an observed window id and asserts the target-process route.
 - Added a native fixture case that proves `keyboardPolicy: activate` brings a background fixture forward and delivers the key event.
+
+### Changed
+
+- Changed the default `observationTtlMs` to `0` (observation expiry disabled); a finite TTL up to 86400000 ms (24 hours) remains configurable.
+- Changed the default `interaction.cursorAutoHideMs` to `0`: the Agent cursor stays at the action position until the bound window changes or a hide command; a finite auto-hide remains configurable.
 
 ### Documentation
 

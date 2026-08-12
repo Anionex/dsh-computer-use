@@ -31,7 +31,7 @@ interaction:
 
 指针投递在点位于已观察窗口内时直接使用该窗口；否则解析选定应用在该屏幕点下最上层的屏幕内窗口，再通过 `SLEventPostToPid` 投递并附带 pid/window 字段与窗口本地坐标。这与 Codex Computer Use 的 target-process 形态一致（`SynthesizedEvent.send(to: pid)` 配合 `CGWindow.window(at:)`），因此 `coordinateSpace: screen` 无需全局 HID 事件流即可支持任意坐标点击。SkyLight symbol 不可用，或该点不在选定应用的任何屏幕内窗口中时都会 fail closed。
 
-视觉反馈由专用、常驻的光标进程创建 28x28 `NSPanel`。该 panel 无边框、不激活应用、点击穿透，并且不会进入普通窗口切换列表；它不会在全部 Space 上显示。它绘制嵌入的透明整图光标（`assets/cursor.png`，Cursor 箭头加 DeepSeek 鲸鱼），图片左上角对准目标点。输入前它会以 ease-out 动画移动到相同的屏幕全局目标点，click 时短暂压缩图片，drag 期间保持按压状态，空闲后自动隐藏。这个 overlay 不发出输入，也不会改变系统光标位置。
+视觉反馈由专用、常驻的光标进程创建 28x28 `NSPanel`。该 panel 无边框、不激活应用、点击穿透，并且不会进入普通窗口切换列表；它不会在全部 Space 上显示。它绘制嵌入的透明整图光标（`assets/cursor.png`，Cursor 箭头加 DeepSeek 鲸鱼），图片左上角对准目标点。输入前它会以 ease-out 动画移动到相同的屏幕全局目标点，click 时短暂压缩图片，drag 期间保持按压状态。默认它会停留在目标点，直到绑定窗口变化或收到 hide 命令；设置 `cursorAutoHideMs` 为有限值可以开启空闲自动隐藏。这个 overlay 不发出输入，也不会改变系统光标位置。
 
 受支持的 DSH Tool 路径会执行两层策略检查。Service 会在申请 control lease 或消费敏感动作 confirmation 之前拒绝已知需要指针或前台权限的动作；helper 会在真正发出输入前再次校验同一份已解析策略，包括只能在运行时确定的 fallback。Helper 还要求独立进程组，以及三条标准 pipe 或 Unix socket 传输的对端都属于它的直接父进程；普通 shell 重定向会在解析命令前 fail closed。这个传输检查只属于纵深防御，不会认证同一 macOS 用户下运行的任意代码：专门构造的 detached 父进程仍能复现这类拓扑，尤其是在 `danger-full-access` 下。注册 Tool 路径仍是唯一受支持的调用方式，因为它会在调用 helper 前执行 lease、confirmation 与宿主策略。
 

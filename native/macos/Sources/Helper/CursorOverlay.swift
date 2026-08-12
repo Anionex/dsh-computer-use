@@ -57,7 +57,7 @@ private struct CursorOverlayCommand {
             self.point = nil
         }
         let durationMs = try Self.integer(object["durationMs"], field: "durationMs", fallback: 180)
-        let autoHideMs = try Self.integer(object["autoHideMs"], field: "autoHideMs", fallback: 1400)
+        let autoHideMs = try Self.integer(object["autoHideMs"], field: "autoHideMs", fallback: 0)
         guard durationMs >= 0, durationMs <= Self.maximumDurationMs,
               autoHideMs >= 0, autoHideMs <= Self.maximumAutoHideMs else {
             throw CursorOverlayError(message: "cursor overlay timing is outside the supported range")

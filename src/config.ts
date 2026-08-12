@@ -48,7 +48,7 @@ export interface ComputerUseConfig {
 
 /** Configuration schema used by Cordis and the Settings provider. */
 export const Config: Schema<ComputerUseConfig> = z.object({
-  observationTtlMs: z.number().default(15000),
+  observationTtlMs: z.number().default(0),
   confirmationTtlMs: z.number().default(300000),
   actionTimeoutMs: z.number().default(15000),
   settleMs: z.number().default(250),
@@ -68,7 +68,7 @@ export const Config: Schema<ComputerUseConfig> = z.object({
     pointerInputPolicy: z.union(['deny', 'targeted']).default('targeted'),
     cursorVisualization: z.union(['hidden', 'visible']).default('visible'),
     cursorMotionMs: z.number().default(180),
-    cursorAutoHideMs: z.number().default(1400),
+    cursorAutoHideMs: z.number().default(0),
   }),
   allowAllApps: z.boolean().default(false),
   grants: z.array(z.object({
@@ -126,7 +126,7 @@ function option<T extends string>(name: string, value: string, allowed: readonly
 
 /** Validate and normalize one raw config object. */
 export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerUseConfig {
-  const observationTtl = config.observationTtlMs ?? 15000
+  const observationTtl = config.observationTtlMs ?? 0
   const observationTtlMs = observationTtl === 0 ? 0 : integer('observationTtlMs', observationTtl, 1000, 86400000)
   const confirmationTtlMs = integer('confirmationTtlMs', config.confirmationTtlMs ?? 300000, 1000, 900000)
   const actionTimeoutMs = integer('actionTimeoutMs', config.actionTimeoutMs ?? 15000, 1000, 120000)
@@ -152,7 +152,7 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
   const pointerInputPolicy = option('interaction.pointerInputPolicy', config.interaction?.pointerInputPolicy ?? 'targeted', ['deny', 'targeted'] as const)
   const cursorVisualization = option('interaction.cursorVisualization', config.interaction?.cursorVisualization ?? 'visible', ['hidden', 'visible'] as const)
   const cursorMotionMs = integer('interaction.cursorMotionMs', config.interaction?.cursorMotionMs ?? 180, 0, 2000)
-  const cursorAutoHideMs = integer('interaction.cursorAutoHideMs', config.interaction?.cursorAutoHideMs ?? 1400, 0, 30000)
+  const cursorAutoHideMs = integer('interaction.cursorAutoHideMs', config.interaction?.cursorAutoHideMs ?? 0, 0, 30000)
   const allowAllApps = config.allowAllApps ?? false
   const seen = new Set<string>()
   const grants = (config.grants ?? []).map((grant) => {

@@ -20,7 +20,7 @@ The default DSH Computer Use route is deliberately non-interfering:
 - **No system-cursor movement:** the helper contains no cursor-warp path.
 - **No global pointer injection:** click, scroll, and drag fallback use a pid/window-targeted SkyLight route, not the global HID event stream.
 - **No pointer-triggered activation:** semantic Accessibility, process-targeted pointer input, and `keyboardPolicy: preserve` run without activation; `keyboardPolicy: activate` (Bundle default) brings the target app forward before keyboard fallback, matching Codex Computer Use.
-- **A separate Agent cursor:** click, scroll, and drag actions animate a click-through, nonactivating software cursor while the macOS system cursor remains untouched. It is visible by default and auto-hides after the action.
+- **A separate Agent cursor:** click, scroll, and drag actions animate a click-through, nonactivating software cursor while the macOS system cursor remains untouched. It is visible by default and stays at the action position until the bound window changes or a hide command; `cursorAutoHideMs` can opt into timed auto-hide.
 - **No blind replay:** every action is tied to an exact, unexpired observation and returns fresh state.
 
 The result is a native action layer that can operate many background applications while the user continues working in the current foreground application.
@@ -130,7 +130,7 @@ interaction:
   pointerInputPolicy: targeted
   cursorVisualization: visible
   cursorMotionMs: 180
-  cursorAutoHideMs: 1400
+  cursorAutoHideMs: 0
 ```
 
 `cursorVisualization: visible` displays the Agent's own non-interactive cursor for click, scroll, and drag. It never replaces or moves the macOS system cursor. Set it to `hidden` when visual feedback is unwanted. `pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag. `keyboardPolicy: activate` (Bundle default) makes `type-text` keyboard fallback and `press-key` reliable by activating the target app first; `focusPolicy: activate` is the broader compatibility mode that also activates before pointer input. After activation, the helper re-observes and revalidates the exact target before input.
@@ -204,7 +204,7 @@ The committed helper is an ad-hoc-signed universal `arm64` + `x86_64` binary tar
 
 | Field | Purpose |
 |---|---|
-| `observationTtlMs` | Lifetime of an observation before reuse is rejected; `0` disables expiry |
+| `observationTtlMs` | Lifetime of an observation before reuse is rejected; default `0` disables expiry, or set any value up to `86400000` ms (24 hours) |
 | `confirmationTtlMs` | Lifetime of a one-use sensitive-action confirmation |
 | `actionTimeoutMs` | Hard native action timeout from `1000` to `120000` ms |
 | `settleMs` | Interval between post-action state checks from `0` to `10000` ms |
@@ -219,7 +219,7 @@ The committed helper is an ad-hoc-signed universal `arm64` + `x86_64` binary tar
 | `interaction.pointerInputPolicy` | `targeted` (default) permits pid/window-targeted pointer input; `deny` disables click fallback, scroll, and drag |
 | `interaction.cursorVisualization` | `visible` (default) shows the separate Agent cursor; `hidden` disables only the overlay |
 | `interaction.cursorMotionMs` | Animated Agent-cursor travel duration, default `180` ms |
-| `interaction.cursorAutoHideMs` | Idle time before the Agent cursor hides, default `1400` ms; `0` keeps it visible |
+| `interaction.cursorAutoHideMs` | Idle time before the Agent cursor hides; default `0` keeps it visible until the bound window changes or a hide command, or set a finite value up to `30000` ms |
 | `allowAllApps` | Grant `read` and `control` to every running app; default `false`. When enabled, exact `grants` are ignored |
 | `grants` | Exact non-wildcard bundle-id read/control policy; `control: true` implies read |
 

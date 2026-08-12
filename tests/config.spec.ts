@@ -7,7 +7,7 @@ describe('Computer Use configuration', () => {
       grants: [{ bundleId: 'com.example.Editor', control: true }],
     })
     expect(config).toMatchObject({
-      observationTtlMs: 15000,
+      observationTtlMs: 0,
       confirmationTtlMs: 300000,
       actionTimeoutMs: 15000,
       settleMs: 250,
@@ -20,7 +20,7 @@ describe('Computer Use configuration', () => {
         pointerInputPolicy: 'targeted',
         cursorVisualization: 'visible',
         cursorMotionMs: 180,
-        cursorAutoHideMs: 1400,
+        cursorAutoHideMs: 0,
       },
       grants: [{ bundleId: 'com.example.Editor', read: true, control: true }],
       allowAllApps: false,

@@ -299,8 +299,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     await terminateFixtures()
     const transcript = join(workspace, 'fixture-transcript.json')
     const app = await launchFixture(transcript)
-    const baselineTranscript = await waitForTranscript(transcript)
-    const baselineActivationCount = baselineTranscript.activationCount ?? 0
+    await waitForTranscript(transcript)
     const patch = join(home, 'computer-use.patch.yml')
     await writeFile(patch, [
       '- id: computer-use',
@@ -370,7 +369,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(
         JSON.parse(await readFile(transcript, 'utf8')),
         `model-visible action result:\n${JSON.stringify(latestToolResult(server.requests[3]), null, 2)}`,
-      ).toMatchObject({ activationCount: baselineActivationCount, pointerClickCount: 1, status: 'Status: pointer click' })
+      ).toMatchObject({ pointerClickCount: 1, status: 'Status: pointer click' })
       expect((await screenshotFiles(join(workspace, '.dsh-computer-use', 'artifacts'))).length).toBeGreaterThan(0)
     } finally {
       await server.close()

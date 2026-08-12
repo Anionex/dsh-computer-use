@@ -20,7 +20,7 @@ DSH Computer Use 的默认路由有意避免干扰：
 - **不移动系统光标：** helper 中没有 cursor warp 路径。
 - **不做全局指针注入：** click、scroll 与 drag fallback 使用 pid/window 定向的 SkyLight 路由，不进入全局 HID 事件流。
 - **指针动作不激活应用：** 语义化 Accessibility、目标进程指针输入与 `keyboardPolicy: preserve` 都不激活；`keyboardPolicy: activate`（Bundle 默认）在键盘 fallback 前把目标应用带到前台，与 Codex Computer Use 对齐。
-- **独立 Agent 光标：** click、scroll 与 drag 动作会移动一个点击穿透、不会激活应用的软件光标，同时保持系统真实光标不变。默认显示，并在动作后自动隐藏。
+- **独立 Agent 光标：** click、scroll 与 drag 动作会移动一个点击穿透、不会激活应用的软件光标，同时保持系统真实光标不变。默认显示，并停留在动作落点，直到绑定窗口变化或收到 hide 命令；`cursorAutoHideMs` 可开启定时自动隐藏。
 - **不盲目重放：** 每个动作都绑定准确、未过期的 observation，并返回新鲜状态。
 
 因此，这个原生动作层可以在用户继续使用当前前台应用时，操作许多后台应用。
@@ -130,7 +130,7 @@ interaction:
   pointerInputPolicy: targeted
   cursorVisualization: visible
   cursorMotionMs: 180
-  cursorAutoHideMs: 1400
+  cursorAutoHideMs: 0
 ```
 
 `cursorVisualization: visible` 会在 click、scroll 与 drag 时显示 Agent 自己的非交互光标；它不会替代或移动 macOS 系统光标。不需要视觉反馈时可设为 `hidden`。`pointerInputPolicy: deny` 会禁用坐标点击/fallback、滚动与拖拽。`keyboardPolicy: activate`（Bundle 默认）会先激活目标应用，让 `type-text` 键盘 fallback 与 `press-key` 可靠工作；`focusPolicy: activate` 是更宽的兼容模式，还会在指针输入前激活。激活后 helper 会重新观察并校验准确目标，之后才发出输入。
@@ -204,7 +204,7 @@ Accessibility 与 Screen Recording 是 UI 权限，不是文件系统权限。�
 
 | 字段 | 用途 |
 |---|---|
-| `observationTtlMs` | observation 允许复用的生命周期；`0` 关闭过期 |
+| `observationTtlMs` | observation 允许复用的生命周期；默认 `0` 关闭过期，也可设为最大 `86400000` ms（24 小时）内的任意值 |
 | `confirmationTtlMs` | 一次性敏感动作 confirmation 的生命周期 |
 | `actionTimeoutMs` | `1000` 到 `120000` ms 的 native action 硬超时 |
 | `settleMs` | `0` 到 `10000` ms 的动作后状态检查间隔 |
@@ -219,7 +219,7 @@ Accessibility 与 Screen Recording 是 UI 权限，不是文件系统权限。�
 | `interaction.pointerInputPolicy` | `targeted`（默认）允许 pid/window 定向指针输入；`deny` 禁用 click fallback、scroll 和 drag |
 | `interaction.cursorVisualization` | `visible`（默认）显示独立 Agent 光标；`hidden` 只关闭 overlay，不影响输入 |
 | `interaction.cursorMotionMs` | Agent 光标移动动画时长，默认 `180` 毫秒 |
-| `interaction.cursorAutoHideMs` | Agent 光标空闲后隐藏时间，默认 `1400` 毫秒；`0` 表示保持显示 |
+| `interaction.cursorAutoHideMs` | Agent 光标空闲后隐藏时间；默认 `0` 表示保持显示，直到绑定窗口变化或收到 hide 命令，也可设为最大 `30000` ms 内的有限值 |
 | `allowAllApps` | 向所有运行中的应用授予 `read` 与 `control`；默认 `false`。开启后忽略精确 `grants` |
 | `grants` | 准确、无通配符的 bundle-id read/control policy；`control: true` 隐含 read |
 
