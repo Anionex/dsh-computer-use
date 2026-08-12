@@ -5,6 +5,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {
   BackendActionRequest,
   BackendActionResult,
+  BackendCursorAction,
   BackendHealth,
   BackendObservation,
   BackendObserveOptions,
@@ -63,6 +64,8 @@ export class FakeBackend implements ComputerUseBackend {
   readonly actions: BackendActionRequest[] = []
   readonly observations: BackendObserveOptions[] = []
   readonly openedSettings: Array<'accessibility' | 'screen-recording'> = []
+  readonly cursorActions: Array<{ action: BackendCursorAction; phase: 'before' | 'after' }> = []
+  disposed = false
   observation = backendObservation()
   healthValue: BackendHealth = {
     helperVersion: '0.1.0-test',
@@ -132,6 +135,16 @@ export class FakeBackend implements ComputerUseBackend {
       pointerInput: this.actionPointerInput,
       pointerRouting: this.actionPointerRouting,
     })
+  }
+
+  visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after'): Promise<void> {
+    this.cursorActions.push({ action: structuredClone(action), phase })
+    return Promise.resolve()
+  }
+
+  dispose(): Promise<void> {
+    this.disposed = true
+    return Promise.resolve()
   }
 
   health(): Promise<BackendHealth> {

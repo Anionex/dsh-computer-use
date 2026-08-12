@@ -1028,6 +1028,10 @@ private struct HelperMain {
             _ = NSApplication.shared
             NSApplication.shared.setActivationPolicy(.prohibited)
             try requireHostTransport()
+            if ProcessInfo.processInfo.arguments.contains("--cursor-overlay") {
+                CursorOverlayRuntime.run()
+                return
+            }
             guard let data = try FileHandle.standardInput.readToEnd(), !data.isEmpty,
                   let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw fail("COMPUTER_PROVIDER_FAILURE", "stdin must contain one JSON request")

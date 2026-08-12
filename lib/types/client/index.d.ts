@@ -35,6 +35,11 @@ declare const en: {
     readonly pointerInputPolicy: "Target-process pointer input";
     readonly pointerDeny: "Deny mouse, drag, and wheel events";
     readonly pointerAllow: "Route events only to the target process";
+    readonly cursorVisualization: "Agent cursor";
+    readonly cursorVisible: "Show a separate click-through Agent cursor";
+    readonly cursorHidden: "Hide the Agent cursor";
+    readonly cursorMotion: "Cursor travel (ms)";
+    readonly cursorAutoHide: "Cursor auto-hide (ms)";
     readonly grants: "Application grants";
     readonly grantsHint: "One exact bundle id per line, followed by read or read,control. Wildcards are rejected.";
     readonly save: "Save and apply";

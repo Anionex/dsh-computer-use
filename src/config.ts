@@ -15,10 +15,13 @@ export interface ComputerUseAppGrant {
   control?: boolean
 }
 
-/** Host-owned policy for foreground activation and target-process pointer input. */
+/** Host-owned policy for foreground activation, target-process input, and the visible Agent cursor. */
 export interface ComputerUseInteractionConfig {
   focusPolicy?: 'preserve' | 'activate'
   pointerInputPolicy?: 'deny' | 'targeted'
+  cursorVisualization?: 'hidden' | 'visible'
+  cursorMotionMs?: number
+  cursorAutoHideMs?: number
 }
 
 /** User-facing configuration; schema defaults are repeated by {@link resolveConfig}. */
@@ -60,6 +63,9 @@ export const Config: Schema<ComputerUseConfig> = z.object({
   interaction: z.object({
     focusPolicy: z.union(['preserve', 'activate']).default('preserve'),
     pointerInputPolicy: z.union(['deny', 'targeted']).default('targeted'),
+    cursorVisualization: z.union(['hidden', 'visible']).default('visible'),
+    cursorMotionMs: z.number().default(180),
+    cursorAutoHideMs: z.number().default(1400),
   }),
   grants: z.array(z.object({
     bundleId: z.string(),
@@ -87,6 +93,9 @@ export interface ResolvedComputerUseConfig {
   interaction: {
     focusPolicy: 'preserve' | 'activate'
     pointerInputPolicy: 'deny' | 'targeted'
+    cursorVisualization: 'hidden' | 'visible'
+    cursorMotionMs: number
+    cursorAutoHideMs: number
   }
   grants: Array<{
     bundleId: string
@@ -133,6 +142,9 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
   }
   const focusPolicy = option('interaction.focusPolicy', config.interaction?.focusPolicy ?? 'preserve', ['preserve', 'activate'] as const)
   const pointerInputPolicy = option('interaction.pointerInputPolicy', config.interaction?.pointerInputPolicy ?? 'targeted', ['deny', 'targeted'] as const)
+  const cursorVisualization = option('interaction.cursorVisualization', config.interaction?.cursorVisualization ?? 'visible', ['hidden', 'visible'] as const)
+  const cursorMotionMs = integer('interaction.cursorMotionMs', config.interaction?.cursorMotionMs ?? 180, 0, 2000)
+  const cursorAutoHideMs = integer('interaction.cursorAutoHideMs', config.interaction?.cursorAutoHideMs ?? 1400, 0, 30000)
   const seen = new Set<string>()
   const grants = (config.grants ?? []).map((grant) => {
     const bundleId = grant.bundleId.trim()
@@ -164,6 +176,9 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
     interaction: {
       focusPolicy,
       pointerInputPolicy,
+      cursorVisualization,
+      cursorMotionMs,
+      cursorAutoHideMs,
     },
     grants,
   }

@@ -7,3 +7,4 @@
         interaction:
           focusPolicy: preserve
           pointerInputPolicy: targeted
+          cursorVisualization: visible

@@ -3,10 +3,11 @@
 import { createHash } from 'node:crypto'
 import { access, chmod, lstat, readFile, realpath, stat } from 'node:fs/promises'
 import { constants, type Stats } from 'node:fs'
+import type { Writable } from 'node:stream'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from 'cordis'
-import type { SubprocessOutputReader } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputReader } from '@deepseek-ai/dsh-subprocess'
 import type { ResolvedComputerUseConfig } from '../config.ts'
 import { ComputerUseError, computerUseError, type ComputerUseErrorCode } from '../errors.ts'
 
@@ -37,6 +38,16 @@ interface HelperSuccess<T> {
 
 type HelperEnvelope<T> = HelperFailure | HelperSuccess<T>
 
+const CURSOR_READY_TIMEOUT_MS = 2_000
+const CURSOR_PROTOCOL_MAX_BYTES = 64 * 1024
+
+interface CursorProcess {
+  stdin: Writable
+  done: Promise<SubprocessOutcome>
+  terminate: () => void
+  waitForExit: SubprocessHandle['waitForExit']
+}
+
 function collected(reader: SubprocessOutputReader | undefined): string {
   if (reader === undefined) return ''
   const value = reader.readFrom(0)
@@ -62,6 +73,8 @@ export interface PreparedNativeHelper {
 /** Invokes only the packaged JSON protocol through `ctx.subprocess`; no source or shell reaches the helper. */
 export class NativeHelperClient {
   private prepared?: PreparedNativeHelper
+  private cursor: CursorProcess | undefined
+  private cursorStart: { promise: Promise<CursorProcess> } | undefined
 
   constructor(
     private readonly ctx: Context,
@@ -173,6 +186,41 @@ export class NativeHelperClient {
     return envelope.value
   }
 
+  /** Send one best-effort command to the persistent, click-through Agent cursor overlay. */
+  async cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<void> {
+    const prepared = this.prepared ?? await this.prepare(signal)
+    const cursor = await this.getCursor(prepared, signal)
+    signal.throwIfAborted()
+    try {
+      await new Promise<void>((resolveWrite, rejectWrite) => {
+        cursor.stdin.write(`${JSON.stringify(command)}\n`, error => {
+          if (error === undefined || error === null) resolveWrite()
+          else rejectWrite(error)
+        })
+      })
+    } catch (error) {
+      if (this.cursor === cursor) this.cursor = undefined
+      cursor.terminate()
+      throw computerUseError(error, 'native cursor overlay command failed')
+    }
+  }
+
+  /** Stop the cursor process before a provider generation is replaced or disposed. */
+  async dispose(): Promise<void> {
+    const cursor = this.cursor ?? await this.cursorStart?.promise.catch(() => undefined)
+    this.cursorStart = undefined
+    this.cursor = undefined
+    if (cursor === undefined) return
+    try {
+      cursor.stdin.end(`${JSON.stringify({ op: 'stop' })}\n`)
+    } catch {
+      // A child that already closed its pipe is handled by the tree-exit wait below.
+    }
+    if (await cursor.waitForExit(AbortSignal.timeout(1_000))) return
+    cursor.terminate()
+    await cursor.waitForExit()
+  }
+
   /** Prepared integrity facts used by provider health. */
   preparedInfo(): PreparedNativeHelper {
     if (this.prepared === undefined) throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native helper is not prepared')
@@ -200,5 +248,146 @@ export class NativeHelperClient {
     }
     const info = await stat(this.helperPath).catch(() => undefined)
     if (info?.isFile() !== true) throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native source build completed without producing the helper')
+  }
+
+  private async getCursor(prepared: PreparedNativeHelper, signal: AbortSignal): Promise<CursorProcess> {
+    signal.throwIfAborted()
+    if (this.cursor !== undefined) return this.cursor
+    if (this.cursorStart === undefined) {
+      const start: { promise: Promise<CursorProcess> } = { promise: Promise.resolve(undefined as never) }
+      start.promise = this.spawnCursor(prepared).then(cursor => {
+        this.cursor = cursor
+        void cursor.done.catch(() => undefined).finally(() => {
+          if (this.cursor === cursor) this.cursor = undefined
+        })
+        return cursor
+      }).finally(() => {
+        if (this.cursorStart === start) this.cursorStart = undefined
+      })
+      this.cursorStart = start
+    }
+    const cursor = await this.cursorStart.promise
+    signal.throwIfAborted()
+    return cursor
+  }
+
+  private async spawnCursor(prepared: PreparedNativeHelper): Promise<CursorProcess> {
+    const cursorSignal = new AbortController()
+    const handle = this.ctx.subprocess.spawn({
+      argv: [prepared.path, '--cursor-overlay'],
+      cwd: dirname(prepared.path),
+      stdio: {
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: { maxBytes: 64 * 1024 },
+      },
+      graceMs: 1000,
+      signal: cursorSignal.signal,
+      env: {
+        LANG: process.env.LANG ?? 'en_US.UTF-8',
+        LC_ALL: process.env.LC_ALL ?? 'en_US.UTF-8',
+      },
+    })
+    if (handle.stdin === undefined || handle.stdout === undefined) {
+      handle.terminate()
+      await handle.waitForExit()
+      throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay protocol pipes are unavailable')
+    }
+    handle.stdin.on('error', () => {
+      // Process outcome and the next command own recovery from a closed protocol pipe.
+    })
+    try {
+      await this.waitForCursorReady(handle)
+    } catch (error) {
+      handle.terminate()
+      await handle.waitForExit()
+      const stderr = collected(handle.collected.stderr).trim()
+      throw new ComputerUseError(
+        'COMPUTER_PROVIDER_FAILURE',
+        `native cursor overlay failed to become ready${stderr.length === 0 ? '' : `: ${stderr.slice(0, 1000)}`}`,
+        { cause: error },
+      )
+    }
+    handle.stdout.resume()
+    return {
+      stdin: handle.stdin,
+      done: handle.done,
+      terminate: () => {
+        cursorSignal.abort()
+        handle.terminate()
+      },
+      waitForExit: signal => handle.waitForExit(signal),
+    }
+  }
+
+  private async waitForCursorReady(handle: SubprocessHandle): Promise<void> {
+    const stdout = handle.stdout
+    if (stdout === undefined) throw new Error('cursor stdout is unavailable')
+    const timeout = AbortSignal.timeout(CURSOR_READY_TIMEOUT_MS)
+    await new Promise<void>((resolveReady, rejectReady) => {
+      let buffer = ''
+      let settled = false
+      const cleanup = (): void => {
+        clearListeners()
+        timeout.removeEventListener('abort', onTimeout)
+      }
+      const succeed = (): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolveReady()
+      }
+      const fail = (error: unknown): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        rejectReady(error)
+      }
+      const onData = (chunk: Buffer | string): void => {
+        buffer += chunk.toString()
+        if (Buffer.byteLength(buffer) > CURSOR_PROTOCOL_MAX_BYTES) {
+          fail(new Error('cursor ready response exceeded its protocol limit'))
+          return
+        }
+        while (true) {
+          const newline = buffer.indexOf('\n')
+          if (newline < 0) return
+          const line = buffer.slice(0, newline)
+          buffer = buffer.slice(newline + 1)
+          if (line.length === 0) continue
+          let response: unknown
+          try {
+            response = JSON.parse(line)
+          } catch (error) {
+            fail(error)
+            return
+          }
+          if (typeof response === 'object' && response !== null
+            && (response as { ok?: unknown }).ok === true
+            && (response as { ready?: unknown }).ready === true) {
+            succeed()
+            return
+          }
+          fail(new Error('cursor overlay returned an unexpected ready response'))
+          return
+        }
+      }
+      const onEnd = (): void => { fail(new Error('cursor overlay stdout closed before ready')) }
+      const onError = (error: Error): void => { fail(error) }
+      const onTimeout = (): void => { fail(new Error(`cursor overlay ready timeout after ${CURSOR_READY_TIMEOUT_MS} milliseconds`)) }
+      const clearListeners = (): void => {
+        stdout.removeListener('data', onData)
+        stdout.removeListener('end', onEnd)
+        stdout.removeListener('error', onError)
+      }
+      stdout.on('data', onData)
+      stdout.once('end', onEnd)
+      stdout.once('error', onError)
+      timeout.addEventListener('abort', onTimeout, { once: true })
+      void handle.done.then(
+        outcome => { fail(new Error(`cursor overlay exited before ready (${String(outcome.exitCode ?? outcome.signal)})`)) },
+        error => { fail(error) },
+      )
+    })
   }
 }

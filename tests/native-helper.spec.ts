@@ -3,8 +3,10 @@ import { chmod, copyFile, mkdir, readFile, readdir, realpath, stat, symlink, wri
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
+import { PassThrough, Writable } from 'node:stream'
 import { promisify } from 'node:util'
-import { describe, expect, it } from 'vitest'
+import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { describe, expect, it, vi } from 'vitest'
 import { resolveConfig } from '../src/config.ts'
 import { NativeHelperClient } from '../src/providers/native-helper.ts'
 import { temporaryDirectory } from './helpers.ts'
@@ -54,6 +56,57 @@ function abortingHandle(signal: AbortSignal | undefined) {
   }
 }
 
+function cursorHandle(options: { ready?: string; holdReady?: boolean } = {}) {
+  const stdinLines: string[] = []
+  const stdout = new PassThrough()
+  const stderr = reader('')
+  const completed = Promise.withResolvers<{ exitCode: number | null; signal: NodeJS.Signals | null }>()
+  let exited = false
+  const exit = (outcome: { exitCode: number | null; signal: NodeJS.Signals | null }): void => {
+    if (exited) return
+    exited = true
+    stdout.end()
+    completed.resolve(outcome)
+  }
+  const stdin = new Writable({
+    write(chunk, _encoding, callback) {
+      stdinLines.push(chunk.toString())
+      callback()
+    },
+    final(callback) {
+      exit({ exitCode: 0, signal: null })
+      callback()
+    },
+  })
+  const terminate = vi.fn(() => { exit({ exitCode: null, signal: 'SIGTERM' }) })
+  const waitForExit = vi.fn(async (signal?: AbortSignal) => {
+    if (exited) return true
+    if (signal === undefined) {
+      await completed.promise
+      return true
+    }
+    if (signal.aborted) return false
+    return await new Promise<boolean>(resolve => {
+      const onAbort = (): void => { cleanup(); resolve(false) }
+      const cleanup = (): void => { signal.removeEventListener('abort', onAbort) }
+      signal.addEventListener('abort', onAbort, { once: true })
+      void completed.promise.then(() => { cleanup(); resolve(true) })
+    })
+  })
+  const handle: SubprocessHandle = {
+    pid: 7331,
+    stdin,
+    stdout,
+    stderr: undefined,
+    collected: { stderr },
+    done: completed.promise,
+    terminate,
+    waitForExit,
+  }
+  if (!options.holdReady) queueMicrotask(() => { stdout.write(options.ready ?? '{"ok":true,"ready":true,"pid":7331}\n') })
+  return { handle, stdinLines, terminate, exit }
+}
+
 describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
   it('contains no global pointer warp or HID-post implementation', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
@@ -82,6 +135,18 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(binaryStrings).not.toContain('CGEventPost')
     expect(binaryStrings).not.toContain('CGWarpMouseCursorPosition')
     expect(binaryStrings).not.toContain('CGAssociateMouseAndMouseCursorPosition')
+  })
+
+  it('implements a click-through nonactivating cursor overlay without cursor warping', async () => {
+    const source = await readFile(join(NATIVE, 'Sources', 'Helper', 'CursorOverlay.swift'), 'utf8')
+    expect(source).toContain('.nonactivatingPanel')
+    expect(source).toContain('window.ignoresMouseEvents = true')
+    expect(source).toContain('app.setActivationPolicy(.prohibited)')
+    expect(source).toContain('targetWindowIsCurrent')
+    expect(source).toContain('CGWindowListCopyWindowInfo')
+    expect(source).not.toContain('.canJoinAllSpaces')
+    expect(source).toContain('window.orderFrontRegardless()')
+    expect(source).not.toContain('CGWarpMouseCursorPosition')
   })
 
   it('re-observes and validates after explicit activation before emitting input', async () => {
@@ -236,6 +301,89 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
         code: 'COMPUTER_TIMEOUT',
       })
     } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('waits for one persistent cursor process, reuses it, and stops it at disposal', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-client-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle()
+      const spawn = vi.fn((_spec: SubprocessSpawnSpec) => cursor.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const signal = new AbortController().signal
+
+      await client.cursorCommand({ op: 'move', x: 10, y: 20 }, signal)
+      await client.cursorCommand({ op: 'press' }, signal)
+      expect(spawn).toHaveBeenCalledTimes(1)
+      expect(spawn).toHaveBeenCalledWith(expect.objectContaining({
+        argv: [await realpath(executable), '--cursor-overlay'],
+        stdio: { stdin: 'pipe', stdout: 'pipe', stderr: { maxBytes: 64 * 1024 } },
+      }))
+      expect(cursor.stdinLines).toEqual([
+        '{"op":"move","x":10,"y":20}\n',
+        '{"op":"press"}\n',
+      ])
+
+      await client.dispose()
+      expect(cursor.stdinLines.at(-1)).toBe('{"op":"stop"}\n')
+      expect(cursor.terminate).not.toHaveBeenCalled()
+      expect(cursor.handle.waitForExit).toHaveBeenCalled()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('shares concurrent cursor startup and recovers after the overlay exits', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-restart-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const first = cursorHandle({ holdReady: true })
+      const second = cursorHandle()
+      const handles = [first, second]
+      const spawn = vi.fn(() => handles.shift()!.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const signal = new AbortController().signal
+      const one = client.cursorCommand({ op: 'move', x: 1, y: 2 }, signal)
+      const two = client.cursorCommand({ op: 'move', x: 3, y: 4 }, signal)
+      expect(spawn).toHaveBeenCalledTimes(1)
+      first.handle.stdout!.write('{"ok":true,"ready":true,"pid":7331}\n')
+      await Promise.all([one, two])
+      first.exit({ exitCode: 0, signal: null })
+      await first.handle.done
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      await client.cursorCommand({ op: 'move', x: 5, y: 6 }, signal)
+      expect(spawn).toHaveBeenCalledTimes(2)
+      await client.dispose()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('fails a cursor command when the overlay does not emit its ready frame', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-ready-')
+    vi.useFakeTimers()
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ holdReady: true })
+      const client = new NativeHelperClient({ subprocess: { spawn: () => cursor.handle } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const command = client.cursorCommand({ op: 'move', x: 1, y: 2 }, new AbortController().signal)
+      await vi.advanceTimersByTimeAsync(2_001)
+      await expect(command).rejects.toThrow(/failed to become ready/)
+      expect(cursor.terminate).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
       await temporary.cleanup()
     }
   })

@@ -45,6 +45,11 @@ const en = {
   pointerInputPolicy: 'Target-process pointer input',
   pointerDeny: 'Deny mouse, drag, and wheel events',
   pointerAllow: 'Route events only to the target process',
+  cursorVisualization: 'Agent cursor',
+  cursorVisible: 'Show a separate click-through Agent cursor',
+  cursorHidden: 'Hide the Agent cursor',
+  cursorMotion: 'Cursor travel (ms)',
+  cursorAutoHide: 'Cursor auto-hide (ms)',
   grants: 'Application grants',
   grantsHint: 'One exact bundle id per line, followed by read or read,control. Wildcards are rejected.',
   save: 'Save and apply',
@@ -91,6 +96,11 @@ const zh: Record<LocaleKey, string> = {
   pointerInputPolicy: '目标进程指针输入',
   pointerDeny: '禁止鼠标、拖拽和滚轮事件',
   pointerAllow: '只向目标进程投递事件',
+  cursorVisualization: 'Agent 光标',
+  cursorVisible: '显示独立且点击穿透的 Agent 光标',
+  cursorHidden: '隐藏 Agent 光标',
+  cursorMotion: '光标移动时长（毫秒）',
+  cursorAutoHide: '光标自动隐藏（毫秒）',
   grants: '应用授权',
   grantsHint: '每行一个精确 bundle id，后接 read 或 read,control；不接受通配符。',
   save: '保存并应用',
@@ -118,6 +128,9 @@ interface ConfigValue {
   interaction?: {
     focusPolicy?: 'preserve' | 'activate'
     pointerInputPolicy?: 'deny' | 'targeted'
+    cursorVisualization?: 'hidden' | 'visible'
+    cursorMotionMs?: number
+    cursorAutoHideMs?: number
   }
   grants?: Array<{ bundleId: string; read?: boolean; control?: boolean }>
 }
@@ -237,6 +250,9 @@ interface Draft {
   allowSourceBuild: boolean
   focusPolicy: 'preserve' | 'activate'
   pointerInputPolicy: 'deny' | 'targeted'
+  cursorVisualization: 'hidden' | 'visible'
+  cursorMotionMs: string
+  cursorAutoHideMs: string
   grants: string
 }
 
@@ -256,6 +272,9 @@ function draftOf(value: ConfigValue): Draft {
     allowSourceBuild: value.helper?.allowSourceBuild ?? false,
     focusPolicy: value.interaction?.focusPolicy ?? 'preserve',
     pointerInputPolicy: value.interaction?.pointerInputPolicy ?? 'targeted',
+    cursorVisualization: value.interaction?.cursorVisualization ?? 'visible',
+    cursorMotionMs: String(value.interaction?.cursorMotionMs ?? 180),
+    cursorAutoHideMs: String(value.interaction?.cursorAutoHideMs ?? 1400),
     grants: (value.grants ?? []).map(grant => `${grant.bundleId} ${grant.control === true ? 'read,control' : 'read'}`).join('\n'),
   }
 }
@@ -292,6 +311,9 @@ function configOf(draft: Draft): ConfigValue {
     interaction: {
       focusPolicy: draft.focusPolicy,
       pointerInputPolicy: draft.pointerInputPolicy,
+      cursorVisualization: draft.cursorVisualization,
+      cursorMotionMs: integer(draft.cursorMotionMs, 'interaction.cursorMotionMs'),
+      cursorAutoHideMs: integer(draft.cursorAutoHideMs, 'interaction.cursorAutoHideMs'),
     },
     grants,
   }
@@ -375,6 +397,14 @@ function LoadedSettings({ controller, t }: { controller: ComputerUseSettingsCont
             <option value="targeted">{t('pointerAllow')}</option>
           </select>
         </Field>
+        <Field label={t('cursorVisualization')}>
+          <select value={draft.cursorVisualization} onChange={event => update('cursorVisualization', event.target.value as Draft['cursorVisualization'])}>
+            <option value="visible">{t('cursorVisible')}</option>
+            <option value="hidden">{t('cursorHidden')}</option>
+          </select>
+        </Field>
+        {numberField('cursorMotionMs', t('cursorMotion'))}
+        {numberField('cursorAutoHideMs', t('cursorAutoHide'))}
       </div>
     </section>
     <section className="dcu-panel">

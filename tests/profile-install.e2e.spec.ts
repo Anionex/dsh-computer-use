@@ -284,6 +284,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(dump.stdout).toContain("name: '@dsh-external/dsh-computer-use'")
       expect(dump.stdout).toContain('focusPolicy: preserve')
       expect(dump.stdout).toContain('pointerInputPolicy: targeted')
+      expect(dump.stdout).toContain('cursorVisualization: visible')
     }
 
     await terminateFixtures()

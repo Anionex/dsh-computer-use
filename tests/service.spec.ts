@@ -80,6 +80,10 @@ describe('Computer Use Service', () => {
       expect(result.observation.tree.mode).toBe('diff')
       expect(result.observation.tree.text).toContain('AXStaticText')
       expect(backend.actions).toHaveLength(1)
+      expect(backend.cursorActions).toEqual([
+        { phase: 'before', action: { kind: 'click', to: { x: 260, y: 334 }, targetPid: FIXTURE_APP.pid, targetWindowNumber: 7, targetWindowFrame: { x: 100, y: 200, width: 760, height: 592 } } },
+        { phase: 'after', action: { kind: 'click', to: { x: 260, y: 334 }, targetPid: FIXTURE_APP.pid, targetWindowNumber: 7, targetWindowFrame: { x: 100, y: 200, width: 760, height: 592 } } },
+      ])
       await expect(service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context))
         .rejects.toMatchObject({ code: 'COMPUTER_STALE_OBSERVATION' })
     } finally {
@@ -162,6 +166,38 @@ describe('Computer Use Service', () => {
         pointerInput: true,
         pointerRouting: 'target-process',
       })
+      expect(backend.cursorActions).toEqual([
+        {
+          phase: 'before',
+          action: { kind: 'drag', from: { x: 101, y: 202 }, to: { x: 103, y: 204 }, targetPid: FIXTURE_APP.pid, targetWindowNumber: 7, targetWindowFrame: { x: 100, y: 200, width: 760, height: 592 } },
+        },
+        {
+          phase: 'after',
+          action: { kind: 'drag', from: { x: 101, y: 202 }, to: { x: 103, y: 204 }, targetPid: FIXTURE_APP.pid, targetWindowNumber: 7, targetWindowFrame: { x: 100, y: 200, width: 760, height: 592 } },
+        },
+      ])
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('can hide the Agent cursor without changing native input behavior', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-hidden-')
+    try {
+      const { backend, service } = serviceHarness({
+        interaction: {
+          focusPolicy: 'preserve',
+          pointerInputPolicy: 'targeted',
+          cursorVisualization: 'hidden',
+        },
+      })
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      await service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context)
+      expect(backend.actions).toHaveLength(1)
+      expect(backend.cursorActions).toHaveLength(0)
     } finally {
       await workspace.cleanup()
     }

@@ -68,6 +68,17 @@ export interface BackendActionResult {
   pointerRouting: 'none' | 'target-process'
 }
 
+/** One model-selected point or gesture for the non-interactive Agent cursor overlay. */
+export interface BackendCursorAction {
+  kind: 'click' | 'scroll' | 'drag'
+  from?: { x: number; y: number }
+  to: { x: number; y: number }
+  /** Exact target identity used to prevent the overlay from lingering over another window. */
+  targetPid: number
+  targetWindowNumber: number
+  targetWindowFrame: ComputerRect
+}
+
 /** Health facts obtained without changing permissions. */
 export interface BackendHealth {
   helperVersion: string
@@ -84,6 +95,8 @@ export interface ComputerUseBackend {
   listApps(signal: AbortSignal): Promise<ComputerAppSummary[]>
   observe(app: ComputerAppIdentity, options: BackendObserveOptions, signal: AbortSignal): Promise<BackendObservation>
   act(request: BackendActionRequest, signal: AbortSignal): Promise<BackendActionResult>
+  visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<void>
+  dispose(): Promise<void>
   health(signal: AbortSignal): Promise<BackendHealth>
   openSettings(kind: 'accessibility' | 'screen-recording', signal: AbortSignal): Promise<void>
 }

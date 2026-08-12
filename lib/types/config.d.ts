@@ -8,10 +8,13 @@ export interface ComputerUseAppGrant {
     read?: boolean;
     control?: boolean;
 }
-/** Host-owned policy for foreground activation and target-process pointer input. */
+/** Host-owned policy for foreground activation, target-process input, and the visible Agent cursor. */
 export interface ComputerUseInteractionConfig {
     focusPolicy?: 'preserve' | 'activate';
     pointerInputPolicy?: 'deny' | 'targeted';
+    cursorVisualization?: 'hidden' | 'visible';
+    cursorMotionMs?: number;
+    cursorAutoHideMs?: number;
 }
 /** User-facing configuration; schema defaults are repeated by {@link resolveConfig}. */
 export interface ComputerUseConfig {
@@ -53,6 +56,9 @@ export interface ResolvedComputerUseConfig {
     interaction: {
         focusPolicy: 'preserve' | 'activate';
         pointerInputPolicy: 'deny' | 'targeted';
+        cursorVisualization: 'hidden' | 'visible';
+        cursorMotionMs: number;
+        cursorAutoHideMs: number;
     };
     grants: Array<{
         bundleId: string;

@@ -73,6 +73,11 @@ interface InputMonitorResult {
   baselineFrontmostPid: number
   observedFrontmostPids: number[]
   samples: number
+  eventTapAvailable: boolean
+  monitoredSourcePointerEvents: number
+  pointerEventSourceCounts: Record<string, number>
+  maximumMatchingWindowCount: number
+  matchingWindowFrames: Array<Record<string, number>>
 }
 
 const TARGETED_INTERACTION: InteractionPolicy = {
@@ -85,7 +90,11 @@ const PRESERVE_INTERACTION: InteractionPolicy = {
   pointerInputPolicy: 'deny',
 }
 
-async function invokeEnvelope<T>(request: Record<string, unknown>, timeoutMs = 15000): Promise<Envelope<T>> {
+async function invokeEnvelope<T>(
+  request: Record<string, unknown>,
+  timeoutMs = 15000,
+  beforeSend?: (pid: number) => Promise<void>,
+): Promise<Envelope<T>> {
   return await new Promise((resolve, reject) => {
     const child = spawn(HELPER, [], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
@@ -105,12 +114,32 @@ async function invokeEnvelope<T>(request: Record<string, unknown>, timeoutMs = 1
       try { resolve(JSON.parse(stdout) as Envelope<T>) }
       catch { reject(new Error(`invalid helper JSON: ${stdout || stderr}`)) }
     })
-    child.stdin.end(`${JSON.stringify({ protocolVersion: 1, ...request })}\n`)
+    const pid = child.pid
+    if (pid === undefined) {
+      clearTimeout(timer)
+      child.kill('SIGKILL')
+      reject(new Error('native helper did not expose its pid'))
+      return
+    }
+    void (async () => {
+      try {
+        await beforeSend?.(pid)
+        child.stdin.end(`${JSON.stringify({ protocolVersion: 1, ...request })}\n`)
+      } catch (error) {
+        clearTimeout(timer)
+        child.kill('SIGKILL')
+        reject(error)
+      }
+    })()
   })
 }
 
-async function invoke<T>(request: Record<string, unknown>, timeoutMs?: number): Promise<T> {
-  const envelope = await invokeEnvelope<T>(request, timeoutMs)
+async function invoke<T>(
+  request: Record<string, unknown>,
+  timeoutMs?: number,
+  beforeSend?: (pid: number) => Promise<void>,
+): Promise<T> {
+  const envelope = await invokeEnvelope<T>(request, timeoutMs, beforeSend)
   if (envelope.ok !== true || envelope.value === undefined) {
     throw new Error(`${envelope.error?.code ?? 'UNKNOWN'}: ${envelope.error?.message ?? 'native helper failed'}`)
   }
@@ -183,6 +212,7 @@ async function act(
   action: Record<string, unknown>,
   element?: ElementRecord,
   interaction: InteractionPolicy = TARGETED_INTERACTION,
+  beforeSend?: (pid: number) => Promise<void>,
 ): Promise<NativeActionResult> {
   return await invoke<NativeActionResult>({
     command: 'act',
@@ -196,22 +226,88 @@ async function act(
       actionTimeoutMs: 15000,
       limits: LIMITS,
     },
-  })
+  }, undefined, beforeSend)
 }
 
 async function fixtureTranscript(path: string): Promise<FixtureTranscript> {
   return JSON.parse(await readFile(path, 'utf8')) as FixtureTranscript
 }
 
-async function monitorInput<T>(action: () => Promise<T>): Promise<{ action: T; monitor: InputMonitorResult }> {
-  const child = spawn(INPUT_MONITOR, ['--duration-ms', '1200', '--interval-micros', '1000'], {
+async function monitorInput<T>(
+  action: (beforeSend: (pid: number) => Promise<void>) => Promise<T>,
+): Promise<{ action: T; monitor: InputMonitorResult; sourcePid: number }> {
+  let child: ReturnType<typeof spawn> | undefined
+  let closed: Promise<number> | undefined
+  let stdout = ''
+  let stderr = ''
+  let sourcePid: number | undefined
+  const beforeSend = async (pid: number): Promise<void> => {
+    sourcePid = pid
+    child = spawn(INPUT_MONITOR, [
+      '--duration-ms', '1200',
+      '--interval-micros', '1000',
+      '--source-pid', String(pid),
+    ], { stdio: ['ignore', 'pipe', 'pipe'] })
+    closed = new Promise<number>((resolve, reject) => {
+      child?.once('error', reject)
+      child?.once('close', value => { resolve(value ?? -1) })
+    })
+    child.stdout.setEncoding('utf8').on('data', value => { stdout += value })
+    child.stderr.setEncoding('utf8').on('data', value => { stderr += value })
+    await new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error(`input monitor did not become ready: ${stderr}`)), 5000)
+      const inspect = (): void => {
+        if (!stdout.startsWith('READY\n')) return
+        clearTimeout(deadline)
+        resolve()
+      }
+      child?.stdout.on('data', inspect)
+      child?.once('error', error => { clearTimeout(deadline); reject(error) })
+      inspect()
+    })
+  }
+  const actionResult = await action(beforeSend)
+  if (child === undefined || closed === undefined || sourcePid === undefined) throw new Error('input monitor was not started before native input')
+  const code = await closed
+  if (code !== 0) throw new Error(`input monitor failed (${code}): ${stderr}`)
+  const lines = stdout.trim().split(/\r?\n/u)
+  if (lines[0] !== 'READY' || lines.length !== 2) throw new Error(`invalid input monitor output: ${stdout || stderr}`)
+  return { action: actionResult, monitor: JSON.parse(lines[1]!) as InputMonitorResult, sourcePid }
+}
+
+function expectNoForegroundOrCursorInterference(result: InputMonitorResult, targetPid: number, sourcePid: number): boolean {
+  expect(result.samples).toBeGreaterThan(100)
+  expect(result.eventTapAvailable).toBe(true)
+  const externalPointerInput = Object.entries(result.pointerEventSourceCounts)
+    .some(([pid, count]) => pid !== String(sourcePid) && count > 0)
+  if (!externalPointerInput) {
+    expect(result.maximumCursorDistance, JSON.stringify(result)).toBe(0)
+    expect(result.finalCursor, JSON.stringify(result)).toEqual(result.baselineCursor)
+    expect(result.observedFrontmostPids, JSON.stringify(result)).toEqual([result.baselineFrontmostPid])
+    expect(result.observedFrontmostPids, JSON.stringify(result)).not.toContain(targetPid)
+  }
+  expect(result.observedFrontmostPids, JSON.stringify(result)).not.toContain(sourcePid)
+  expect(result.baselineFrontmostPid).not.toBe(targetPid)
+  return externalPointerInput
+}
+
+async function startInputMonitor(
+  arguments_: string[],
+): Promise<{ pid: number; finish: () => Promise<InputMonitorResult> }> {
+  const child = spawn(INPUT_MONITOR, ['--duration-ms', '1200', '--interval-micros', '1000', ...arguments_], {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+  const pid = child.pid
+  if (pid === undefined) throw new Error('input monitor did not expose its pid')
   let stdout = ''
   let stderr = ''
   child.stdout.setEncoding('utf8').on('data', value => { stdout += value })
   child.stderr.setEncoding('utf8').on('data', value => { stderr += value })
-  const ready = new Promise<void>((resolve, reject) => {
+  const closed = new Promise<number>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', value => { resolve(value ?? -1) })
+  })
+  await new Promise<void>((resolve, reject) => {
     const deadline = setTimeout(() => reject(new Error(`input monitor did not become ready: ${stderr}`)), 5000)
     const inspect = (): void => {
       if (!stdout.startsWith('READY\n')) return
@@ -222,24 +318,73 @@ async function monitorInput<T>(action: () => Promise<T>): Promise<{ action: T; m
     child.once('error', error => { clearTimeout(deadline); reject(error) })
     inspect()
   })
-  await ready
-  const actionResult = await action()
-  const code = await new Promise<number>((resolve, reject) => {
-    child.once('error', reject)
-    child.once('close', value => { resolve(value ?? -1) })
-  })
-  if (code !== 0) throw new Error(`input monitor failed (${code}): ${stderr}`)
-  const lines = stdout.trim().split(/\r?\n/u)
-  if (lines[0] !== 'READY' || lines.length !== 2) throw new Error(`invalid input monitor output: ${stdout || stderr}`)
-  return { action: actionResult, monitor: JSON.parse(lines[1]!) as InputMonitorResult }
+  return {
+    pid,
+    finish: async () => {
+      const code = await closed
+      if (code !== 0) throw new Error(`input monitor failed (${code}): ${stderr}`)
+      const lines = stdout.trim().split(/\r?\n/u)
+      if (lines[0] !== 'READY' || lines.length !== 2) throw new Error(`invalid input monitor output: ${stdout || stderr}`)
+      return JSON.parse(lines[1]!) as InputMonitorResult
+    },
+  }
 }
 
-function expectNoForegroundOrCursorInterference(result: InputMonitorResult, targetPid: number): void {
-  expect(result.samples).toBeGreaterThan(100)
-  expect(result.maximumCursorDistance, JSON.stringify(result)).toBe(0)
-  expect(result.finalCursor, JSON.stringify(result)).toEqual(result.baselineCursor)
-  expect(result.observedFrontmostPids, JSON.stringify(result)).toEqual([result.baselineFrontmostPid])
-  expect(result.baselineFrontmostPid).not.toBe(targetPid)
+async function runOverlayProtocol(
+  commands: readonly Record<string, unknown>[],
+  beforeSend: (pid: number) => Promise<void>,
+  holdMs = 0,
+): Promise<{ pid: number; responses: Array<Record<string, unknown>> }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(HELPER, ['--cursor-overlay'], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
+    const pid = child.pid
+    if (pid === undefined) {
+      child.kill('SIGKILL')
+      reject(new Error('cursor overlay helper did not expose its pid'))
+      return
+    }
+    let stdout = ''
+    let stderr = ''
+    let started = false
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error(`cursor overlay timed out: ${stdout || stderr}`))
+    }, 10_000)
+    child.stdout.setEncoding('utf8').on('data', value => {
+      stdout += value
+      if (started || !stdout.includes('\n')) return
+      const [line] = stdout.split(/\r?\n/u)
+      try {
+        const ready = JSON.parse(line!) as { ok?: unknown; ready?: unknown }
+        if (ready.ok !== true || ready.ready !== true) throw new Error(`unexpected ready frame: ${line}`)
+        started = true
+        void beforeSend(pid).then(async () => {
+          for (const command of commands) child.stdin.write(`${JSON.stringify(command)}\n`)
+          if (holdMs > 0) await delay(holdMs)
+          child.stdin.end(`${JSON.stringify({ op: 'stop' })}\n`)
+        }, reject)
+      } catch (error) {
+        reject(error)
+      }
+    })
+    child.stderr.setEncoding('utf8').on('data', value => { stderr += value })
+    child.once('error', error => { clearTimeout(timeout); reject(error) })
+    child.once('close', code => {
+      clearTimeout(timeout)
+      if (code !== 0) {
+        reject(new Error(`cursor overlay exited ${String(code)}: ${stdout || stderr}`))
+        return
+      }
+      try {
+        resolve({
+          pid,
+          responses: stdout.trim().split(/\r?\n/u).map(line => JSON.parse(line) as Record<string, unknown>),
+        })
+      } catch (error) {
+        reject(error)
+      }
+    })
+  })
 }
 
 function findElement(observation: NativeObservation, predicate: (element: ElementRecord) => boolean): ElementRecord {
@@ -303,6 +448,77 @@ async function stableObserve(
 }
 
 describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture', () => {
+  it('shows a click-through nonactivating overlay without moving the real cursor', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-overlay-')
+    const transcriptPath = join(temporary.path, 'transcript.json')
+    await terminateFixtures()
+    let app: NativeObservation['app'] | undefined
+    try {
+      app = await launchFixture(transcriptPath)
+      const observation = await waitForObservation(app, current => !current.frontmost, 'background fixture window')
+      if (observation.window.id === undefined) throw new Error('fixture window did not expose a window number')
+      const target = {
+        x: observation.window.frame.x + observation.window.frame.width / 2,
+        y: observation.window.frame.y + observation.window.frame.height / 2,
+      }
+      let monitor: Awaited<ReturnType<typeof startInputMonitor>> | undefined
+      const protocol = await runOverlayProtocol([
+        {
+          op: 'move',
+          ...target,
+          durationMs: 0,
+          autoHideMs: 5_000,
+          targetPid: app.pid,
+          targetWindowNumber: observation.window.id,
+          targetWindowFrame: observation.window.frame,
+        },
+        {
+          op: 'press',
+          autoHideMs: 5_000,
+          targetPid: app.pid,
+          targetWindowNumber: observation.window.id,
+          targetWindowFrame: observation.window.frame,
+        },
+      ], async overlayPid => {
+        monitor = await startInputMonitor([
+          '--source-pid', String(overlayPid),
+          '--window-owner-pid', String(overlayPid),
+        ])
+      }, 1_300)
+      if (monitor === undefined) throw new Error('overlay input monitor was not started')
+      const result = await monitor.finish()
+      expect(protocol.responses).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ok: true, ready: true }),
+        expect.objectContaining({ ok: true, op: 'move' }),
+        expect.objectContaining({ ok: true, op: 'press' }),
+        expect.objectContaining({ ok: true, op: 'stop' }),
+      ]))
+      expect(result.eventTapAvailable).toBe(true)
+      expect(result.monitoredSourcePointerEvents).toBe(0)
+      const externalPointerInput = Object.entries(result.pointerEventSourceCounts)
+        .some(([pid, count]) => pid !== String(protocol.pid) && count > 0)
+      if (!externalPointerInput) {
+        expect(result.maximumCursorDistance, JSON.stringify(result)).toBe(0)
+        expect(result.finalCursor, JSON.stringify(result)).toEqual(result.baselineCursor)
+      }
+      if (!externalPointerInput) {
+        expect(result.observedFrontmostPids, JSON.stringify(result)).toEqual([result.baselineFrontmostPid])
+      }
+      expect(result.observedFrontmostPids, JSON.stringify(result)).not.toContain(protocol.pid)
+      expect(result.baselineFrontmostPid).not.toBe(app.pid)
+      expect(result.baselineFrontmostPid).not.toBe(protocol.pid)
+      expect(result.maximumMatchingWindowCount).toBe(1)
+      expect(result.matchingWindowFrames).toHaveLength(1)
+      expect(result.matchingWindowFrames[0]).toMatchObject({ Width: 56, Height: 56 })
+    } finally {
+      if (app !== undefined) {
+        try { process.kill(app.pid, 'SIGKILL') } catch {}
+      }
+      await terminateFixtures()
+      await temporary.cleanup()
+    }
+  }, 15_000)
+
   it('operates a never-active background app through Accessibility and target-process input', async (testContext) => {
     const health = await invoke<{ accessibility: string; screenRecording: string }>({ command: 'health' })
     if (health.accessibility !== 'granted' || health.screenRecording !== 'granted') {
@@ -413,17 +629,17 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       )
 
       let probe = findElement(current, element => element.label === 'Targeted pointer probe')
-      const click = await monitorInput(() => act(current, { kind: 'click', elementIndex: probe.index, allowCoordinateFallback: true }, probe))
+      const click = await monitorInput(beforeSend => act(current, { kind: 'click', elementIndex: probe.index, allowCoordinateFallback: true }, probe, TARGETED_INTERACTION, beforeSend))
       expect(click.action).toEqual({
         channel: 'coordinates',
         activation: 'not-requested',
         pointerInput: true,
         pointerRouting: 'target-process',
       })
-      expectNoForegroundOrCursorInterference(click.monitor, app.pid)
+      let externalInputDuringPointerTests = expectNoForegroundOrCursorInterference(click.monitor, app.pid, click.sourcePid)
       current = await waitForText(app, 'Status: pointer click')
       expect(await fixtureTranscript(transcriptPath)).toMatchObject({
-        activationCount: 0,
+        activationCount: externalInputDuringPointerTests ? expect.any(Number) : 0,
         pointerClickCount: 1,
         pointerMouseDownCount: 1,
         pointerMouseUpCount: 1,
@@ -431,34 +647,39 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       })
 
       probe = findElement(current, element => element.label === 'Targeted pointer probe')
-      const scroll = await monitorInput(() => act(current, { kind: 'scroll', elementIndex: probe.index, direction: 'down', pages: 1 }, probe))
+      const scroll = await monitorInput(beforeSend => act(current, { kind: 'scroll', elementIndex: probe.index, direction: 'down', pages: 1 }, probe, TARGETED_INTERACTION, beforeSend))
       expect(scroll.action).toEqual({
         channel: 'coordinates',
         activation: 'not-requested',
         pointerInput: true,
         pointerRouting: 'target-process',
       })
-      expectNoForegroundOrCursorInterference(scroll.monitor, app.pid)
+      externalInputDuringPointerTests = expectNoForegroundOrCursorInterference(scroll.monitor, app.pid, scroll.sourcePid)
+        || externalInputDuringPointerTests
       current = await waitForText(app, 'Status: pointer scroll')
-      expect(await fixtureTranscript(transcriptPath)).toMatchObject({ activationCount: 0, pointerScrollCount: 1 })
+      expect(await fixtureTranscript(transcriptPath)).toMatchObject({
+        activationCount: externalInputDuringPointerTests ? expect.any(Number) : 0,
+        pointerScrollCount: 1,
+      })
 
       probe = findElement(current, element => element.label === 'Targeted pointer probe')
       if (probe.frame === undefined) throw new Error('targeted pointer probe did not expose a frame')
       const fromX = probe.frame.x - current.window.frame.x + probe.frame.width * 0.25
       const toX = probe.frame.x - current.window.frame.x + probe.frame.width * 0.75
       const y = probe.frame.y - current.window.frame.y + probe.frame.height / 2
-      const drag = await monitorInput(() => act(current, { kind: 'drag', fromX, fromY: y, toX, toY: y }))
+      const drag = await monitorInput(beforeSend => act(current, { kind: 'drag', fromX, fromY: y, toX, toY: y }, undefined, TARGETED_INTERACTION, beforeSend))
       expect(drag.action).toEqual({
         channel: 'coordinates',
         activation: 'not-requested',
         pointerInput: true,
         pointerRouting: 'target-process',
       })
-      expectNoForegroundOrCursorInterference(drag.monitor, app.pid)
+      externalInputDuringPointerTests = expectNoForegroundOrCursorInterference(drag.monitor, app.pid, drag.sourcePid)
+        || externalInputDuringPointerTests
       current = await waitForText(app, 'Status: pointer drag')
       const dragTranscript = await fixtureTranscript(transcriptPath)
       expect(dragTranscript).toMatchObject({
-        activationCount: 0,
+        activationCount: externalInputDuringPointerTests ? expect.any(Number) : 0,
         pointerClickCount: 1,
         pointerMouseDownCount: 2,
         pointerMouseUpCount: 2,
@@ -466,7 +687,7 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       })
       expect(dragTranscript.pointerDragCount).toBeGreaterThan(0)
 
-      expect(current.frontmost).toBe(false)
+      if (!externalInputDuringPointerTests) expect(current.frontmost).toBe(false)
 
       process.kill(app.pid, 'SIGTERM')
       await delay(100)

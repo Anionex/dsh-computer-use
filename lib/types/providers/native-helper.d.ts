@@ -13,6 +13,8 @@ export declare class NativeHelperClient {
     private readonly config;
     private readonly managedRoot;
     private prepared?;
+    private cursor;
+    private cursorStart;
     constructor(ctx: Context, config: ResolvedComputerUseConfig, managedRoot?: string);
     /** Absolute executable path selected by explicit override or the packaged managed binary. */
     get helperPath(): string;
@@ -20,8 +22,15 @@ export declare class NativeHelperClient {
     prepare(signal: AbortSignal): Promise<PreparedNativeHelper>;
     /** Invoke one fixed helper command and parse its bounded JSON envelope. */
     invoke<T>(request: Record<string, unknown>, signal: AbortSignal): Promise<T>;
+    /** Send one best-effort command to the persistent, click-through Agent cursor overlay. */
+    cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<void>;
+    /** Stop the cursor process before a provider generation is replaced or disposed. */
+    dispose(): Promise<void>;
     /** Prepared integrity facts used by provider health. */
     preparedInfo(): PreparedNativeHelper;
     private buildManaged;
+    private getCursor;
+    private spawnCursor;
+    private waitForCursorReady;
 }
 //# sourceMappingURL=native-helper.d.ts.map

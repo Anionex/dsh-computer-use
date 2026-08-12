@@ -14,15 +14,33 @@ describe('Computer Use configuration', () => {
       maxSettleMs: 5000,
       artifactRoot: '.dsh-computer-use/artifacts',
       helper: { allowSourceBuild: false },
-      interaction: { focusPolicy: 'preserve', pointerInputPolicy: 'targeted' },
+      interaction: {
+        focusPolicy: 'preserve',
+        pointerInputPolicy: 'targeted',
+        cursorVisualization: 'visible',
+        cursorMotionMs: 180,
+        cursorAutoHideMs: 1400,
+      },
       grants: [{ bundleId: 'com.example.Editor', read: true, control: true }],
     })
   })
 
   it('accepts an explicit foreground and target-process pointer policy', () => {
     expect(resolveConfig({
-      interaction: { focusPolicy: 'activate', pointerInputPolicy: 'targeted' },
-    }).interaction).toEqual({ focusPolicy: 'activate', pointerInputPolicy: 'targeted' })
+      interaction: {
+        focusPolicy: 'activate',
+        pointerInputPolicy: 'targeted',
+        cursorVisualization: 'hidden',
+        cursorMotionMs: 0,
+        cursorAutoHideMs: 30000,
+      },
+    }).interaction).toEqual({
+      focusPolicy: 'activate',
+      pointerInputPolicy: 'targeted',
+      cursorVisualization: 'hidden',
+      cursorMotionMs: 0,
+      cursorAutoHideMs: 30000,
+    })
   })
 
   it.each([
@@ -32,6 +50,9 @@ describe('Computer Use configuration', () => {
     [{ helper: { path: '   ' } }, /helper\.path/],
     [{ interaction: { focusPolicy: 'invalid' } }, /interaction\.focusPolicy/],
     [{ interaction: { pointerInputPolicy: 'invalid' } }, /interaction\.pointerInputPolicy/],
+    [{ interaction: { cursorVisualization: 'invalid' } }, /interaction\.cursorVisualization/],
+    [{ interaction: { cursorMotionMs: 2001 } }, /interaction\.cursorMotionMs/],
+    [{ interaction: { cursorAutoHideMs: 30001 } }, /interaction\.cursorAutoHideMs/],
     [{ grants: [{ bundleId: '*' }] }, /non-wildcard/],
     [{ grants: [{ bundleId: 'com.example.App' }, { bundleId: 'com.example.App' }] }, /duplicate/],
   ] as const)('rejects invalid configuration %o', (value, pattern) => {

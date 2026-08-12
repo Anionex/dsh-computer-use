@@ -73,6 +73,7 @@ async function buildHelper() {
       '-framework', 'AppKit',
       '-framework', 'ApplicationServices',
       '-framework', 'CoreGraphics',
+      '-framework', 'QuartzCore',
       '-framework', 'ScreenCaptureKit',
       '-lproc',
       ...sources,

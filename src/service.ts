@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Context, Service } from 'cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { ComputerUseBackend, BackendObservation } from './backend.ts'
+import type { BackendCursorAction, BackendObservation, ComputerUseBackend } from './backend.ts'
 import { allocateScreenshotPath, describeScreenshot } from './artifacts.ts'
 import type { ResolvedComputerUseConfig } from './config.ts'
 import { ComputerConfirmationManager } from './confirmations.ts'
@@ -91,6 +91,46 @@ function requiresForegroundPermission(action: Exclude<ComputerActionRequest, { k
   return action.kind === 'perform-action' && action.action === 'AXRaise'
 }
 
+function cursorAction(
+  action: Exclude<ComputerActionRequest, { kind: 'wait' }>,
+  element: BackendObservation['elements'][number] | undefined,
+  window: BackendObservation['window'] | undefined,
+  app: BackendObservation['app'],
+): BackendCursorAction | undefined {
+  if (window?.id === undefined) return undefined
+  const target = {
+    targetPid: app.pid,
+    targetWindowNumber: window.id,
+    targetWindowFrame: { ...window.frame },
+  }
+  const elementPoint = element?.frame === undefined
+    ? undefined
+    : {
+        x: element.frame.x + element.frame.width / 2,
+        y: element.frame.y + element.frame.height / 2,
+      }
+  const windowPoint = (x: number | undefined, y: number | undefined): { x: number; y: number } | undefined => {
+    if (x === undefined || y === undefined || window === undefined) return undefined
+    return { x: window.frame.x + x, y: window.frame.y + y }
+  }
+  switch (action.kind) {
+    case 'click':
+    case 'scroll': {
+      const point = elementPoint ?? windowPoint(action.x, action.y)
+      return point === undefined ? undefined : { kind: action.kind, to: point, ...target }
+    }
+    case 'drag': {
+      const from = windowPoint(action.fromX, action.fromY)
+      const to = windowPoint(action.toX, action.toY)
+      return from === undefined || to === undefined ? undefined : { kind: 'drag', from, to, ...target }
+    }
+    case 'set-value':
+    case 'type-text':
+    case 'press-key':
+    case 'perform-action': return undefined
+  }
+}
+
 /** Complete Service Definition plus provider-independent implementation. */
 export class ComputerUseService extends Service {
   private backend: ComputerUseBackend
@@ -113,9 +153,10 @@ export class ComputerUseService extends Service {
     this.config = config
     this.leases = new ComputerLeaseManager(ctx, () => this.config)
     this.confirmations = new ComputerConfirmationManager(ctx, () => this.config)
-    ctx.effect(() => () => {
+    ctx.effect(() => async () => {
       this.lifecycle.abort()
       this.clearState()
+      await this.backend.dispose()
     }, 'dsh-computer-use: service lifecycle')
   }
 
@@ -139,11 +180,13 @@ export class ComputerUseService extends Service {
   /** Replace the backend/config generation after a validated live Settings update. */
   protected async reconfigure(backend: ComputerUseBackend, config: ResolvedComputerUseConfig): Promise<void> {
     const health = await backend.health(this.lifecycle.signal)
+    const previous = this.backend
     this.backend = backend
     this.config = config
     this.generation += 1
     this.clearState()
     this.healthState = { ready: true, ...health }
+    await previous.dispose()
   }
 
   /** Current provider and permission diagnostics. */
@@ -224,6 +267,16 @@ export class ComputerUseService extends Service {
     }
     await this.leases.ensure(context.agent, stored.backend.app, 'control', `computer_${action.kind}`, context.callId, signal)
     this.confirmations.consume(context.agent, stored.backend.app, action)
+    const visualization = cursorAction(action, element, stored.backend.window, stored.backend.app)
+    let cursorStarted = false
+    if (visualization !== undefined && this.config.interaction.cursorVisualization === 'visible') {
+      try {
+        await this.backend.visualizeCursor(visualization, 'before', signal)
+        cursorStarted = true
+      } catch {
+        // The overlay is presentation-only; native input remains authoritative.
+      }
+    }
     let outcome
     try {
       outcome = await this.backend.act({
@@ -236,6 +289,14 @@ export class ComputerUseService extends Service {
       }, signal)
     } catch (error) {
       throw computerUseError(error, `Computer Use ${action.kind} failed`)
+    } finally {
+      if (cursorStarted && visualization !== undefined) {
+        try {
+          await this.backend.visualizeCursor(visualization, 'after', signal)
+        } catch {
+          // The overlay is presentation-only; native input remains authoritative.
+        }
+      }
     }
     const started = Date.now()
     let latest: BackendObservation | undefined

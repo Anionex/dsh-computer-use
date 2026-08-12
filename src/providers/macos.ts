@@ -1,5 +1,6 @@
 /** macOS Accessibility/CoreGraphics/ScreenCaptureKit provider for `ctx.computerUse`. */
 
+import { setTimeout as delay } from 'node:timers/promises'
 import { Service, type Context } from 'cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-settings'
@@ -8,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {
   BackendActionRequest,
   BackendActionResult,
+  BackendCursorAction,
   BackendHealth,
   BackendObservation,
   BackendObserveOptions,
@@ -77,6 +79,55 @@ class MacOSBackend implements ComputerUseBackend {
     }, signal)
   }
 
+  async visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<void> {
+    if (this.config.interaction.cursorVisualization !== 'visible') return
+    const autoHideMs = this.config.interaction.cursorAutoHideMs
+    const move = async (point: { x: number; y: number }, durationMs: number): Promise<void> => {
+      await this.client.cursorCommand({
+        op: 'move',
+        x: point.x,
+        y: point.y,
+        durationMs,
+        autoHideMs,
+        targetPid: action.targetPid,
+        targetWindowNumber: action.targetWindowNumber,
+        targetWindowFrame: action.targetWindowFrame,
+      }, signal)
+    }
+    if (phase === 'after') {
+      if (action.kind === 'drag') await this.client.cursorCommand({
+        op: 'release',
+        autoHideMs,
+        targetPid: action.targetPid,
+        targetWindowNumber: action.targetWindowNumber,
+        targetWindowFrame: action.targetWindowFrame,
+      }, signal)
+      return
+    }
+    const start = action.kind === 'drag' ? action.from : action.to
+    if (start === undefined) return
+    await move(start, this.config.interaction.cursorMotionMs)
+    if (this.config.interaction.cursorMotionMs > 0) {
+      await delay(this.config.interaction.cursorMotionMs, undefined, { signal })
+    }
+    if (action.kind === 'scroll') return
+    await this.client.cursorCommand({
+      op: 'press',
+      autoHideMs,
+      targetPid: action.targetPid,
+      targetWindowNumber: action.targetWindowNumber,
+      targetWindowFrame: action.targetWindowFrame,
+      sustainedPress: action.kind === 'drag',
+    }, signal)
+    if (action.kind === 'drag') {
+      await move(action.to, Math.max(this.config.interaction.cursorMotionMs, 240))
+    }
+  }
+
+  async dispose(): Promise<void> {
+    await this.client.dispose()
+  }
+
   async health(signal: AbortSignal): Promise<BackendHealth> {
     const prepared = await this.client.prepare(signal)
     const health = await this.client.invoke<NativeHealth>({ command: 'health' }, signal)
@@ -115,7 +166,12 @@ export class MacOSComputerUseProvider extends ComputerUseService {
     ctx.effect(() => this.settings.watch(async (next) => {
       const candidate = resolveConfig(next)
       const backend = new MacOSBackend(ctx, candidate)
-      await this.reconfigure(backend, candidate)
+      try {
+        await this.reconfigure(backend, candidate)
+      } catch (error) {
+        await backend.dispose()
+        throw error
+      }
     }), 'dsh-computer-use: Settings watch')
     ctx.effect(() => ctx.on('agent/disposed', ({ agent }) => { this.releaseAgent(agent) }), 'dsh-computer-use: Agent cleanup')
   }
