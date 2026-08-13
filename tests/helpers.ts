@@ -164,9 +164,10 @@ interface FakeSessionEvent {
 
 export function fakeAgent(workspace: string, id = 'agent-1'): Agent & { session: Agent['session'] & { events: FakeSessionEvent[] } } {
   const events: FakeSessionEvent[] = [{ type: 'turn/start', data: { turn: 1 } }]
+  const sessionId = `session-${id}`
   const session = {
-    id: `session-${id}`,
-    header: { cwd: workspace },
+    id: sessionId,
+    header: { version: 0, id: sessionId, createdAt: 1_700_000_000_000, cwd: workspace },
     events,
     append(type: string, data: Record<string, unknown>) {
       events.push({ type, data })

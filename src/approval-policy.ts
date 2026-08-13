@@ -2,7 +2,7 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 
 /**
  * The session's effective DSH approval policy: a logged override, else the

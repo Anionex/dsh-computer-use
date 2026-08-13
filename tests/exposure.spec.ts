@@ -22,6 +22,10 @@ function loadedSession(): { events: unknown[] } {
 describe('progressive Computer Use exposure', () => {
   it('recognizes only durable evidence containing the bundled Skill', () => {
     expect(COMPUTER_USE_SKILL_CONTENT).toContain('does not require danger-full-access')
+    expect(COMPUTER_USE_SKILL_CONTENT).toContain('load the vision-tools\nSkill')
+    expect(COMPUTER_USE_SKILL_CONTENT).toContain('vision_glance for semantic inspection, OCR, or image comparison')
+    expect(COMPUTER_USE_SKILL_CONTENT).toContain('Do not check for OCR executables, invoke tesseract')
+    expect(COMPUTER_USE_SKILL_CONTENT).toContain('do not build a temporary OCR stack')
     expect(hasLoadedComputerUseSkill(loadedSession() as never)).toBe(true)
     expect(hasLoadedComputerUseSkill({ events: [] } as never)).toBe(false)
     expect(hasLoadedComputerUseSkill({
@@ -77,6 +81,7 @@ describe('progressive Computer Use exposure', () => {
         return () => { listeners.delete(name) }
       },
       agents: { list: () => [agent] },
+      tools: { guard: () => () => {} },
     }
     const definitions = [{ name: 'computer_observe' }, { name: 'computer_click' }] as ToolDefinition[]
     const exposure = new ComputerUseExposure(ctx as never, () => definitions)
@@ -108,6 +113,7 @@ describe('progressive Computer Use exposure', () => {
     const ctx = {
       on(name: string, listener: (...args: never[]) => unknown) { listeners.set(name, listener); return () => {} },
       agents: { list: () => [agent] },
+      tools: { guard: () => () => {} },
     }
     const exposure = new ComputerUseExposure(ctx as never, () => [{ name: 'computer_observe' }] as ToolDefinition[])
     exposure.install()
@@ -141,6 +147,7 @@ describe('progressive Computer Use exposure', () => {
     const ctx = {
       on: () => () => {},
       agents: { list: () => [agent] },
+      tools: { guard: () => () => {} },
     }
     const exposure = new ComputerUseExposure(ctx as never, () => [
       { name: 'computer_observe' },
@@ -148,5 +155,59 @@ describe('progressive Computer Use exposure', () => {
     ] as ToolDefinition[])
     expect(() => exposure.install()).toThrow('registration failed')
     expect(disposed).toEqual(['computer_observe'])
+  })
+
+  it('blocks ad hoc OCR shell calls when Vision Toolkit is ready', async () => {
+    const listeners = new Map<string, (...args: never[]) => unknown>()
+    let guard: ((exec: { name: string; agent?: typeof agent; arguments: unknown }) => string | undefined) | undefined
+    const agent = {
+      id: 'agent-4',
+      session: loadedSession(),
+      ctx: {
+        tools: {
+          register: () => () => {},
+          restrict: () => () => {},
+        },
+      },
+    }
+    let visionReady = true
+    const ctx = {
+      on(name: string, listener: (...args: never[]) => unknown) { listeners.set(name, listener); return () => {} },
+      agents: { list: () => [agent] },
+      tools: {
+        get(name: string) {
+          return visionReady && name === 'vision_toolkit_activate' ? { name } : undefined
+        },
+        guard(value: typeof guard) {
+          guard = value
+          return () => { guard = undefined }
+        },
+      },
+    }
+    new ComputerUseExposure(ctx as never, () => []).install()
+    expect(guard).toBeDefined()
+
+    expect(guard?.({
+      name: 'bash',
+      agent,
+      arguments: { command: 'which swift tesseract screencapture; tesseract screenshot.png stdout' },
+    })).toContain('call the skill tool with {"name":"vision-tools"}')
+
+    expect(guard?.({ name: 'bash', agent, arguments: { command: 'git status --short' } })).toBeUndefined()
+
+    expect(guard?.({ name: 'bash', agent, arguments: { command: 'rg -n "tesseract|screencapture" src tests' } })).toBeUndefined()
+    expect(guard?.({ name: 'bash', agent, arguments: { command: 'rg -n "python|import Vision|VNRecognizeTextRequest" src tests' } })).toBeUndefined()
+
+    expect(guard?.({
+      name: 'bash',
+      agent,
+      arguments: { command: "python3 <<'PY'\nfrom Vision import VNRecognizeTextRequest\nPY" },
+    })).toContain('installed Vision Toolkit')
+    expect(guard?.({ name: 'bash', agent, arguments: { command: 'brew install tesseract' } })).toContain('installed Vision Toolkit')
+    expect(guard?.({ name: 'bash', agent, arguments: { command: 'uv pip install easyocr' } })).toContain('installed Vision Toolkit')
+    expect(guard?.({ name: 'bash', agent, arguments: { command: 'command tesseract screen.png stdout' } })).toContain('installed Vision Toolkit')
+
+    visionReady = false
+    expect(guard?.({ name: 'bash', agent, arguments: { command: 'tesseract screenshot.png stdout' } })).toBeUndefined()
   })
 })

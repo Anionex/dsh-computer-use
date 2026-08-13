@@ -18,31 +18,24 @@
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "rootDir": "src",
     "outDir": "lib",
     "declarationDir": "lib/types",
     "composite": false,
     "incremental": false,
     "noEmitOnError": true,
-    "tsBuildInfoFile": "lib/.tsbuildinfo",
-    "paths": {
-      "cordis": ["../vendor/cordis/lib/types/index.d.ts"],
-      "schemastery": ["../vendor/schemastery/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-agent": ["../packages/core/agent/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-brand": ["../packages/util/brand/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-host-webserver": ["../packages/host/webserver/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-llm": ["../packages/llm/llm/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-session": ["../packages/core/session/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-session/types": ["../packages/core/session/lib/types/types.d.ts"],
-      "@deepseek-ai/dsh-settings": ["../packages/settings/settings/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-skill": ["../packages/skill/skill/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-subprocess": ["../packages/subprocess/subprocess/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-system-prompt": ["../packages/core/system-prompt/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-tools": ["../packages/core/tools/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-user-approval": ["../packages/interaction/user-approval/lib/types/index.d.ts"]
-    }
+    "tsBuildInfoFile": "lib/.tsbuildinfo"
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/client", "tests", "lib", "node_modules"]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/client",
+    "tests",
+    "lib",
+    "node_modules"
+  ]
 }

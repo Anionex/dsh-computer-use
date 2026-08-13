@@ -1,7 +1,7 @@
 import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { allocateScreenshotPath, describeScreenshot } from '../src/artifacts.ts'
+import { allocateScreenshotPath, COMPUTER_SCREENSHOT_DESCRIPTION, describeScreenshot } from '../src/artifacts.ts'
 import { temporaryDirectory } from './helpers.ts'
 
 describe('screenshot artifacts', () => {
@@ -15,10 +15,12 @@ describe('screenshot artifacts', () => {
       expect(artifact).toMatchObject({
         path,
         mimeType: 'image/png',
+        description: COMPUTER_SCREENSHOT_DESCRIPTION,
         bytes: 3,
         width: 40,
         height: 30,
       })
+      expect(artifact.description).toContain('do not recreate OCR with bash, tesseract, or an ad hoc script')
       expect(await readFile(path, 'utf8')).toBe('png')
     } finally {
       await workspace.cleanup()

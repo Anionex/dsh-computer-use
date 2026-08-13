@@ -105,6 +105,8 @@ describe('published package layout', () => {
 
   it('keeps dependency specifiers portable', () => {
     expect(PACKAGE.peerDependencies).toHaveProperty('@deepseek-ai/dsh-tools')
+    expect(PACKAGE.peerDependencies).toHaveProperty('@deepseek-ai/dsh-storage-domain')
+    expect(PACKAGE.dependencies).toHaveProperty('zod')
     for (const section of [PACKAGE.dependencies ?? {}, PACKAGE.peerDependencies ?? {}, PACKAGE.devDependencies ?? {}]) {
       for (const [name, spec] of Object.entries(section)) {
         expect(spec, name).not.toMatch(/^\/|^[A-Za-z]:\\|^file:|^link:|^workspace:/)
@@ -132,6 +134,21 @@ describe('published package layout', () => {
       const source = await readFile(file, 'utf8')
       expect(source, file).not.toMatch(/from ['"]\.\.?\/[^'"]+\.ts['"]/)
     }
+  })
+
+  it('does not modify official Session event vocabulary or append Computer Use events', async () => {
+    const sourceFiles = await javascriptFiles(join(ROOT, 'src')).catch(() => [])
+    const files = [
+      ...sourceFiles,
+      ...await javascriptFiles(join(ROOT, 'lib')),
+    ]
+    for (const file of files) {
+      const source = await readFile(file, 'utf8')
+      expect(source, file).not.toContain('KNOWN_SESSION_EVENT_TYPES')
+      expect(source, file).not.toMatch(/session\.append\(['"]computer-use\//)
+    }
+    await expect(stat(join(ROOT, 'src', 'session-event-types.ts'))).rejects.toThrow()
+    await expect(stat(join(ROOT, 'lib', 'session-event-types.js'))).rejects.toThrow()
   })
 
   it('runs the real-model release lane under workspace-write', async () => {

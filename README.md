@@ -62,7 +62,7 @@ See [Foreground-safe input policy](docs/interaction-policy.md) for the requireme
 
 - browser tasks should use browser automation and DOM/CDP state;
 - APIs, CLIs, and purpose-built application plugins remain preferable when available;
-- OCR, visual grounding, and pixel interpretation can come from the separately installed `dsh-vision-toolkit`;
+- OCR, visual grounding, and pixel interpretation should use the separately installed `dsh-vision-toolkit`: load the `vision-tools` Skill and pass the exact screenshot Artifact path to `vision_glance`, `vision_ground`, `vision_detect`, `vision_crop`, or `vision_long_screenshot_ocr`; do not replace those tools with shell-driven `tesseract`, `screencapture`, or ad hoc Swift/Python OCR;
 - domain bundles such as `dsh-design` can compose Computer Use when a workflow crosses into a native application.
 
 ## Quick start
@@ -185,6 +185,8 @@ The technical access model has two exact-bundle-id leases:
 
 Without a configured grant, DSH asks for approval. Read approval lasts for the Session; control approval lasts for the current turn. A user rejection is final for that app and scope for the rest of the Session.
 
+The Bundle keeps Session-wide read grants and rejected app/scope decisions in its own `computer_use_state` storage-domain sidecar, fenced by the Session header's `createdAt` and `cwd`. It does not add Computer Use events to the official Session log or modify DSH Core. The Web Profile already composes `@deepseek-ai/dsh-storage-domain`; a custom Profile must compose it before this Bundle if interactive read grants or durable rejections are needed. Exact grants configured in Settings remain available without storage-domain, and an allowed control decision remains process-local for the current turn. When a durable interactive decision cannot be stored, the operation fails clearly instead of silently weakening its lifetime.
+
 The DSH `danger-full-access` preset uses `approval/policy: never`, so an ungranted app is policy-blocked before any prompt. The plugin reports an actionable `COMPUTER_PERMISSION_REQUIRED` error and does not record that outcome as a user rejection. Add the exact bundle id in Computer Use Settings or use a preset whose approval policy is `ask`.
 
 High-impact communication, sensitive-data transmission, irreversible deletion, account/security/privacy changes, unrequested installation, legal acceptance, and financial completion beyond explicit authorization require `computer_confirm` immediately before execution. The token is short-lived, one-use, and bound to the exact app, process, observation, and action. Grants do not bypass it.
@@ -277,7 +279,7 @@ dsh plugin --profile web remove @dsh-external/dsh-computer-use
 dsh plugin --profile headless remove @dsh-external/dsh-computer-use
 ```
 
-Removing or disabling the Bundle unregisters the Skill and Tools, cancels helper work, releases Agent observations and confirmations, and removes Web contributions. Existing screenshot files remain in the Session workspace for explicit user cleanup.
+Removing or disabling the Bundle unregisters the Skill and Tools, cancels helper work, releases process-local Agent observations, turn control grants, and confirmations, closes its storage-domain handle, and removes Web contributions. Existing screenshot files and the plugin-owned `computer_use_state` sidecar remain for explicit user cleanup.
 
 ## Security, community, and support
 

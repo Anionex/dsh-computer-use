@@ -1,6 +1,6 @@
 /** Focused model-facing Computer Use Tool definitions. */
 
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { defineTool, type JsonValue, type ToolDefinition, type ToolRunContext, type ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import {
   ComputerConfirmationToken,
@@ -24,6 +24,21 @@ function contextOf(exec: ToolRunContext): ComputerUseContext {
     callId: exec.callId,
     signal: exec.signal,
   }
+}
+
+function deferVisionHandoff(exec: ToolRunContext, artifact: ComputerArtifact | undefined): void {
+  if (artifact === undefined) return
+  exec.deferContext(createUserMessage({
+    content: [{
+      type: 'text',
+      text: [
+        `Computer Use returned a screenshot Artifact at ${JSON.stringify(artifact.path)}.`,
+        'If the task now needs OCR, visual grounding, or pixel inspection and vision_glance is not visible, call the skill tool with {"name":"vision-tools"}; then pass this exact Artifact path to vision_glance, vision_ground, vision_detect, vision_crop, or vision_long_screenshot_ocr.',
+        'Do not inspect OCR executables or use bash, tesseract, screencapture, or an ad hoc Swift/Python OCR implementation.',
+      ].join(' '),
+    }],
+    source: { kind: 'plugin', plugin: 'dsh-computer-use' },
+  }))
 }
 
 const rectSchema = {
@@ -292,7 +307,7 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const observe = defineTool({
     name: 'computer_observe',
-    description: 'Read a fresh Accessibility observation for one exact running app. Element indexes belong only to the returned observationId. Prefer the tree; request a screenshot for pixel-only facts.',
+    description: 'Read a fresh Accessibility observation for one exact running app. Element indexes belong only to the returned observationId. Prefer the tree; request a screenshot for pixel-only facts. When a screenshot needs OCR, visual grounding, or pixel inspection, load the vision-tools Skill and pass the returned Artifact path to its native tools instead of using bash, tesseract, screencapture, or an ad hoc OCR script.',
     parameters: {
       app: { ...appSelectorSchema, required: true },
       screenshot: { type: 'string', enum: ['none', 'optional', 'required'], description: 'Default optional. Required fails when Screen Recording is unavailable.' },
@@ -303,7 +318,11 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
       render: renderJson,
       presentationMeta: (_args, value) => value.screenshot === undefined ? {} : { artifacts: [value.screenshot] },
     },
-    execute: (args, exec) => service.observe(args, contextOf(exec)),
+    execute: async (args, exec) => {
+      const observation = await service.observe(args, contextOf(exec))
+      deferVisionHandoff(exec, observation.screenshot)
+      return observation
+    },
     presentCall: () => ({ card: 'generic', title: 'Observe macOS app', kind: 'read' }),
   })
 

@@ -1,5 +1,5 @@
 /** Managed invocation and integrity checks for the fixed-command Swift helper. */
-import type { Context } from 'cordis';
+import type { Context } from '@deepseek-ai/cordis';
 import type { ResolvedComputerUseConfig } from '../config.ts';
 /** Exact helper paths and integrity data for one active generation. */
 export interface PreparedNativeHelper {

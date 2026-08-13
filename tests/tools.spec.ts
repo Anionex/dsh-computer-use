@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { COMPUTER_SCREENSHOT_DESCRIPTION } from '../src/artifacts.ts'
 import { createComputerUseTools } from '../src/tools.ts'
 import type { ComputerObservation } from '../src/types.ts'
 import { ComputerObservationId } from '../src/types.ts'
@@ -20,7 +21,7 @@ function observation(withScreenshot = false): ComputerObservation {
         filename: 'screenshot.png',
         mimeType: 'image/png',
         kind: 'image',
-        description: 'Current app',
+        description: COMPUTER_SCREENSHOT_DESCRIPTION,
         sourceTool: 'computer_observe',
         previewIntent: 'image',
         bytes: 12,
@@ -76,6 +77,8 @@ describe('model-facing Computer Use tools', () => {
         screenshot: { enum: ['none', 'optional', 'required'] },
       },
     })
+    expect(tools[1]?.description).toContain('load the vision-tools Skill')
+    expect(tools[1]?.description).toContain('instead of using bash, tesseract, screencapture, or an ad hoc OCR script')
     expect(tools[5]?.parameters).toMatchObject({
       required: ['observationId', 'key'],
       properties: {
@@ -108,6 +111,7 @@ describe('model-facing Computer Use tools', () => {
       callId: 'call-1',
       signal: new AbortController().signal,
       agent: { session: { header: {} } },
+      deferContext: vi.fn(),
     }
     await tools[0]!.execute({}, exec as never)
     await tools[1]!.execute({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required', full: true }, exec as never)
@@ -131,6 +135,11 @@ describe('model-facing Computer Use tools', () => {
       { app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required', full: true },
       expect.objectContaining({ workspace: process.cwd(), callId: 'call-1' }),
     )
+    expect(exec.deferContext).toHaveBeenCalledOnce()
+    expect(exec.deferContext.mock.calls[0]?.[0]).toMatchObject({
+      source: { kind: 'plugin', plugin: 'dsh-computer-use' },
+      content: [{ type: 'text', text: expect.stringContaining('call the skill tool with {"name":"vision-tools"}') }],
+    })
     expect(service.act.mock.calls.map(call => call[0])).toEqual([
       expect.objectContaining({ kind: 'click', observationId: 'observation-1', elementIndex: 4, allowCoordinateFallback: true, coordinateSpace: 'screen' }),
       expect.objectContaining({ kind: 'set-value', value: 'secret-value' }),

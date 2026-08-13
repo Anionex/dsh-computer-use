@@ -19,6 +19,8 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ### Fixed
 
+- Directed screenshot OCR, visual grounding, and pixel inspection to the installed `vision-tools` Skill and native Vision Toolkit tools at both the Computer Use Skill and screenshot Artifact decision points, instead of allowing shell-built OCR substitutes.
+- Moved Session-wide read grants and rejected app/scope decisions out of unofficial Session event types into the plugin-owned `computer_use_state` storage-domain sidecar, fenced to the exact Session lifecycle and persisted after the Session audit flush.
 - Removed global HID pointer posting and system-cursor movement from the native helper.
 - Fixed `AXPress` clicks failing on container elements that advertise `AXPress` but reject the press even though a pressable child exists (for example App Store sidebar cells).
 - Removed unconditional target-app activation from semantic Accessibility actions and process-targeted input.

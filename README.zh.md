@@ -42,7 +42,7 @@ DSH Computer Use 的默认路由有意避免干扰：
 ```text
 observe exact bundle id + pid
 -> element: "Targeted pointer probe", no AXPress action
--> 使用 observationId + element index + allowCoordinateFallback 执行 computer_click
+-> computer_click with observationId + element index + allowCoordinateFallback
 -> fresh observation
 -> activation "not-requested"; pointerRouting "target-process"
 -> status "Status: pointer click"
@@ -54,7 +54,7 @@ observe exact bundle id + pid
 
 Fixture 会记录每次 `applicationDidBecomeActive` 回调。独立 native monitor 还会在 click、scroll 与 drag 整个动作期间每毫秒采样系统光标和前台 pid。默认发布路径不得增加 `activationCount`，并要求光标坐标不变、前台 pid 不变、click/scroll 精确计数，并且 drag 只有一组完整 down/up gesture。
 
-需求、架构、关键决策、验证证据和兼容性边界见[前台安全输入策略](docs/interaction-policy.zh.md)。
+需求、架构、关键决策、验证证据和兼容性边界见[前台安全输入策略](docs/interaction-policy.md)。
 
 ## 范围
 
@@ -62,7 +62,7 @@ Fixture 会记录每次 `applicationDidBecomeActive` 回调。独立 native moni
 
 - 浏览器任务应继续使用 browser automation 和 DOM/CDP 状态；
 - 有 API、CLI 或专用应用插件时仍应优先使用；
-- OCR、视觉 grounding 与像素理解可以来自独立安装的 `dsh-vision-toolkit`；
+- OCR、视觉 grounding 与像素理解应交给独立安装的 `dsh-vision-toolkit`：加载 `vision-tools` Skill，把准确的截图 Artifact 路径传给 `vision_glance`、`vision_ground`、`vision_detect`、`vision_crop` 或 `vision_long_screenshot_ocr`；不要用 shell 驱动的 `tesseract`、`screencapture` 或临时 Swift/Python OCR 取代这些工具；
 - `dsh-design` 等领域 Bundle 可以在工作流跨入原生应用时组合 Computer Use。
 
 ## 快速开始
@@ -104,19 +104,19 @@ dsh --profile headless --dump-config | grep computer-use
 
 ```mermaid
 flowchart LR
-    A["选择准确 bundle id 和 pid"] --> B["获取有范围的 read access"]
-    B --> C["观察 AX tree 与可选截图"]
-    C --> D["选择 indexed element 或窗口相对坐标"]
-    D --> E["获取 control 与可选一次性 confirmation"]
-    E --> F["重新观察并校验准确目标"]
-    F --> G{"输入路由"}
-    G -->|"语义"| H["Accessibility action 或 value"]
-    G -->|"键盘"| I["投递到目标 pid"]
-    G -->|"指针"| J["投递到目标 pid + window"]
-    H --> K["等待状态稳定"]
+    A["Select exact bundle id and pid"] --> B["Acquire scoped read access"]
+    B --> C["Observe AX tree and optional screenshot"]
+    C --> D["Choose indexed element or window-relative point"]
+    D --> E["Acquire control and optional one-use confirmation"]
+    E --> F["Re-observe and validate exact target"]
+    F --> G{"Input route"}
+    G -->|"Semantic"| H["Accessibility action or value"]
+    G -->|"Keyboard"| I["Post to target pid"]
+    G -->|"Pointer"| J["Post to target pid + window"]
+    H --> K["Wait for settlement"]
     I --> K
     J --> K
-    K --> L["返回新鲜 full 或 diff observation"]
+    K --> L["Return fresh full or diff observation"]
 ```
 
 每个元素 index 只在来源 observation 中有效。元素动作可以容忍无关 tree 变化，但会拒绝变化的进程、窗口、locator 或目标身份。坐标动作要求引用窗口的完整状态仍然新鲜。Stale 动作会返回 `COMPUTER_STALE_OBSERVATION`，不会搜索相似替代目标。
@@ -184,6 +184,8 @@ Observation 包含 opaque id 与过期时间、准确 app 身份、frontmost/win
 - `control`：向选定应用发送 UI 输入。
 
 没有配置 grant 时，DSH 会请求 approval。Read approval 在 Session 内有效，control approval 只在当前 turn 有效。用户拒绝后，该 app/scope 在当前 Session 内保持最终结果。
+
+Bundle 把 Session 级 read grant 和被拒绝的 app/scope 决定保存在自己拥有的 `computer_use_state` storage-domain sidecar 中，并用 Session header 的 `createdAt` 与 `cwd` 绑定准确生命周期；它不会向官方 Session 日志新增 Computer Use event，也不会修改 DSH Core。Web Profile 已经组合 `@deepseek-ai/dsh-storage-domain`；自定义 Profile 如果需要交互式 read grant 或持久拒绝状态，必须在本 Bundle 之前组合它。Settings 中配置的准确 grant 在没有 storage-domain 时仍可使用；获准的 control 决定只保存在当前进程的当前 turn。需要持久化的交互决定如果无法保存，操作会明确失败，不会静默缩短或削弱授权生命周期。
 
 DSH `danger-full-access` preset 使用 `approval/policy: never`，因此未授权应用会在弹窗前被策略阻断。插件返回可操作的 `COMPUTER_PERMISSION_REQUIRED` 错误，并且不会把它记录成用户拒绝。请在 Computer Use Settings 中添加准确 bundle id，或改用 approval policy 为 `ask` 的 preset。
 
@@ -266,7 +268,7 @@ pnpm run validate
 
 ```sh
 pnpm run validate:model
-# 或先执行 keyless 验证，再执行真实模型 lane
+# or keyless validation followed by the real-model lane
 pnpm run validate:release
 ```
 
@@ -277,7 +279,7 @@ dsh plugin --profile web remove @dsh-external/dsh-computer-use
 dsh plugin --profile headless remove @dsh-external/dsh-computer-use
 ```
 
-移除或禁用 Bundle 会注销 Skill 与 Tool、取消 helper 工作、释放 Agent observation 与 confirmation，并移除 Web contribution。已经生成的截图文件留在 Session workspace，供用户显式清理。
+移除或禁用 Bundle 会注销 Skill 与 Tool、取消 helper 工作、释放进程内 Agent observation、turn control grant 与 confirmation、关闭 storage-domain handle，并移除 Web contribution。已经生成的截图文件和插件自有的 `computer_use_state` sidecar 会保留，供用户显式清理。
 
 ## 安全、社区与支持
 

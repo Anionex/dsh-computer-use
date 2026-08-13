@@ -1,5 +1,5 @@
 /** Validated provider, observation, settlement, artifact, and app-policy configuration. */
-import type Schema from 'schemastery';
+import type Schema from '@deepseek-ai/schemastery';
 /** Settings document namespace owned by this package. */
 export declare const COMPUTER_USE_SETTINGS_NAMESPACE: import("@deepseek-ai/dsh-settings").SettingsNamespace;
 /** One persisted application grant. Wildcards are intentionally unsupported. */

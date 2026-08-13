@@ -7,6 +7,13 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import { ComputerUseError } from './errors.ts'
 import type { ComputerArtifact } from './types.ts'
 
+/** Screenshot description that hands visual analysis to the sibling Vision Toolkit. */
+export const COMPUTER_SCREENSHOT_DESCRIPTION = [
+  'Current macOS application window observation.',
+  'For OCR, visual grounding, or pixel inspection, load the vision-tools Skill and pass this exact path to vision_glance, vision_ground, vision_detect, or vision_crop;',
+  'do not recreate OCR with bash, tesseract, or an ad hoc script.',
+].join(' ')
+
 function isWithin(root: string, candidate: string): boolean {
   const rel = relative(root, candidate)
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
@@ -76,7 +83,7 @@ export async function describeScreenshot(
     filename: basename(path),
     mimeType: 'image/png',
     kind: 'image',
-    description: 'Current macOS application window observation',
+    description: COMPUTER_SCREENSHOT_DESCRIPTION,
     sourceTool,
     previewIntent: 'image',
     bytes: info.size,

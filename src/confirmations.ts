@@ -2,7 +2,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { approvalPolicy } from './approval-policy.ts'
 import type { ResolvedComputerUseConfig } from './config.ts'
 import { ComputerUseError } from './errors.ts'

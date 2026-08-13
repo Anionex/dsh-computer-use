@@ -1,7 +1,7 @@
 /** Optional Web Settings and provider-health route. */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { SettingsConflictError, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import {
@@ -170,8 +170,8 @@ export class ComputerUseWebBackend {
 /** Attach the optional route when a Web host is present. */
 export function installComputerUseWeb(ctx: Context): void {
   const backend = new ComputerUseWebBackend(ctx)
-  ctx.inject(['httpServer'], (webCtx) => {
-    webCtx.effect(() => webCtx.httpServer.register({
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(() => webCtx.webServer.register({
       kind: 'exact',
       path: COMPUTER_USE_SETTINGS_ROUTE,
       handler: (req, res) => backend.handle(req, res),

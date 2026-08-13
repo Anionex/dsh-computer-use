@@ -103,13 +103,15 @@ async function executable(name) {
 
 async function dshSourceRoot() {
   const dsh = await realpath(await executable('dsh'))
-  const candidates = [join(dirname(dsh), '..'), join(dirname(dsh), '..', '..')]
-  for (const candidate of candidates) {
+  let candidate = dirname(dsh)
+  for (let depth = 0; depth < 6; depth += 1) {
     try {
       await access(join(candidate, 'apps', 'cli', 'config', 'agent-presets', 'standard'))
       return await realpath(candidate)
     } catch {
-      // Continue candidate search.
+      const parent = dirname(candidate)
+      if (parent === candidate) break
+      candidate = parent
     }
   }
   throw new Error(`cannot infer DSH source root from ${dsh}`)

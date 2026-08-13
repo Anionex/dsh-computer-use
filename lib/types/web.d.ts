@@ -1,6 +1,6 @@
 /** Optional Web Settings and provider-health route. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Context } from 'cordis';
+import type { Context } from '@deepseek-ai/cordis';
 import { type ComputerUseConfig } from './config.ts';
 import type { ComputerUseStatus } from './types.ts';
 /** Exact same-origin Settings endpoint. */

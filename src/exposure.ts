@@ -4,11 +4,28 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { COMPUTER_USE_SKILL_CONTENT, COMPUTER_USE_SKILL_NAME } from './skill.ts'
 
 /** One global bootstrap retained until the current Agent loads the Skill. */
 export const COMPUTER_USE_ACTIVATE = 'computer_use_activate'
+
+const VISION_TOOL_NAMES = [
+  'vision_glance',
+  'vision_ground',
+  'vision_detect',
+  'vision_crop',
+  'vision_long_screenshot_ocr',
+  'vision_toolkit_activate',
+] as const
+
+const COMMAND_PREFIX = /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*(?:(?:\S*\/)?(?:sudo|env|nohup|time|command|exec)\s+(?:(?:-\S+|[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*)?/iu
+const OCR_COMMAND_PROBE = /^(?:which|type|command\s+-v)\b[^\n;&|]*\b(?:tesseract|screencapture)\b/iu
+const OCR_EXECUTABLE = /^(?:\S*\/)?(?:tesseract|screencapture)(?:\s|$)/iu
+const OCR_STACK_SETUP = /^(?:(?:\S*\/)?(?:brew|port|apt(?:-get)?|dnf|yum|pacman)\b[^\n]*(?:install|add)\b[^\n]*\btesseract(?:-ocr)?\b|(?:\S*\/)?(?:pip(?:3(?:\.\d+)*)?|uv\s+pip|poetry\s+add|pdm\s+add)\b[^\n]*(?:install|add)?[^\n]*\b(?:pytesseract|easyocr|ocrmypdf)\b)/iu
+const SCRIPTED_OCR_EXECUTABLE = /^(?:\S*\/)?(?:python(?:3(?:\.\d+)*)?|swift)(?:\s|$)/iu
+const SCRIPTED_OCR_MARKER = /(?:\bpytesseract\b|\beasyocr\b|\bocrmypdf\b|VNRecognizeTextRequest|\bimport\s+Vision\b)/iu
+const SHELL_META = /(?:&&|\|\||[;|\n])/u
 
 interface AgentExposure {
   active: boolean
@@ -29,6 +46,17 @@ function renderJson(_args: unknown, value: unknown): ContentBlock[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function adHocOcrCommand(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.command !== 'string') return false
+  const commands = value.command.split(SHELL_META)
+    .map(command => command.trimStart().replace(COMMAND_PREFIX, ''))
+  if (commands.some(command => OCR_COMMAND_PROBE.test(command)
+    || OCR_EXECUTABLE.test(command)
+    || OCR_STACK_SETUP.test(command))) return true
+  return SCRIPTED_OCR_MARKER.test(value.command)
+    && commands.some(command => SCRIPTED_OCR_EXECUTABLE.test(command))
 }
 
 function isSkillArguments(value: unknown): boolean {
@@ -124,9 +152,17 @@ export class ComputerUseExposure {
   install(): () => void {
     if (this.installed) throw new Error('dsh-computer-use: progressive exposure is already installed')
     this.installed = true
-    const listeners = [
+    const effects = [
       this.ctx.on('agent/created', ({ agent }) => { this.attach(agent) }),
       this.ctx.on('agent/disposed', ({ agent }) => { this.detach(agent) }),
+      this.ctx.tools.guard((exec) => {
+        if (exec.name !== 'bash'
+          || exec.agent === undefined
+          || !hasLoadedComputerUseSkill(exec.agent.session)
+          || !adHocOcrCommand(exec.arguments)
+          || !VISION_TOOL_NAMES.some(name => this.ctx.tools.get(name, exec.agent) !== undefined)) return undefined
+        return 'Computer Use screenshot analysis must use the installed Vision Toolkit instead of a shell-built OCR stack. If vision_glance is absent, call the skill tool with {"name":"vision-tools"}; then pass the existing screenshot Artifact path to vision_glance, vision_ground, vision_detect, vision_crop, or vision_long_screenshot_ocr.'
+      }),
       this.ctx.on('tools/result', (exec, result) => {
         if (result.isError === false
           && exec.name === 'skill'
@@ -139,7 +175,7 @@ export class ComputerUseExposure {
     try {
       for (const agent of this.ctx.agents.list()) this.attach(agent)
     } catch (error) {
-      for (const dispose of listeners.reverse()) dispose()
+      for (const dispose of effects.reverse()) dispose()
       this.disposeStates()
       this.installed = false
       throw error
@@ -147,7 +183,7 @@ export class ComputerUseExposure {
     return () => {
       if (!this.installed) return
       this.installed = false
-      for (const dispose of listeners.reverse()) dispose()
+      for (const dispose of effects.reverse()) dispose()
       this.disposeStates()
     }
   }

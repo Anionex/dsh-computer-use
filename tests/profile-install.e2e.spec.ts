@@ -18,6 +18,11 @@ interface ScriptedRequest {
   body: unknown
 }
 
+interface ScriptedFailure {
+  message: string
+  stack?: string
+}
+
 type ScriptedStep =
   | { kind: 'tool'; name: string; arguments: string }
   | { kind: 'text'; text: string }
@@ -134,8 +139,22 @@ function recursiveObservation(value: unknown): { observationId: string; elements
   return undefined
 }
 
+function artifactDescriptions(value: unknown): string[] {
+  if (typeof value === 'string') {
+    try { return artifactDescriptions(JSON.parse(value)) } catch { return [] }
+  }
+  if (Array.isArray(value)) return value.flatMap(artifactDescriptions)
+  if (value === null || typeof value !== 'object') return []
+  const record = value as Record<string, unknown>
+  const own = record.mimeType === 'image/png' && typeof record.description === 'string'
+    ? [record.description]
+    : []
+  return [...own, ...Object.values(record).flatMap(artifactDescriptions)]
+}
+
 async function startScriptedServer(steps: readonly ScriptedStepFactory[]) {
   const requests: ScriptedRequest[] = []
+  const failures: ScriptedFailure[] = []
   let stepIndex = 0
   const server = createServer((request, response) => {
     if (request.method !== 'POST' || !request.url?.endsWith('/chat/completions')) {
@@ -149,7 +168,17 @@ async function startScriptedServer(steps: readonly ScriptedStepFactory[]) {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
       requests.push({ body })
       const selected = steps[stepIndex++]
-      const step = typeof selected === 'function' ? selected(body) : selected
+      let step: ScriptedStep | undefined
+      try {
+        step = typeof selected === 'function' ? selected(body) : selected
+      } catch (error) {
+        failures.push(error instanceof Error
+          ? { message: error.message, ...(error.stack === undefined ? {} : { stack: error.stack }) }
+          : { message: String(error) })
+        response.writeHead(500, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: { message: failures.at(-1)?.message } }))
+        return
+      }
       if (step === undefined) {
         response.writeHead(500, { 'content-type': 'application/json' })
         response.end('{"error":{"message":"script exhausted"}}')
@@ -193,6 +222,7 @@ async function startScriptedServer(steps: readonly ScriptedStepFactory[]) {
   return {
     baseURL: `http://127.0.0.1:${address.port}/v1`,
     requests,
+    failures,
     close: () => new Promise<void>((resolve, reject) => {
       server.close(error => error === undefined ? resolve() : reject(error))
       server.closeAllConnections()
@@ -209,6 +239,16 @@ function toolNames(request: ScriptedRequest | undefined): string[] {
 function latestToolResult(request: ScriptedRequest | undefined): unknown {
   const body = request?.body as { messages?: Array<{ role?: unknown; name?: unknown; content?: unknown }> } | undefined
   return body?.messages?.filter(message => message.role === 'tool').at(-1)
+}
+
+function modelRequestSummary(value: unknown): unknown {
+  const body = value as { messages?: Array<{ role?: unknown; name?: unknown; content?: unknown; tool_calls?: unknown }> }
+  return body.messages?.map(message => ({
+    role: message.role,
+    name: message.name,
+    content: typeof message.content === 'string' ? message.content.slice(0, 1200) : message.content,
+    tool_calls: message.tool_calls,
+  }))
 }
 
 async function screenshotFiles(directory: string): Promise<string[]> {
@@ -324,7 +364,14 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       },
       body => {
         const observation = recursiveObservation(body)
-        if (observation === undefined) throw new Error('model request did not contain the computer_observe result')
+        if (observation === undefined) {
+          throw new Error(`model request did not contain the computer_observe result: ${JSON.stringify(modelRequestSummary(body))}`)
+        }
+        const descriptions = artifactDescriptions(body)
+        if (!descriptions.some(description => description.includes('load the vision-tools Skill')
+          && description.includes('do not recreate OCR with bash, tesseract, or an ad hoc script'))) {
+          throw new Error(`model request did not contain the Vision Toolkit screenshot handoff: ${JSON.stringify(descriptions)}`)
+        }
         const probe = observation.elements.find(element => element.label === 'Targeted pointer probe' || element.title === 'Targeted pointer probe')
         if (probe === undefined) throw new Error('fixture pointer probe was absent from model-visible observation')
         return {
@@ -341,7 +388,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     ])
     try {
       const result = await run('dsh', [
-        'run', '--profile', 'headless', '--patch', patch,
+        '--profile', 'headless', '--patch', patch,
         '/computer-use enable the deterministic fixture option using fresh Accessibility state',
       ], {
         cwd: workspace,
@@ -354,12 +401,17 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
         },
         timeoutMs: 180000,
       })
+      expect(server.failures, `scripted server failures:\n${JSON.stringify(server.failures, null, 2)}\ndsh stderr:\n${result.stderr}`).toEqual([])
       expect(result.code, result.stderr).toBe(0)
       expect(result.stdout.trim()).toBe('computer-use profile e2e passed')
       expect(server.requests).toHaveLength(4)
-      expect(JSON.stringify(server.requests[0]?.body)).toContain('Current DSH file policy: workspace-write.')
+      const initialRequest = JSON.stringify(server.requests[0]?.body)
+      expect(initialRequest).toContain('Current DSH file policy: workspace-write.')
       expect(toolNames(server.requests[0])).toContain(COMPUTER_USE_ACTIVATE)
       expect(toolNames(server.requests[0])).not.toContain('computer_observe')
+      const skillLoadedRequest = JSON.stringify(server.requests[1]?.body)
+      expect(skillLoadedRequest).toContain('load the vision-tools')
+      expect(skillLoadedRequest).toContain('Do not check for OCR executables, invoke tesseract')
       expect(toolNames(server.requests[1])).toContain('computer_observe')
       expect(toolNames(server.requests[1])).not.toContain(COMPUTER_USE_ACTIVATE)
       expect(toolNames(server.requests[2])).toContain('computer_click')
@@ -380,7 +432,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     const disabledServer = await startScriptedServer([{ kind: 'text', text: 'computer-use disabled' }])
     try {
       const disabled = await run('dsh', [
-        'run', '--profile', 'headless', '--patch', patch, '--patch', disablePatch, 'say computer-use disabled',
+        '--profile', 'headless', '--patch', patch, '--patch', disablePatch, 'say computer-use disabled',
       ], {
         cwd: workspace,
         env: {
@@ -405,7 +457,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     ])
     try {
       const reenabled = await run('dsh', [
-        'run', '--profile', 'headless', '--patch', patch, '/computer-use list the running applications',
+        '--profile', 'headless', '--patch', patch, '/computer-use list the running applications',
       ], {
         cwd: workspace,
         env: {

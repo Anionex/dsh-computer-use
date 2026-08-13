@@ -1,7 +1,8 @@
-import { Context } from 'cordis'
+import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApprovalOutcome, ApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import { resolveConfig, type ComputerUseConfig } from '../src/config.ts'
+import type { ComputerUseSessionState } from '../src/leases.ts'
 import { ComputerUseService } from '../src/service.ts'
 import {
   ComputerObservationId,
@@ -25,14 +26,44 @@ function serviceHarness(
   config: ComputerUseConfig = {},
   approval: ApprovalOutcome = 'allowed-once',
   policy: ApprovalPolicy = 'ask',
+  options: { storage?: boolean; flushParticipates?: boolean } = {},
 ) {
   const ctx = new Context()
-  const request = vi.fn(() => Promise.resolve(approval))
+  const order: string[] = []
+  let approvalId = 0
+  const request = vi.fn(({ agent }: { agent: ReturnType<typeof fakeAgent> }) => {
+    const id = `approval-${++approvalId}`
+    agent.session.append('approval/asked', { id })
+    agent.session.append('approval/decided', { id, outcome: approval })
+    order.push('approval:decided')
+    return Promise.resolve(approval)
+  })
   ctx.provide('approval', {
     request,
     overrideOf: () => (policy === 'never' ? 'never' : undefined),
     config: { policy },
   } as never)
+  const rows = new Map<string, ComputerUseSessionState>()
+  const flush = vi.fn(() => {
+    order.push('session:flushed')
+    return Promise.resolve(options.flushParticipates ?? true)
+  })
+  ctx.provide('sessions', { flush } as never)
+  if (options.storage !== false) {
+    ctx.provide('storageDomain', {
+      open: () => Promise.resolve({
+        table: () => ({
+          get: (key: string) => rows.get(key),
+          put: (key: string, value: ComputerUseSessionState) => {
+            order.push('sidecar:durable')
+            rows.set(key, value)
+            return Promise.resolve()
+          },
+        }),
+        close: () => Promise.resolve(),
+      }),
+    } as never)
+  }
   const backend = new FakeBackend()
   const service = new TestComputerUseService(ctx, backend, resolveConfig({
     settleMs: 0,
@@ -40,7 +71,7 @@ function serviceHarness(
     grants: [{ bundleId: FIXTURE_APP.bundleId, read: true, control: true }],
     ...config,
   }))
-  return { ctx, backend, service, request }
+  return { ctx, backend, service, request, rows, flush, order }
 }
 
 function callContext(agent: ReturnType<typeof fakeAgent>, workspace: string): ComputerUseContext {
@@ -304,7 +335,7 @@ describe('Computer Use Service', () => {
   it('persists read leases for the Session and control leases for the current turn', async () => {
     const workspace = await temporaryDirectory('dsh-computer-leases-')
     try {
-      const { service, request } = serviceHarness({ grants: [] })
+      const { service, request, rows, order } = serviceHarness({ grants: [] })
       const agent = fakeAgent(workspace.path)
       const context = callContext(agent, workspace.path)
       const first = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
@@ -314,10 +345,13 @@ describe('Computer Use Service', () => {
       expect(request).toHaveBeenCalledTimes(2)
       await service.act({ kind: 'click', observationId: firstAction.observation.observationId, elementIndex: 1 }, context)
       expect(request).toHaveBeenCalledTimes(2)
-      expect(agent.session.events.filter(event => event.type === 'computer-use/lease')).toEqual([
-        { type: 'computer-use/lease', data: { bundleId: FIXTURE_APP.bundleId, scope: 'read', source: 'approval' } },
-        { type: 'computer-use/lease', data: { bundleId: FIXTURE_APP.bundleId, scope: 'control', turn: 1, source: 'approval' } },
-      ])
+      expect(rows.get(agent.session.id)).toEqual({
+        session: { createdAt: agent.session.header.createdAt, cwd: workspace.path },
+        readGrants: [FIXTURE_APP.bundleId],
+        denied: [],
+      })
+      expect(order.slice(0, 3)).toEqual(['approval:decided', 'session:flushed', 'sidecar:durable'])
+      expect(agent.session.events.some(event => event.type.startsWith('computer-use/'))).toBe(false)
     } finally {
       await workspace.cleanup()
     }
@@ -341,7 +375,7 @@ describe('Computer Use Service', () => {
   it('records a rejected approval for the Session and does not ask again for the same app and scope', async () => {
     const workspace = await temporaryDirectory('dsh-computer-lease-rejected-')
     try {
-      const { service, request } = serviceHarness({ grants: [] }, 'rejected')
+      const { service, request, rows } = serviceHarness({ grants: [] }, 'rejected')
       const agent = fakeAgent(workspace.path)
       const context = callContext(agent, workspace.path)
       await expect(service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context))
@@ -349,9 +383,8 @@ describe('Computer Use Service', () => {
       await expect(service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context))
         .rejects.toMatchObject({ code: 'COMPUTER_PERMISSION_REQUIRED' })
       expect(request).toHaveBeenCalledTimes(1)
-      expect(agent.session.events.filter(event => event.type === 'computer-use/denied')).toEqual([
-        { type: 'computer-use/denied', data: { bundleId: FIXTURE_APP.bundleId, scope: 'read' } },
-      ])
+      expect(rows.get(agent.session.id)?.denied).toEqual([{ bundleId: FIXTURE_APP.bundleId, scope: 'read' }])
+      expect(agent.session.events.some(event => event.type.startsWith('computer-use/'))).toBe(false)
     } finally {
       await workspace.cleanup()
     }
@@ -371,7 +404,104 @@ describe('Computer Use Service', () => {
       await expect(service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context))
         .rejects.toMatchObject({ code: 'COMPUTER_PERMISSION_REQUIRED' })
       expect(request).not.toHaveBeenCalled()
-      expect(agent.session.events.filter(event => event.type === 'computer-use/denied')).toEqual([])
+      expect(agent.session.events.some(event => event.type.startsWith('computer-use/'))).toBe(false)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('keeps static grants and current-turn control approval usable without storage-domain', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-no-storage-control-')
+    try {
+      const configured = serviceHarness({}, 'allowed-once', 'ask', { storage: false })
+      const configuredAgent = fakeAgent(workspace.path, 'configured-no-storage')
+      await expect(configured.service.observe(
+        { app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' },
+        callContext(configuredAgent, workspace.path),
+      )).resolves.toBeDefined()
+      expect(configured.request).not.toHaveBeenCalled()
+
+      const interactive = serviceHarness({
+        grants: [{ bundleId: FIXTURE_APP.bundleId, read: true, control: false }],
+      }, 'allowed-once', 'ask', { storage: false })
+      const agent = fakeAgent(workspace.path, 'control-no-storage')
+      const context = callContext(agent, workspace.path)
+      const first = await interactive.service.observe(
+        { app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' },
+        context,
+      )
+      const result = await interactive.service.act(
+        { kind: 'click', observationId: first.observationId, elementIndex: 1 },
+        context,
+      )
+      await interactive.service.act(
+        { kind: 'click', observationId: result.observation.observationId, elementIndex: 1 },
+        context,
+      )
+      expect(interactive.request).toHaveBeenCalledTimes(1)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('fails clearly before asking for a Session-wide read grant without storage-domain', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-no-storage-read-')
+    try {
+      const { service, request } = serviceHarness({ grants: [] }, 'allowed-once', 'ask', { storage: false })
+      const agent = fakeAgent(workspace.path)
+      await expect(service.observe(
+        { app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' },
+        callContext(agent, workspace.path),
+      )).rejects.toMatchObject({
+        code: 'COMPUTER_PERMISSION_REQUIRED',
+        message: expect.stringContaining('ctx.storageDomain'),
+      })
+      expect(request).not.toHaveBeenCalled()
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('ignores a stale sidecar row when a Session id is reused with another header identity', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-sidecar-identity-')
+    try {
+      const { service, request, rows } = serviceHarness({ grants: [] })
+      const first = fakeAgent(workspace.path, 'reused')
+      await service.observe(
+        { app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' },
+        callContext(first, workspace.path),
+      )
+      const replacement = fakeAgent(workspace.path, 'reused')
+      ;(replacement.session.header as { createdAt: number }).createdAt += 1
+      await service.observe(
+        { app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' },
+        callContext(replacement, workspace.path),
+      )
+      expect(request).toHaveBeenCalledTimes(2)
+      expect(rows.get(replacement.session.id)?.session.createdAt).toBe(replacement.session.header.createdAt)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('does not publish a read grant when Session persistence does not participate in flush', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-no-flush-')
+    try {
+      const { service, rows } = serviceHarness(
+        { grants: [] },
+        'allowed-once',
+        'ask',
+        { flushParticipates: false },
+      )
+      const agent = fakeAgent(workspace.path)
+      await expect(service.observe(
+        { app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' },
+        callContext(agent, workspace.path),
+      )).rejects.toMatchObject({
+        code: 'COMPUTER_PERMISSION_REQUIRED',
+        message: expect.stringContaining('no Session persistence listener participated'),
+      })
+      expect(rows.has(agent.session.id)).toBe(false)
     } finally {
       await workspace.cleanup()
     }

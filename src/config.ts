@@ -1,7 +1,7 @@
 /** Validated provider, observation, settlement, artifact, and app-policy configuration. */
 
-import z from 'schemastery'
-import type Schema from 'schemastery'
+import z from '@deepseek-ai/schemastery'
+import type Schema from '@deepseek-ai/schemastery'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { ComputerUseError } from './errors.ts'
 

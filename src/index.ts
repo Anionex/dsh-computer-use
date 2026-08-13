@@ -1,6 +1,6 @@
 /** DSH Computer Use model-facing consumer and progressive Skill bundle. */
 
-import { Service, type Context } from 'cordis'
+import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-skill'
@@ -43,7 +43,7 @@ export function installComputerUseConsumer(ctx: Context): () => void {
 
 /** macOS provider plus the portable Skill, scoped Tools, and optional Web diagnostics. */
 export class ComputerUseBundle extends MacOSComputerUseProvider {
-  static override inject = ['subprocess', 'approval', 'settings', 'agents', 'tools', 'skills']
+  static override inject = ['subprocess', 'approval', 'settings', 'sessions', 'agents', 'tools', 'skills']
   static override Config = Config
 
   private consumerDispose: (() => void) | undefined

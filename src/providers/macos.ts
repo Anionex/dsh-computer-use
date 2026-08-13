@@ -1,7 +1,7 @@
 /** macOS Accessibility/CoreGraphics/ScreenCaptureKit provider for `ctx.computerUse`. */
 
 import { setTimeout as delay } from 'node:timers/promises'
-import { Service, type Context } from 'cordis'
+import { Service, type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-subprocess'
@@ -146,7 +146,7 @@ class MacOSBackend implements ComputerUseBackend {
 
 /** Cordis Service provider loaded by the Bundle before the model-facing consumer. */
 export class MacOSComputerUseProvider extends ComputerUseService {
-  static inject = ['subprocess', 'approval', 'settings', 'agents']
+  static inject = ['subprocess', 'approval', 'settings', 'sessions', 'agents']
   static Config = Config
 
   private readonly settings

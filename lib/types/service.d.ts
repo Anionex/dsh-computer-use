@@ -1,10 +1,10 @@
 /** Provider-independent Computer Use Service: leases, observations, staleness, confirmations, and fresh post-action state. */
-import { Context, Service } from 'cordis';
+import { Context, Service } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { ComputerUseBackend } from './backend.ts';
 import type { ResolvedComputerUseConfig } from './config.ts';
 import { type ComputerActionRequest, type ComputerActionResult, type ComputerAppSummary, type ComputerConfirmRequest, type ComputerConfirmation, type ComputerObservation, type ComputerObserveRequest, type ComputerUseContext, type ComputerUseStatus } from './types.ts';
-declare module 'cordis' {
+declare module '@deepseek-ai/cordis' {
     interface Context {
         computerUse: ComputerUseService;
     }

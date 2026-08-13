@@ -3,8 +3,10 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-settings/types'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 
 const NS = 'computer-use'
@@ -499,7 +501,7 @@ function installStyles(): () => void {
 }
 
 /** Required browser services. */
-export const inject = ['slots', 'locale']
+export const inject = ['slots', 'locale', 'remote']
 
 /** Register the Computer Use Settings section. */
 export function apply(ctx: ClientContext): void {
@@ -509,7 +511,7 @@ export function apply(ctx: ClientContext): void {
   const controller = new ComputerUseSettingsController()
   ctx.effect(() => {
     const disposers = [
-      ctx.on('settings/changed', namespace => { if (namespace === 'computer-use') controller.refreshIfLoaded() }),
+      ctx.remote.$on('settings/document-updated', ns => { if (ns === NS) controller.refreshIfLoaded() }),
       ctx.on('connection/reset', () => { controller.refreshIfLoaded() }),
     ]
     return () => { for (const dispose of disposers) dispose() }

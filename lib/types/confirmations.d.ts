@@ -1,6 +1,6 @@
 /** One-use just-in-time confirmation tokens for sensitive Computer Use actions. */
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import type { Context } from 'cordis';
+import type { Context } from '@deepseek-ai/cordis';
 import type { ResolvedComputerUseConfig } from './config.ts';
 import { type ComputerActionRequest, type ComputerAppIdentity, type ComputerConfirmRequest, type ComputerConfirmation } from './types.ts';
 /** Issues, validates, consumes, and releases scoped sensitive-action tokens. */

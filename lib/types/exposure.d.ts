@@ -1,7 +1,7 @@
 /** Agent-scoped progressive exposure for Computer Use execution Tools. */
 import type { Session } from '@deepseek-ai/dsh-session';
 import { type ToolDefinition } from '@deepseek-ai/dsh-tools';
-import type { Context } from 'cordis';
+import type { Context } from '@deepseek-ai/cordis';
 /** One global bootstrap retained until the current Agent loads the Skill. */
 export declare const COMPUTER_USE_ACTIVATE = "computer_use_activate";
 /** Activation result returned to the model. */

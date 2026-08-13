@@ -7,7 +7,7 @@ describe('Cordis registration contracts', () => {
   it('exports one aggregate class plugin with provider and consumer injections', () => {
     expect(ComputerUseDefault).toBe(ComputerUseBundle)
     expect(ComputerUseBundle.prototype).toBeInstanceOf(MacOSComputerUseProvider)
-    expect(ComputerUseBundle.inject).toEqual(['subprocess', 'approval', 'settings', 'agents', 'tools', 'skills'])
+    expect(ComputerUseBundle.inject).toEqual(['subprocess', 'approval', 'settings', 'sessions', 'agents', 'tools', 'skills'])
     expect(ComputerUseBundle.Config).toBeDefined()
   })
 
@@ -22,6 +22,8 @@ describe('Cordis registration contracts', () => {
           registeredTools.push(definition.name)
           return () => { disposed.push(`tool:${definition.name}`) }
         },
+        guard: () => () => { disposed.push('guard') },
+        get: () => undefined,
       },
       skills: {
         register(skill: { name: string }) {
@@ -48,7 +50,11 @@ describe('Cordis registration contracts', () => {
     let activationDisposed = false
     const ctx = {
       computerUse: {},
-      tools: { register: () => () => { activationDisposed = true } },
+      tools: {
+        register: () => () => { activationDisposed = true },
+        guard: () => () => {},
+        get: () => undefined,
+      },
       skills: { register: () => { throw new Error('skill failed') } },
       agents: { list: () => [] },
       on: () => () => {},
@@ -59,7 +65,7 @@ describe('Cordis registration contracts', () => {
   })
 
   it('declares the provider as the complete macOS Service provider role', () => {
-    expect(MacOSComputerUseProvider.inject).toEqual(['subprocess', 'approval', 'settings', 'agents'])
+    expect(MacOSComputerUseProvider.inject).toEqual(['subprocess', 'approval', 'settings', 'sessions', 'agents'])
     expect(MacOSComputerUseProvider.Config).toBeDefined()
   })
 })

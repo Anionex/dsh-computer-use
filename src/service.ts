@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
-import { Context, Service } from 'cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { BackendCursorAction, BackendObservation, ComputerUseBackend } from './backend.ts'
 import { allocateScreenshotPath, describeScreenshot } from './artifacts.ts'
@@ -26,7 +26,7 @@ import {
   type ComputerUseStatus,
 } from './types.ts'
 
-declare module 'cordis' {
+declare module '@deepseek-ai/cordis' {
   interface Context {
     computerUse: ComputerUseService
   }
@@ -166,6 +166,7 @@ export class ComputerUseService extends Service {
   /** Verify the active backend before consumers become injectable. */
   protected async initialize(): Promise<void> {
     try {
+      await this.leases.initialize()
       const health = await this.backend.health(this.lifecycle.signal)
       this.healthState = { ready: true, ...health }
     } catch (error) {
@@ -333,6 +334,7 @@ export class ComputerUseService extends Service {
   /** Release all scoped observations and confirmations for one disposed Agent. */
   releaseAgent(agent: Agent): void {
     this.agents.delete(agent)
+    this.leases.releaseAgent(agent)
     this.confirmations.releaseAgent(agent)
   }
 
