@@ -22,12 +22,13 @@ This is an input-routing property, not a consequence of Accessibility permission
 
 ## Overall design
 
-The action path has four ordered layers:
+The action path has five ordered layers:
 
-1. The DSH Service binds the request to one unexpired observation, exact bundle id, pid, window, and element, window-relative point, or screen-global point.
-2. The native helper observes the target again and rejects changed or ambiguous state.
-3. The helper prefers `AXPress`, Accessibility value assignment, selected-text assignment, or an action advertised by the element. When a `click` target advertises `AXPress` but macOS rejects the press, the helper retries `AXPress` on the element's pressable descendants within a bounded depth before considering the element-frame or coordinate pointer route.
-4. When semantic input is unavailable, keyboard events are posted to the selected pid and pointer events are posted to the selected pid and window. No pointer fallback uses a global event tap.
+1. The DSH Service binds the request to one unexpired observation, exact bundle id, pid, window, and element target handle, compatibility index, window-relative point, or screen-global point.
+2. For a handle action, the Service obtains fresh Accessibility state and resolves the target through the original locator, one unique provider-native identifier, or one unique semantic role/name/actions/ancestor match. Application, process, and selected-window identity remain exact; ambiguity and low confidence fail closed.
+3. The native helper observes the resolved target again and rejects any race that changed its locator, properties, process, or window before input.
+4. The helper prefers `AXPress`, Accessibility value assignment, selected-text assignment, or an action advertised by the element. When a `click` target advertises `AXPress` but macOS rejects the press, the helper retries `AXPress` on the element's pressable descendants within a bounded depth before considering the element-frame or coordinate pointer route.
+5. When semantic input is unavailable, keyboard events are posted to the selected pid and pointer events are posted to the selected pid and window. No pointer fallback uses a global event tap.
 
 Pointer delivery uses the observed window when it contains the point; otherwise it resolves the topmost on-screen window of the selected app that contains the screen point and posts through `SLEventPostToPid` with the pid/window fields and window-local coordinates. This is the same target-process shape Codex Computer Use uses (`SynthesizedEvent.send(to: pid)` with `CGWindow.window(at:)`), so `coordinateSpace: screen` supports arbitrary-coordinate clicks without a global HID event stream. Unavailable SkyLight symbols or a point outside every window of the selected app fails closed.
 
@@ -41,6 +42,12 @@ Every action result reports the route actually used:
 activation: 'not-requested' | 'already-frontmost' | 'activated'
 pointerInput: boolean
 pointerRouting: 'none' | 'target-process'
+resolution?: {
+  mode: 'exact-locator' | 'native-identifier' | 'semantic-rebind'
+  confidence: number
+  candidateCount: number
+  targetChanged: boolean
+}
 ```
 
 These fields do not claim that a target application can never change focus as its own side effect. They report only what the helper requested and emitted.
@@ -71,6 +78,12 @@ The deployment owns `focusPolicy`, `keyboardPolicy`, and `pointerInputPolicy`. `
 ### Accessibility remains the primary route
 
 Semantic Accessibility operations are more stable than pixels and need no cursor emulation. They also work against many background applications. The helper revalidates the exact target before invoking them and reports `activation: not-requested`, `pointerInput: false`, and `pointerRouting: none`.
+
+### Stable handles rebind only with independent identity evidence
+
+The public `targetHandle` is opaque and observation-local; it does not expose an `AXUIElement`, locator, or `AXIdentifier`. The Service stores the normalized descriptor in Agent-owned memory and re-observes immediately before a handle action. Exact locator identity is preferred. Rebinding is opt-in through `allowRebind` and requires either one provider-native identifier whose stable semantics still match or one semantic candidate with the same role, normalized accessible name, advertised actions, and stable ancestor fingerprint. The resolver preserves the exact bundle id, pid, and selected-window identity. A truncated tree cannot authorize rebinding. Duplicate candidates return `COMPUTER_TARGET_AMBIGUOUS`; missing or insufficient evidence returns `COMPUTER_TARGET_LOW_CONFIDENCE`.
+
+Sensitive confirmation is bound to the exact handle action. Any native-identifier or semantic fallback marks the target changed, invalidates the prior token, and returns `COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION` before input. Coordinates and screenshot-derived boxes cannot become handles, identity evidence, or authorization for a sensitive target. The caller must select the current handle and obtain a new one-use confirmation. Provider-native visual hit-testing remains a separate follow-up because the current visual workflow cannot independently validate a screenshot coordinate.
 
 ### The default pointer route is virtual and target-specific
 
@@ -112,6 +125,7 @@ The release evidence covers both implementation and observed behavior:
 - the fixture records every `applicationDidBecomeActive` callback and the default path must not increase `activationCount`;
 - an independent native monitor samples cursor position and the frontmost pid every millisecond throughout click, scroll, and drag; every sample must remain unchanged;
 - background `AXPress`, Accessibility value/action, selected-text input, and pid-targeted key input change the fixture without activating it;
+- the native fixture inserts a harmless sibling and recreates a uniquely identified checkbox, proving the raw locator becomes stale while `AXIdentifier` resolution still finds exactly one target;
 - target-process click and scroll are each observed exactly once; drag has exactly one down/up gesture; the target remains non-frontmost;
 - `pointerInputPolicy: deny` rejects click fallback, scroll, and drag before any target pointer event is delivered;
 - clean Profile and real-model validation require the model-visible action result and fixture transcript to agree.
@@ -123,3 +137,4 @@ The release evidence covers both implementation and observed behavior:
 - `focusPolicy: activate` and `keyboardPolicy: activate` are intentionally disruptive and exist only as operator-selected compatibility modes.
 - A target application may change its own activation or focus as a side effect of an accepted action; the helper does not claim control over application-internal behavior.
 - The Agent cursor is scoped to one active Space and the exact observed window. `cursorAutoHideMs: 0` keeps it visible until the bound window changes, a new hide command arrives, or the helper is disposed.
+- Stable handles currently use exact locators, provider-native identifiers, and strict semantic identity. Semantic-spatial rebinding and provider-native visual hit-testing remain follow-up work; a vision-derived coordinate alone is never a verified target.

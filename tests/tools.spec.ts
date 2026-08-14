@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { COMPUTER_SCREENSHOT_DESCRIPTION } from '../src/artifacts.ts'
 import { createComputerUseTools } from '../src/tools.ts'
 import type { ComputerObservation } from '../src/types.ts'
-import { ComputerObservationId } from '../src/types.ts'
+import { ComputerObservationId, ComputerTargetHandle } from '../src/types.ts'
 import { FIXTURE_APP } from './helpers.ts'
 
 function observation(withScreenshot = false): ComputerObservation {
@@ -14,7 +14,13 @@ function observation(withScreenshot = false): ComputerObservation {
     frontmost: true,
     window: { title: 'Fixture', frame: { x: 1, y: 2, width: 3, height: 4 } },
     tree: { mode: 'full', text: '[0] AXWindow', truncated: false },
-    elements: [],
+    elements: [{
+      index: 0,
+      targetHandle: ComputerTargetHandle('target-1'),
+      role: 'AXButton',
+      label: 'Apply',
+      actions: ['AXPress'],
+    }],
     ...(withScreenshot ? {
       screenshot: {
         path: '/tmp/screenshot.png',
@@ -89,6 +95,7 @@ describe('model-facing Computer Use tools', () => {
     expect(tools[2]?.parameters).not.toHaveProperty('properties.focusPolicy')
     expect(tools[2]?.parameters).not.toHaveProperty('properties.pointerInputPolicy')
     expect(tools[2]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
+    expect(tools[2]?.parameters).toMatchObject({ properties: { targetHandle: { type: 'string' }, allowRebind: { type: 'boolean' } } })
     expect(tools[6]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
     expect(tools[7]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
     expect(tools[2]?.output.schema).toMatchObject({
@@ -97,6 +104,7 @@ describe('model-facing Computer Use tools', () => {
         activation: { enum: ['not-requested', 'already-frontmost', 'activated'] },
         pointerInput: { type: 'boolean' },
         pointerRouting: { enum: ['none', 'target-process'] },
+        resolution: { properties: { mode: { enum: ['exact-locator', 'native-identifier', 'semantic-rebind'] } } },
       },
     })
     const confirmationBranches = (tools[10]?.parameters as {
@@ -115,16 +123,16 @@ describe('model-facing Computer Use tools', () => {
     }
     await tools[0]!.execute({}, exec as never)
     await tools[1]!.execute({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required', full: true }, exec as never)
-    await tools[2]!.execute({ observationId: 'observation-1', elementIndex: 4, allowCoordinateFallback: true, coordinateSpace: 'screen' }, exec as never)
-    await tools[3]!.execute({ observationId: 'observation-1', elementIndex: 5, value: 'secret-value' }, exec as never)
+    await tools[2]!.execute({ observationId: 'observation-1', elementIndex: 4, targetHandle: 'target-4', allowRebind: true, allowCoordinateFallback: true, coordinateSpace: 'screen' }, exec as never)
+    await tools[3]!.execute({ observationId: 'observation-1', targetHandle: 'target-5', allowRebind: true, value: 'secret-value' }, exec as never)
     await tools[4]!.execute({ observationId: 'observation-1', text: 'typed-secret' }, exec as never)
     await tools[5]!.execute({ observationId: 'observation-1', key: 'return', modifiers: ['command'] }, exec as never)
     await tools[6]!.execute({ observationId: 'observation-1', direction: 'down', x: 1, y: 2, pages: 2, coordinateSpace: 'screen' }, exec as never)
     await tools[7]!.execute({ observationId: 'observation-1', fromX: 1, fromY: 2, toX: 3, toY: 4, coordinateSpace: 'screen' }, exec as never)
-    await tools[8]!.execute({ observationId: 'observation-1', elementIndex: 6, action: 'AXShowMenu' }, exec as never)
+    await tools[8]!.execute({ observationId: 'observation-1', targetHandle: 'target-6', allowRebind: true, action: 'AXShowMenu' }, exec as never)
     await tools[9]!.execute({ observationId: 'observation-1', condition: { text: 'ready' }, timeoutMs: 500 }, exec as never)
     await tools[10]!.execute({
-      action: { kind: 'click', observationId: 'observation-1', elementIndex: 7 },
+      action: { kind: 'click', observationId: 'observation-1', targetHandle: 'target-7', allowRebind: true },
       reason: 'publish',
       target: 'fixture',
       dataSummary: 'status only',
@@ -141,18 +149,18 @@ describe('model-facing Computer Use tools', () => {
       content: [{ type: 'text', text: expect.stringContaining('call the skill tool with {"name":"vision-tools"}') }],
     })
     expect(service.act.mock.calls.map(call => call[0])).toEqual([
-      expect.objectContaining({ kind: 'click', observationId: 'observation-1', elementIndex: 4, allowCoordinateFallback: true, coordinateSpace: 'screen' }),
-      expect.objectContaining({ kind: 'set-value', value: 'secret-value' }),
+      expect.objectContaining({ kind: 'click', observationId: 'observation-1', elementIndex: 4, targetHandle: 'target-4', allowRebind: true, allowCoordinateFallback: true, coordinateSpace: 'screen' }),
+      expect.objectContaining({ kind: 'set-value', targetHandle: 'target-5', allowRebind: true, value: 'secret-value' }),
       expect.objectContaining({ kind: 'type-text', text: 'typed-secret' }),
       expect.objectContaining({ kind: 'press-key', key: 'return', modifiers: ['command'] }),
       expect.objectContaining({ kind: 'scroll', direction: 'down', x: 1, y: 2, pages: 2, coordinateSpace: 'screen' }),
       expect.objectContaining({ kind: 'drag', fromX: 1, toY: 4, coordinateSpace: 'screen' }),
-      expect.objectContaining({ kind: 'perform-action', elementIndex: 6, action: 'AXShowMenu' }),
+      expect.objectContaining({ kind: 'perform-action', targetHandle: 'target-6', allowRebind: true, action: 'AXShowMenu' }),
       expect.objectContaining({ kind: 'wait', condition: { text: 'ready' }, timeoutMs: 500 }),
     ])
     expect(service.confirm).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: expect.objectContaining({ kind: 'click', observationId: 'observation-1', sensitive: true }),
+        action: expect.objectContaining({ kind: 'click', observationId: 'observation-1', targetHandle: 'target-7', allowRebind: true, sensitive: true }),
         reason: 'publish',
         target: 'fixture',
       }),

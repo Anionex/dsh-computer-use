@@ -5,6 +5,7 @@ import { defineTool, type JsonValue, type ToolDefinition, type ToolRunContext, t
 import {
   ComputerConfirmationToken,
   ComputerObservationId,
+  ComputerTargetHandle,
   type ComputerActionRequest,
   type ComputerArtifact,
   type ComputerUseContext,
@@ -77,6 +78,7 @@ const elementSchema = {
   additionalProperties: false,
   properties: {
     index: { type: 'integer', required: true },
+    targetHandle: { type: 'string', required: true },
     role: { type: 'string', required: true },
     subrole: { type: 'string' },
     title: { type: 'string' },
@@ -158,6 +160,16 @@ const actionResultSchema = {
     activation: { type: 'string', enum: ['not-requested', 'already-frontmost', 'activated'], required: true },
     pointerInput: { type: 'boolean', required: true },
     pointerRouting: { type: 'string', enum: ['none', 'target-process'], required: true },
+    resolution: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        mode: { type: 'string', enum: ['exact-locator', 'native-identifier', 'semantic-rebind'], required: true },
+        confidence: { type: 'number', required: true },
+        candidateCount: { type: 'integer', required: true },
+        targetChanged: { type: 'boolean', required: true },
+      },
+    },
     observation: { ...observationSchema, required: true },
   },
 } as const satisfies ValueSchemaSpec
@@ -181,6 +193,8 @@ const confirmationActionSchema = {
         kind: { type: 'string', const: 'click', required: true },
         observationId: { type: 'string', required: true },
         elementIndex: { type: 'integer' },
+        targetHandle: { type: 'string' },
+        allowRebind: { type: 'boolean' },
         x: { type: 'number' },
         y: { type: 'number' },
         coordinateSpace: { type: 'string', enum: ['window', 'screen'] },
@@ -193,7 +207,9 @@ const confirmationActionSchema = {
       type: 'object', additionalProperties: false, properties: {
         kind: { type: 'string', const: 'set-value', required: true },
         observationId: { type: 'string', required: true },
-        elementIndex: { type: 'integer', required: true },
+        elementIndex: { type: 'integer' },
+        targetHandle: { type: 'string' },
+        allowRebind: { type: 'boolean' },
         value: { type: 'string', required: true },
       },
     },
@@ -217,6 +233,8 @@ const confirmationActionSchema = {
         kind: { type: 'string', const: 'scroll', required: true },
         observationId: { type: 'string', required: true },
         elementIndex: { type: 'integer' },
+        targetHandle: { type: 'string' },
+        allowRebind: { type: 'boolean' },
         x: { type: 'number' },
         y: { type: 'number' },
         coordinateSpace: { type: 'string', enum: ['window', 'screen'] },
@@ -239,7 +257,9 @@ const confirmationActionSchema = {
       type: 'object', additionalProperties: false, properties: {
         kind: { type: 'string', const: 'perform-action', required: true },
         observationId: { type: 'string', required: true },
-        elementIndex: { type: 'integer', required: true },
+        elementIndex: { type: 'integer' },
+        targetHandle: { type: 'string' },
+        allowRebind: { type: 'boolean' },
         action: { type: 'string', required: true },
       },
     },
@@ -251,6 +271,14 @@ function actionBase(args: { observationId: string; sensitive?: boolean; confirma
     observationId: ComputerObservationId(args.observationId),
     ...(args.sensitive === undefined ? {} : { sensitive: args.sensitive }),
     ...(args.confirmationToken === undefined ? {} : { confirmationToken: ComputerConfirmationToken(args.confirmationToken) }),
+  }
+}
+
+function elementTarget(args: { elementIndex?: number; targetHandle?: string; allowRebind?: boolean }) {
+  return {
+    ...(args.elementIndex === undefined ? {} : { elementIndex: args.elementIndex }),
+    ...(args.targetHandle === undefined ? {} : { targetHandle: ComputerTargetHandle(args.targetHandle) }),
+    ...(args.allowRebind === undefined ? {} : { allowRebind: args.allowRebind }),
   }
 }
 
@@ -328,10 +356,12 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const click = defineTool({
     name: 'computer_click',
-    description: 'Click an element from the exact observation, preferring AXPress without foreground activation, or use a window-relative or screen-global coordinate when host pointer policy allows it. coordinateSpace screen matches Codex-style arbitrary-coordinate clicking: the helper resolves the selected app window under the point and posts target-process input. The successful result reports activation/pointer input and already contains the fresh post-click observation.',
+    description: 'Click an observed element, preferring AXPress without foreground activation, or use a window-relative or screen-global coordinate when host pointer policy allows it. For safe recovery after harmless tree reordering, pass the element targetHandle and allowRebind=true; elementIndex remains exact-observation compatibility. The successful result includes deterministic resolution metadata and a fresh post-click observation.',
     parameters: {
       observationId: { type: 'string', required: true },
       elementIndex: { type: 'integer' },
+      targetHandle: { type: 'string', description: 'Opaque handle returned on the selected observation element.' },
+      allowRebind: { type: 'boolean', description: 'Allow fail-closed native-identifier or unique semantic rebinding. Requires targetHandle.' },
       x: { type: 'number' },
       y: { type: 'number' },
       coordinateSpace: { type: 'string', enum: ['window', 'screen'], description: 'Default window interprets x/y inside the observed window frame; screen uses Quartz screen-global coordinates.' },
@@ -341,21 +371,23 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
       ...sensitiveParameters,
     },
     output: actionOutput(),
-    execute: (args, exec) => service.act({ kind: 'click', ...actionBase(args), ...args.elementIndex === undefined ? {} : { elementIndex: args.elementIndex }, ...args.x === undefined ? {} : { x: args.x }, ...args.y === undefined ? {} : { y: args.y }, ...args.coordinateSpace === undefined ? {} : { coordinateSpace: args.coordinateSpace }, ...args.button === undefined ? {} : { button: args.button }, ...args.clickCount === undefined ? {} : { clickCount: args.clickCount }, ...args.allowCoordinateFallback === undefined ? {} : { allowCoordinateFallback: args.allowCoordinateFallback } }, contextOf(exec)),
+    execute: (args, exec) => service.act({ kind: 'click', ...actionBase(args), ...elementTarget(args), ...args.x === undefined ? {} : { x: args.x }, ...args.y === undefined ? {} : { y: args.y }, ...args.coordinateSpace === undefined ? {} : { coordinateSpace: args.coordinateSpace }, ...args.button === undefined ? {} : { button: args.button }, ...args.clickCount === undefined ? {} : { clickCount: args.clickCount }, ...args.allowCoordinateFallback === undefined ? {} : { allowCoordinateFallback: args.allowCoordinateFallback } }, contextOf(exec)),
     presentCall: () => ({ card: 'generic', title: 'Click macOS app', kind: 'execute' }),
   })
 
   const setValue = defineTool({
     name: 'computer_set_value',
-    description: 'Set one observed editable Accessibility value without using the clipboard. The result omits the supplied value and returns fresh state.',
+    description: 'Set one observed editable Accessibility value without using the clipboard. Supply elementIndex or targetHandle; targetHandle plus allowRebind=true permits deterministic fail-closed recovery after harmless tree reordering.',
     parameters: {
       observationId: { type: 'string', required: true },
-      elementIndex: { type: 'integer', required: true },
+      elementIndex: { type: 'integer' },
+      targetHandle: { type: 'string' },
+      allowRebind: { type: 'boolean' },
       value: { type: 'string', required: true },
       ...sensitiveParameters,
     },
     output: actionOutput(),
-    execute: (args, exec) => service.act({ kind: 'set-value', ...actionBase(args), elementIndex: args.elementIndex, value: args.value }, contextOf(exec)),
+    execute: (args, exec) => service.act({ kind: 'set-value', ...actionBase(args), ...elementTarget(args), value: args.value }, contextOf(exec)),
     presentCall: () => ({ card: 'generic', title: 'Set app value', kind: 'execute' }),
   })
 
@@ -392,6 +424,8 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
     parameters: {
       observationId: { type: 'string', required: true },
       elementIndex: { type: 'integer' },
+      targetHandle: { type: 'string' },
+      allowRebind: { type: 'boolean' },
       x: { type: 'number' },
       y: { type: 'number' },
       coordinateSpace: { type: 'string', enum: ['window', 'screen'], description: 'Default window interprets x/y inside the observed window frame; screen uses Quartz screen-global coordinates.' },
@@ -400,7 +434,7 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
       ...sensitiveParameters,
     },
     output: actionOutput(),
-    execute: (args, exec) => service.act({ kind: 'scroll', ...actionBase(args), direction: args.direction, ...args.elementIndex === undefined ? {} : { elementIndex: args.elementIndex }, ...args.x === undefined ? {} : { x: args.x }, ...args.y === undefined ? {} : { y: args.y }, ...args.coordinateSpace === undefined ? {} : { coordinateSpace: args.coordinateSpace }, ...args.pages === undefined ? {} : { pages: args.pages } }, contextOf(exec)),
+    execute: (args, exec) => service.act({ kind: 'scroll', ...actionBase(args), ...elementTarget(args), direction: args.direction, ...args.x === undefined ? {} : { x: args.x }, ...args.y === undefined ? {} : { y: args.y }, ...args.coordinateSpace === undefined ? {} : { coordinateSpace: args.coordinateSpace }, ...args.pages === undefined ? {} : { pages: args.pages } }, contextOf(exec)),
     presentCall: () => ({ card: 'generic', title: 'Scroll macOS app', kind: 'execute' }),
   })
 
@@ -423,15 +457,17 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const perform = defineTool({
     name: 'computer_perform_action',
-    description: 'Perform one exact Accessibility action advertised by an element in the referenced observation.',
+    description: 'Perform one Accessibility action advertised by an observed element. Supply elementIndex or targetHandle; targetHandle plus allowRebind=true permits deterministic fail-closed recovery after harmless tree reordering.',
     parameters: {
       observationId: { type: 'string', required: true },
-      elementIndex: { type: 'integer', required: true },
+      elementIndex: { type: 'integer' },
+      targetHandle: { type: 'string' },
+      allowRebind: { type: 'boolean' },
       action: { type: 'string', required: true },
       ...sensitiveParameters,
     },
     output: actionOutput(),
-    execute: (args, exec) => service.act({ kind: 'perform-action', ...actionBase(args), elementIndex: args.elementIndex, action: args.action }, contextOf(exec)),
+    execute: (args, exec) => service.act({ kind: 'perform-action', ...actionBase(args), ...elementTarget(args), action: args.action }, contextOf(exec)),
     presentCall: () => ({ card: 'generic', title: 'Perform app action', kind: 'execute' }),
   })
 

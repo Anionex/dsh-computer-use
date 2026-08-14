@@ -12,7 +12,13 @@ import { diffElements } from './diff.ts'
 import { ComputerUseError, computerUseError } from './errors.ts'
 import { ComputerLeaseManager } from './leases.ts'
 import {
+  describeComputerTarget,
+  resolveComputerTarget,
+  type ComputerTargetDescriptor,
+} from './target-resolver.ts'
+import {
   ComputerObservationId,
+  ComputerTargetHandle,
   type ComputerActionRequest,
   type ComputerActionResult,
   type ComputerAppIdentity,
@@ -22,6 +28,7 @@ import {
   type ComputerElement,
   type ComputerObservation,
   type ComputerObserveRequest,
+  type ComputerTargetResolutionResult,
   type ComputerUseContext,
   type ComputerUseStatus,
 } from './types.ts'
@@ -35,6 +42,7 @@ declare module '@deepseek-ai/cordis' {
 interface StoredObservation {
   public: ComputerObservation
   backend: BackendObservation
+  targets: Map<ComputerTargetHandle, ComputerTargetDescriptor>
   generation: number
 }
 
@@ -43,8 +51,18 @@ interface AgentState {
   latestByApp: Map<string, ComputerObservationId>
 }
 
-function publicElements(elements: BackendObservation['elements']): ComputerElement[] {
-  return elements.map(({ locator: _locator, ...element }) => element)
+function publicElements(observation: BackendObservation): {
+  elements: ComputerElement[]
+  targets: Map<ComputerTargetHandle, ComputerTargetDescriptor>
+} {
+  const targets = new Map<ComputerTargetHandle, ComputerTargetDescriptor>()
+  const elements = observation.elements.map((backendElement) => {
+    const { locator: _locator, nativeIdentifier: _nativeIdentifier, ...element } = backendElement
+    const targetHandle = ComputerTargetHandle(randomUUID())
+    targets.set(targetHandle, describeComputerTarget(backendElement, observation))
+    return { ...element, targetHandle }
+  })
+  return { elements, targets }
 }
 
 function matchesWait(observation: BackendObservation, action: Extract<ComputerActionRequest, { kind: 'wait' }>): boolean {
@@ -66,6 +84,36 @@ function targetIndex(action: ComputerActionRequest): number | undefined {
     case 'drag':
     case 'wait': return undefined
   }
+}
+
+function targetHandle(action: ComputerActionRequest): ComputerTargetHandle | undefined {
+  switch (action.kind) {
+    case 'click':
+    case 'scroll':
+    case 'set-value':
+    case 'perform-action': return action.targetHandle
+    case 'type-text':
+    case 'press-key':
+    case 'drag':
+    case 'wait': return undefined
+  }
+}
+
+function allowsTargetRebind(action: ComputerActionRequest): boolean {
+  switch (action.kind) {
+    case 'click':
+    case 'scroll':
+    case 'set-value':
+    case 'perform-action': return action.allowRebind === true
+    case 'type-text':
+    case 'press-key':
+    case 'drag':
+    case 'wait': return false
+  }
+}
+
+function requiresElement(action: ComputerActionRequest): boolean {
+  return action.kind === 'set-value' || action.kind === 'perform-action'
 }
 
 function requiresPointerInput(
@@ -253,11 +301,33 @@ export class ComputerUseService extends Service {
     const stored = this.requireObservation(action.observationId, context.agent)
     if (action.kind === 'wait') return await this.wait(stored, action, context, signal)
     const index = targetIndex(action)
-    const element = index === undefined ? undefined : stored.backend.elements.find(candidate => candidate.index === index)
-    if (index !== undefined && element === undefined) {
+    const handle = targetHandle(action)
+    const originalElement = index === undefined ? undefined : stored.backend.elements.find(candidate => candidate.index === index)
+    if (index !== undefined && originalElement === undefined) {
       throw new ComputerUseError('COMPUTER_ELEMENT_UNAVAILABLE', `element ${index} is not part of observation ${String(action.observationId)}`)
     }
-    if (requiresPointerInput(action, element) && this.config.interaction.pointerInputPolicy === 'deny') {
+    if (allowsTargetRebind(action) && handle === undefined) {
+      throw new ComputerUseError('COMPUTER_TARGET_UNAVAILABLE', 'allowRebind requires a targetHandle from the referenced observation')
+    }
+    const descriptor = handle === undefined ? undefined : stored.targets.get(handle)
+    if (handle !== undefined && descriptor === undefined) {
+      throw new ComputerUseError('COMPUTER_TARGET_UNAVAILABLE', 'targetHandle is unknown or does not belong to the referenced observation')
+    }
+    if (descriptor !== undefined && index !== undefined && (descriptor.locator.length !== originalElement?.locator.length
+      || !descriptor.locator.every((part, position) => part === originalElement.locator[position]))) {
+      throw new ComputerUseError('COMPUTER_TARGET_UNAVAILABLE', 'elementIndex and targetHandle select different elements')
+    }
+    const selectedOriginalElement = originalElement ?? (descriptor === undefined
+      ? undefined
+      : stored.backend.elements.find(candidate => candidate.locator.length === descriptor.locator.length
+        && candidate.locator.every((part, position) => part === descriptor.locator[position])))
+    if (descriptor !== undefined && selectedOriginalElement === undefined) {
+      throw new ComputerUseError('COMPUTER_TARGET_UNAVAILABLE', 'targetHandle no longer has provider evidence in the referenced observation')
+    }
+    if (requiresElement(action) && selectedOriginalElement === undefined) {
+      throw new ComputerUseError('COMPUTER_ELEMENT_UNAVAILABLE', `${action.kind} requires elementIndex or targetHandle`)
+    }
+    if (requiresPointerInput(action, selectedOriginalElement) && this.config.interaction.pointerInputPolicy === 'deny') {
       throw new ComputerUseError(
         'COMPUTER_ACTION_BLOCKED',
         `${action.kind} requires target-process pointer input, which interaction.pointerInputPolicy denies; use an Accessibility action or enable targeted pointer input in host Settings`,
@@ -270,8 +340,32 @@ export class ComputerUseService extends Service {
       )
     }
     await this.leases.ensure(context.agent, stored.backend.app, 'control', `computer_${action.kind}`, context.callId, signal)
+    let actionObservation = stored.backend
+    let element = selectedOriginalElement
+    let resolution: ComputerTargetResolutionResult | undefined = selectedOriginalElement === undefined
+      ? undefined
+      : { mode: 'exact-locator', confidence: 1, candidateCount: 1, targetChanged: false }
+    if (descriptor !== undefined) {
+      const fresh = await this.backend.observe(stored.backend.app, {
+        screenshot: 'none',
+        maxNodes: this.config.maxNodes,
+        maxDepth: this.config.maxDepth,
+        maxTextBytes: this.config.maxTextBytes,
+      }, signal)
+      const resolved = resolveComputerTarget(stored.backend, fresh, descriptor, allowsTargetRebind(action))
+      actionObservation = resolved.observation
+      element = resolved.element
+      resolution = resolved.resolution
+      if (action.sensitive === true && resolution.targetChanged) {
+        this.confirmations.invalidate(context.agent, action.confirmationToken)
+        throw new ComputerUseError(
+          'COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION',
+          'the sensitive target rebound to a fresh element; observe the current UI and request a new one-use confirmation before acting',
+        )
+      }
+    }
     this.confirmations.consume(context.agent, stored.backend.app, action)
-    const visualization = cursorAction(action, element, stored.backend.window, stored.backend.app)
+    const visualization = cursorAction(action, element, actionObservation.window, actionObservation.app)
     let cursorStarted = false
     if (visualization !== undefined && this.config.interaction.cursorVisualization === 'visible') {
       try {
@@ -285,11 +379,11 @@ export class ComputerUseService extends Service {
     try {
       outcome = await this.backend.act({
         action,
-        app: stored.backend.app,
-        expectedStateHash: stored.backend.stateHash,
+        app: actionObservation.app,
+        expectedStateHash: actionObservation.stateHash,
         interaction: this.config.interaction,
         ...(element === undefined ? {} : { element }),
-        ...(stored.backend.window === undefined ? {} : { window: stored.backend.window }),
+        ...(actionObservation.window === undefined ? {} : { window: actionObservation.window }),
       }, signal)
     } catch (error) {
       throw computerUseError(error, `Computer Use ${action.kind} failed`)
@@ -312,7 +406,7 @@ export class ComputerUseService extends Service {
         maxDepth: this.config.maxDepth,
         maxTextBytes: this.config.maxTextBytes,
       }, signal)
-      if (latest.stateHash !== stored.backend.stateHash) break
+      if (latest.stateHash !== actionObservation.stateHash) break
     } while (Date.now() - started < this.config.maxSettleMs)
     const observation = await this.capture(
       stored.backend.app,
@@ -327,6 +421,7 @@ export class ComputerUseService extends Service {
       activation: outcome.activation,
       pointerInput: outcome.pointerInput,
       pointerRouting: outcome.pointerRouting,
+      ...(resolution === undefined ? {} : { resolution }),
       observation,
     }
   }
@@ -397,7 +492,8 @@ export class ComputerUseService extends Service {
     const key = `${app.bundleId}:${app.pid}`
     const previousId = state.latestByApp.get(key)
     const previous = previousId === undefined ? undefined : state.observations.get(previousId)
-    const elements = publicElements(backend.elements)
+    const projected = publicElements(backend)
+    const elements = projected.elements
     const full = request.full === true || previous === undefined
     const createdAt = Date.now()
     const observationId = ComputerObservationId(randomUUID())
@@ -421,14 +517,14 @@ export class ComputerUseService extends Service {
       ...(backend.window === undefined ? {} : { window: backend.window }),
       tree: {
         mode: full ? 'full' : 'diff',
-        text: full ? backend.treeText : diffElements(publicElements(previous.backend.elements), elements, this.config.maxTextBytes),
+        text: full ? backend.treeText : diffElements(previous.public.elements, elements, this.config.maxTextBytes),
         truncated: backend.truncated,
       },
       elements,
       ...(artifact === undefined ? {} : { screenshot: artifact }),
       permissions: backend.permissions,
     }
-    state.observations.set(observationId, { public: observation, backend, generation: this.generation })
+    state.observations.set(observationId, { public: observation, backend, targets: projected.targets, generation: this.generation })
     state.latestByApp.set(key, observationId)
     while (state.observations.size > 64) {
       const oldest = state.observations.keys().next().value as ComputerObservationId | undefined

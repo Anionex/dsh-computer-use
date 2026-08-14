@@ -111,6 +111,11 @@ export class ComputerConfirmationManager {
     }
   }
 
+  /** Invalidate one pending token after target identity changes before input. */
+  invalidate(agent: Agent, token: ComputerConfirmationToken | undefined): void {
+    if (token !== undefined) this.records.get(agent)?.delete(token)
+  }
+
   /** Release every pending token owned by one Agent. */
   releaseAgent(agent: Agent): void {
     this.records.delete(agent)

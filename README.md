@@ -29,7 +29,7 @@ The result is a native action layer that can operate many background application
 ## What it adds
 
 - **Observe before acting.** Return a bounded Accessibility tree, indexed elements, exact app/process/window metadata, permission state, and an optional screenshot Artifact.
-- **Bind actions to state.** Every element index belongs to one opaque `observationId`; changed processes, windows, locators, and target identities fail closed.
+- **Bind actions to state.** Every element exposes an observation-local index and opaque `targetHandle`; exact lookup remains compatible, while explicitly allowed rebinding accepts only a unique native or semantic identity inside the same process and window.
 - **Prefer semantic input.** Use `AXPress`, editable values, selected-text assignment, and advertised Accessibility actions before pointer fallback.
 - **Route fallback to the target.** Keyboard input goes to the selected pid; pointer input goes to the selected pid and `CGWindowID` with window-local coordinates, resolving the app window under the point so arbitrary screen coordinates work.
 - **Return fresh evidence.** Every successful action settles for a bounded interval and returns a new full or diff observation.
@@ -107,7 +107,7 @@ Then try:
 flowchart LR
     A["Select exact bundle id and pid"] --> B["Acquire scoped read access"]
     B --> C["Observe AX tree and optional screenshot"]
-    C --> D["Choose indexed element or window-relative point"]
+    C --> D["Choose target handle, index, or window-relative point"]
     D --> E["Acquire control and optional one-use confirmation"]
     E --> F["Re-observe and validate exact target"]
     F --> G{"Input route"}
@@ -120,7 +120,9 @@ flowchart LR
     K --> L["Return fresh full or diff observation"]
 ```
 
-Every element index is valid only inside its originating observation. Element actions tolerate unrelated tree changes but reject a changed process, window, locator, or target identity. Coordinate actions require the complete referenced window state to remain current. A stale operation returns `COMPUTER_STALE_OBSERVATION`; it never searches for a similar replacement.
+Every observed element has an observation-local compatibility index and an opaque `targetHandle`. Index-only actions retain exact locator behavior. A low-risk element action may pass `targetHandle` with `allowRebind: true`; immediately before input, the provider-independent resolver obtains fresh Accessibility state and checks, in order, the original locator, a unique provider-native identifier such as macOS `AXIdentifier`, then one unique semantic match over role, accessible name, advertised actions, and stable ancestor fingerprint. The resolver keeps the exact bundle id, pid, and selected-window identity, and fails closed with `COMPUTER_TARGET_AMBIGUOUS` or `COMPUTER_TARGET_LOW_CONFIDENCE` instead of guessing. Coordinate actions still require the complete referenced window state to remain current.
+
+Successful element actions report `resolution.mode`, `confidence`, `candidateCount`, and `targetChanged`. A sensitive target that needs rebinding invalidates the prior one-use confirmation and returns `COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION`; the caller must observe the current UI and confirm the newly selected handle. Visual coordinates are not target handles and never authorize sensitive rebinding. Provider-native visual hit-testing is not part of this foundation release and remains follow-up work.
 
 The default interaction policy is:
 
@@ -146,6 +148,12 @@ Successful action results include:
 activation: 'not-requested' | 'already-frontmost' | 'activated'
 pointerInput: boolean
 pointerRouting: 'none' | 'target-process'
+resolution?: {
+  mode: 'exact-locator' | 'native-identifier' | 'semantic-rebind'
+  confidence: number
+  candidateCount: number
+  targetChanged: boolean
+}
 ```
 
 The model cannot override these host policies through Tool arguments.
@@ -161,13 +169,13 @@ The Bundle initially contributes only `computer_use_activate`. Loading the Skill
 |---|---|
 | `computer_list_apps` | List bounded user-facing applications with bundle id, pid, frontmost state, and permission diagnostics |
 | `computer_observe` | Return a fresh full/diff Accessibility observation and optional screenshot Artifact |
-| `computer_click` | Prefer `AXPress`; optionally use an observed element frame or window/screen coordinate (`coordinateSpace`) through target-process pointer input |
-| `computer_set_value` | Set or clear an editable Accessibility value without using the clipboard |
+| `computer_click` | Prefer `AXPress`; accept an exact index or opaque target handle, with optional safe rebinding, before target-process coordinate fallback |
+| `computer_set_value` | Set or clear an editable Accessibility value through an exact index or opaque target handle without using the clipboard |
 | `computer_type_text` | Insert Unicode through Accessibility when supported, with a process-targeted keyboard fallback |
 | `computer_press_key` | Send one key from a finite vocabulary to the selected process, with optional modifiers |
-| `computer_scroll` | Send bounded directional scrolling to the selected process and window at a window/screen coordinate |
+| `computer_scroll` | Send bounded directional scrolling to the selected process and window at a resolved element or window/screen coordinate |
 | `computer_drag` | Drag between two window/screen points in the referenced observation |
-| `computer_perform_action` | Execute one exact Accessibility action advertised by the selected element |
+| `computer_perform_action` | Execute one Accessibility action advertised by an exact or safely rebound selected element |
 | `computer_wait` | Poll one bounded text/role/title condition and return fresh state without modifying the app |
 | `computer_confirm` | Obtain a one-use token bound to one exact sensitive action |
 
@@ -177,7 +185,7 @@ No Tool accepts AppleScript, JXA, shell, Swift, Objective-C, native selectors, a
 
 ## Observation, permissions, and sensitive actions
 
-An observation contains an opaque id and expiry, exact app identity, frontmost/window metadata, bounded tree text, current indexed elements, optional screenshot metadata, and permission state. Secure text values are emitted as `[secure]`; they do not enter tree text, Tool results, screenshot metadata, or native errors. A screenshot can still contain other visible application data and should be treated as sensitive.
+An observation contains an opaque id and expiry, exact app identity, frontmost/window metadata, bounded tree text, current elements with opaque target handles, optional screenshot metadata, and permission state. Target handles expose no provider object reference or native identifier. Secure text values are emitted as `[secure]`; they do not enter target descriptors, tree text, Tool results, screenshot metadata, or native errors. A screenshot can still contain other visible application data and should be treated as sensitive.
 
 The technical access model has two exact-bundle-id leases:
 
@@ -190,7 +198,7 @@ The Bundle keeps Session-wide read grants and rejected app/scope decisions in it
 
 The DSH `danger-full-access` preset uses `approval/policy: never`, so an ungranted app is policy-blocked before any prompt. The plugin reports an actionable `COMPUTER_PERMISSION_REQUIRED` error and does not record that outcome as a user rejection. Add the exact bundle id in Computer Use Settings or use a preset whose approval policy is `ask`.
 
-High-impact communication, sensitive-data transmission, irreversible deletion, account/security/privacy changes, unrequested installation, legal acceptance, and financial completion beyond explicit authorization require `computer_confirm` immediately before execution. The token is short-lived, one-use, and bound to the exact app, process, observation, and action. Grants do not bypass it.
+High-impact communication, sensitive-data transmission, irreversible deletion, account/security/privacy changes, unrequested installation, legal acceptance, and financial completion beyond explicit authorization require `computer_confirm` immediately before execution. The token is short-lived, one-use, and bound to the exact app, process, observation, target handle, and action. Grants do not bypass it. If resolution moves beyond the exact locator, the token is invalidated and a fresh observation plus confirmation is required.
 
 ## macOS permissions and native integrity
 

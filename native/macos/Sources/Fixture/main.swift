@@ -66,7 +66,10 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private var slider: NSSlider!
     private var statusLabel: NSTextField!
     private var inputProbe: InputProbeView!
+    private var stack: NSStackView!
+    private var insertedHarmlessSibling = false
     private var keyMonitor: Any?
+    private var reorderTimer: Timer?
     private var pointerClickCount = 0
     private var pointerScrollCount = 0
     private var pointerDragCount = 0
@@ -76,6 +79,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private var activeDragGesture = false
     private var activationCount = 0
     private let transcriptPath: String?
+    private let reorderTriggerPath: String?
     private let launchInBackground: Bool
 
     override init() {
@@ -84,6 +88,11 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             transcriptPath = arguments[index + 1]
         } else {
             transcriptPath = nil
+        }
+        if let index = arguments.firstIndex(of: "--reorder-trigger"), arguments.indices.contains(index + 1) {
+            reorderTriggerPath = arguments[index + 1]
+        } else {
+            reorderTriggerPath = nil
         }
         launchInBackground = arguments.contains("--background")
         super.init()
@@ -104,6 +113,13 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             window.makeKeyAndOrderFront(nil)
         }
         writeTranscript(event: "ready")
+        if let reorderTriggerPath {
+            reorderTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+                guard FileManager.default.fileExists(atPath: reorderTriggerPath) else { return }
+                timer.invalidate()
+                self?.insertHarmlessSibling()
+            }
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -113,6 +129,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        reorderTimer?.invalidate()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -150,9 +167,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         secureField.setAccessibilityLabel("Secure text")
         secureField.identifier = NSUserInterfaceItemIdentifier("fixture.secure")
 
-        checkbox = NSButton(checkboxWithTitle: "Enable deterministic option", target: self, action: #selector(toggleCheckbox))
-        checkbox.state = .off
-        checkbox.setAccessibilityLabel("Enable deterministic option")
+        checkbox = makeCheckbox(state: .off)
 
         popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.addItems(withTitles: ["Alpha", "Beta", "Gamma"])
@@ -240,7 +255,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         buttons.orientation = .horizontal
         buttons.spacing = 10
 
-        let stack = NSStackView(views: [title, fields, checkbox, buttons, statusLabel, inputProbe, scroll])
+        stack = NSStackView(views: [title, fields, checkbox, buttons, statusLabel, inputProbe, scroll])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -284,6 +299,30 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             self?.statusLabel.stringValue = "Status: delayed complete"
             self?.writeTranscript(event: "delay-complete")
         }
+    }
+
+    private func insertHarmlessSibling() {
+        guard !insertedHarmlessSibling else { return }
+        insertedHarmlessSibling = true
+        let checkboxState = checkbox.state
+        stack.removeArrangedSubview(checkbox)
+        checkbox.removeFromSuperview()
+        let label = NSTextField(labelWithString: "Harmless dynamic sibling")
+        label.setAccessibilityLabel("Harmless dynamic sibling")
+        label.identifier = NSUserInterfaceItemIdentifier("fixture.harmless-sibling")
+        stack.insertArrangedSubview(label, at: 2)
+        checkbox = makeCheckbox(state: checkboxState)
+        stack.insertArrangedSubview(checkbox, at: 3)
+        statusLabel.stringValue = "Status: harmless sibling inserted"
+        writeTranscript(event: "reorder")
+    }
+
+    private func makeCheckbox(state: NSControl.StateValue) -> NSButton {
+        let value = NSButton(checkboxWithTitle: "Enable deterministic option", target: self, action: #selector(toggleCheckbox))
+        value.state = state
+        value.setAccessibilityLabel("Enable deterministic option")
+        value.identifier = NSUserInterfaceItemIdentifier("fixture.checkbox")
+        return value
     }
 
     @objc private func showModal() {

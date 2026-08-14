@@ -10,6 +10,12 @@ export type ComputerObservationId = Branded<'ComputerObservationId'>
 /** Brand a generated observation identifier. */
 export const ComputerObservationId = (value: string): ComputerObservationId => value as ComputerObservationId
 
+/** Opaque reference to one element descriptor captured inside an observation. */
+export type ComputerTargetHandle = Branded<'ComputerTargetHandle'>
+
+/** Brand a generated target handle. */
+export const ComputerTargetHandle = (value: string): ComputerTargetHandle => value as ComputerTargetHandle
+
 /** Opaque one-use grant for one confirmed sensitive action. */
 export type ComputerConfirmationToken = Branded<'ComputerConfirmationToken'>
 
@@ -48,9 +54,10 @@ export interface ComputerAppSummary extends ComputerAppIdentity {
   screenRecording: ComputerPermissionState
 }
 
-/** One model-addressable element. Its index belongs only to the enclosing observation. */
+/** One model-addressable element. Its index and opaque handle belong only to the enclosing observation. */
 export interface ComputerElement {
   index: number
+  targetHandle: ComputerTargetHandle
   role: string
   subrole?: string
   title?: string
@@ -61,6 +68,20 @@ export interface ComputerElement {
   selected?: boolean
   frame?: ComputerRect
   actions: string[]
+}
+
+/** Deterministic route used to resolve a target immediately before input. */
+export type ComputerTargetResolutionMode =
+  | 'exact-locator'
+  | 'native-identifier'
+  | 'semantic-rebind'
+
+/** Model-visible evidence describing how an element target was resolved. */
+export interface ComputerTargetResolutionResult {
+  mode: ComputerTargetResolutionMode
+  confidence: number
+  candidateCount: number
+  targetChanged: boolean
 }
 
 /** File artifact emitted by a Computer Use observation. */
@@ -130,10 +151,19 @@ export interface ComputerActionBase {
   confirmationToken?: ComputerConfirmationToken
 }
 
-/** Click an observed element or an observed-window coordinate. */
-export interface ComputerClickAction extends ComputerActionBase {
-  kind: 'click'
+/** Stable target selection fields shared by element-addressed actions. */
+export interface ComputerElementTarget {
+  /** Observation-local compatibility index. It does not authorize rebinding by itself. */
   elementIndex?: number
+  /** Opaque handle returned on the selected observation element. */
+  targetHandle?: ComputerTargetHandle
+  /** Permit deterministic native-identifier or unique semantic rebinding. */
+  allowRebind?: boolean
+}
+
+/** Click an observed element or an observed-window coordinate. */
+export interface ComputerClickAction extends ComputerActionBase, ComputerElementTarget {
+  kind: 'click'
   x?: number
   y?: number
   /** `window` (default) resolves `x`/`y` inside the observed window frame; `screen` treats them as Quartz screen-global points. */
@@ -144,9 +174,8 @@ export interface ComputerClickAction extends ComputerActionBase {
 }
 
 /** Set the Accessibility value of an observed editable element. */
-export interface ComputerSetValueAction extends ComputerActionBase {
+export interface ComputerSetValueAction extends ComputerActionBase, ComputerElementTarget {
   kind: 'set-value'
-  elementIndex: number
   value: string
 }
 
@@ -164,9 +193,8 @@ export interface ComputerPressKeyAction extends ComputerActionBase {
 }
 
 /** Scroll at an observed element or coordinate. */
-export interface ComputerScrollAction extends ComputerActionBase {
+export interface ComputerScrollAction extends ComputerActionBase, ComputerElementTarget {
   kind: 'scroll'
-  elementIndex?: number
   x?: number
   y?: number
   coordinateSpace?: ComputerCoordinateSpace
@@ -185,9 +213,8 @@ export interface ComputerDragAction extends ComputerActionBase {
 }
 
 /** Perform one Accessibility action advertised by an observed element. */
-export interface ComputerPerformAction extends ComputerActionBase {
+export interface ComputerPerformAction extends ComputerActionBase, ComputerElementTarget {
   kind: 'perform-action'
-  elementIndex: number
   action: string
 }
 
@@ -223,6 +250,8 @@ export interface ComputerActionResult {
   pointerInput: boolean
   /** Pointer-event route selected by the helper; global HID routing is not supported. */
   pointerRouting: 'none' | 'target-process'
+  /** Present when the action addressed an observed element. */
+  resolution?: ComputerTargetResolutionResult
   observation: ComputerObservation
 }
 

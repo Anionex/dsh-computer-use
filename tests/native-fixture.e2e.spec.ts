@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, it } from 'vitest'
+import type { BackendObservation } from '../src/backend.ts'
+import { describeComputerTarget, resolveComputerTarget } from '../src/target-resolver.ts'
 import { temporaryDirectory } from './helpers.ts'
 
 const ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
@@ -23,6 +25,7 @@ interface Envelope<T> {
 interface ElementRecord {
   index: number
   locator: number[]
+  nativeIdentifier?: string
   role: string
   title?: string
   label?: string
@@ -58,6 +61,9 @@ interface InteractionPolicy {
 }
 
 interface FixtureTranscript {
+  event: string
+  checked: boolean
+  status: string
   activationCount: number
   pointerClickCount: number
   pointerScrollCount: number
@@ -170,9 +176,12 @@ async function terminateFixtures(): Promise<void> {
   while ((await fixtureApps()).length > 0 && Date.now() < deadline) await delay(50)
 }
 
-async function launchFixture(transcript: string): Promise<{ bundleId: string; pid: number; name: string }> {
+async function launchFixture(transcript: string, reorderTrigger?: string): Promise<{ bundleId: string; pid: number; name: string }> {
   const launched = await new Promise<{ code: number; stderr: string }>((resolve, reject) => {
-    const child = spawn('open', ['-g', '-n', FIXTURE_APP, '--args', '--background', '--transcript', transcript], {
+    const child = spawn('open', [
+      '-g', '-n', FIXTURE_APP, '--args', '--background', '--transcript', transcript,
+      ...(reorderTrigger === undefined ? [] : ['--reorder-trigger', reorderTrigger]),
+    ], {
       stdio: ['ignore', 'ignore', 'pipe'],
     })
     let stderr = ''
@@ -183,10 +192,12 @@ async function launchFixture(transcript: string): Promise<{ bundleId: string; pi
   if (launched.code !== 0) throw new Error(`fixture background launch failed: ${launched.stderr}`)
   const deadline = Date.now() + 10000
   while (Date.now() < deadline) {
-    const [app] = await fixtureApps()
-    if (app !== undefined) {
-      await waitForObservation(app, current => (current.window?.frame.width ?? 0) > 0, 'fixture window to become observable')
-      return app
+    for (const app of await fixtureApps()) {
+      const observed = await observeEnvelope(app)
+      if (observed.ok === true && (observed.value?.window?.frame.width ?? 0) > 0) return app
+      if (observed.error?.code !== 'COMPUTER_APP_NOT_FOUND' && observed.error?.code !== 'COMPUTER_TARGET_UNAVAILABLE') {
+        throw new Error(`${observed.error?.code ?? 'UNKNOWN'}: ${observed.error?.message ?? 'fixture observation failed during launch'}`)
+      }
     }
     await delay(50)
   }
@@ -702,6 +713,62 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       await delay(100)
       const afterTermination = await invokeEnvelope({ command: 'resolve-app', selector: { bundleId: app.bundleId, pid: app.pid } })
       expect(afterTermination).toMatchObject({ ok: false, error: { code: 'COMPUTER_APP_NOT_FOUND' } })
+    } finally {
+      if (app !== undefined) {
+        try { process.kill(app.pid, 'SIGKILL') } catch {}
+      }
+      await terminateFixtures()
+      await temporary.cleanup()
+    }
+  }, 30000)
+
+  it('exposes a stable native identifier when a harmless sibling shifts the raw locator', async (testContext) => {
+    const health = await invoke<{ accessibility: string }>({ command: 'health' })
+    if (health.accessibility !== 'granted') {
+      if (process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1') {
+        throw new Error(`release lane requires Accessibility; got ${JSON.stringify(health)}`)
+      }
+      testContext.skip(`macOS Accessibility permission unavailable: ${JSON.stringify(health)}`)
+      return
+    }
+
+    const temporary = await temporaryDirectory('dsh-computer-native-rebind-')
+    await terminateFixtures()
+    const transcriptPath = join(temporary.path, 'transcript.json')
+    const reorderTrigger = join(temporary.path, 'reorder.trigger')
+    let app: NativeObservation['app'] | undefined
+    try {
+      app = await launchFixture(transcriptPath, reorderTrigger)
+      const original = await stableObserve(app, observation => !observation.frontmost)
+      const checkbox = findElement(original, element => element.label === 'Enable deterministic option')
+      expect(checkbox.nativeIdentifier).toBe('fixture.checkbox')
+      await writeFile(reorderTrigger, 'reorder')
+      const fresh = await stableObserve(app, observation => observation.treeText.includes('Harmless dynamic sibling'))
+      const movedCheckbox = findElement(fresh, element => element.label === 'Enable deterministic option')
+      expect(
+        movedCheckbox.locator,
+        JSON.stringify(fresh.elements.filter(element => ['Enable deterministic option', 'Harmless dynamic sibling'].includes(element.label ?? ''))),
+      ).not.toEqual(checkbox.locator)
+      expect(movedCheckbox.nativeIdentifier).toBe(checkbox.nativeIdentifier)
+      await expect(act(original, { kind: 'click', elementIndex: checkbox.index }, checkbox, PRESERVE_INTERACTION))
+        .rejects.toThrow(/COMPUTER_STALE_OBSERVATION/)
+
+      const expected = describeComputerTarget(checkbox, original as BackendObservation)
+      const resolved = resolveComputerTarget(original as BackendObservation, fresh as BackendObservation, expected, true)
+      expect(resolved.resolution).toEqual({
+        mode: 'native-identifier',
+        confidence: 1,
+        candidateCount: 1,
+        targetChanged: true,
+      })
+      expect(resolved.element.nativeIdentifier).toBe('fixture.checkbox')
+      await expect(act(fresh, { kind: 'click', elementIndex: resolved.element.index }, resolved.element, PRESERVE_INTERACTION))
+        .resolves.toMatchObject({ channel: 'accessibility', pointerInput: false, pointerRouting: 'none' })
+      expect(await fixtureTranscript(transcriptPath)).toMatchObject({
+        event: 'checkbox',
+        checked: true,
+        status: 'Status: option enabled',
+      })
     } finally {
       if (app !== undefined) {
         try { process.kill(app.pid, 'SIGKILL') } catch {}
