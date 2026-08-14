@@ -1,9 +1,10 @@
 /** Provider-facing backend protocol kept below the public Computer Use Service. */
 import type { ComputerActionRequest, ComputerAppIdentity, ComputerAppSelector, ComputerAppSummary, ComputerElement, ComputerPermissionState, ComputerRect, ComputerScreenshotMode } from './types.ts';
 import type { ResolvedComputerUseConfig } from './config.ts';
-/** Internal element locator never exposed to the model or persisted in Session logs. */
-export interface BackendElement extends ComputerElement {
+/** Internal provider evidence never exposed to the model or persisted in Session logs. */
+export interface BackendElement extends Omit<ComputerElement, 'targetHandle'> {
     locator: number[];
+    nativeIdentifier?: string;
 }
 /** Raw full-state observation returned by a provider before Service diff projection. */
 export interface BackendObservation {
@@ -36,7 +37,7 @@ export interface BackendObserveOptions {
     maxDepth: number;
     maxTextBytes: number;
 }
-/** Action bound to the exact provider state and internal target locator. */
+/** Action bound to fresh provider state and one exact internally resolved target. */
 export interface BackendActionRequest {
     action: Exclude<ComputerActionRequest, {
         kind: 'wait';

@@ -29,7 +29,7 @@ DSH Computer Use 的默认路由有意避免干扰：
 ## 它补充了什么
 
 - **先观察再动作。** 返回有界 Accessibility tree、带 index 的元素、准确 app/process/window metadata、权限状态和可选截图 Artifact。
-- **把动作绑定到状态。** 每个元素 index 只属于一个 opaque `observationId`；进程、窗口、locator 或目标身份变化都会 fail closed。
+- **把动作绑定到状态。** 每个元素都带有 observation-local index 与 opaque `targetHandle`；准确 locator 继续兼容，而显式允许的重绑定只接受同一进程和窗口内唯一的 native 或 semantic 身份。
 - **优先语义输入。** 先使用 `AXPress`、可编辑 value、selected-text 赋值和元素声明的 Accessibility action，再考虑指针 fallback。
 - **把 fallback 投递给目标。** 键盘输入发给选定 pid；指针输入携带窗口本地坐标，发给选定 pid 和 `CGWindowID`，并通过点解析应用窗口，任意屏幕坐标都可以点击。
 - **返回新鲜证据。** 每个成功动作都会经过有界 settle，并返回新的完整或差分 observation。
@@ -107,7 +107,7 @@ dsh --profile headless --dump-config | grep computer-use
 flowchart LR
     A["Select exact bundle id and pid"] --> B["Acquire scoped read access"]
     B --> C["Observe AX tree and optional screenshot"]
-    C --> D["Choose indexed element or window-relative point"]
+    C --> D["Choose target handle, index, or window-relative point"]
     D --> E["Acquire control and optional one-use confirmation"]
     E --> F["Re-observe and validate exact target"]
     F --> G{"Input route"}
@@ -120,7 +120,9 @@ flowchart LR
     K --> L["Return fresh full or diff observation"]
 ```
 
-每个元素 index 只在来源 observation 中有效。元素动作可以容忍无关 tree 变化，但会拒绝变化的进程、窗口、locator 或目标身份。坐标动作要求引用窗口的完整状态仍然新鲜。Stale 动作会返回 `COMPUTER_STALE_OBSERVATION`，不会搜索相似替代目标。
+每个已观察元素都有 observation-local 兼容 index 和 opaque `targetHandle`。仅传 index 的动作保留准确 locator 行为。低风险元素动作可以传入 `targetHandle` 与 `allowRebind: true`；输入前，provider-independent resolver 会获取新鲜 Accessibility 状态，并依次检查原 locator、唯一 provider-native identifier（例如 macOS `AXIdentifier`），以及基于 role、accessible name、已声明 action 和稳定 ancestor fingerprint 的唯一 semantic match。Resolver 始终保留准确 bundle id、pid 与选定窗口身份；遇到歧义或低置信度时返回 `COMPUTER_TARGET_AMBIGUOUS` 或 `COMPUTER_TARGET_LOW_CONFIDENCE`，不会猜测。坐标动作仍要求引用窗口的完整状态保持当前。
+
+成功的元素动作会报告 `resolution.mode`、`confidence`、`candidateCount` 与 `targetChanged`。敏感目标一旦需要 rebind，旧的一次性 confirmation 会失效，并返回 `COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION`；调用方必须观察当前 UI，并对新选择的 handle 再次确认。视觉坐标不是 target handle，不能授权敏感 rebind。本基础版本不包含 provider-native visual hit-test，该能力留待后续实现。
 
 默认 interaction policy 为：
 
@@ -146,6 +148,12 @@ Helper executable 是 DSH 内部传输实现，不是公共授权 API。它要�
 activation: 'not-requested' | 'already-frontmost' | 'activated'
 pointerInput: boolean
 pointerRouting: 'none' | 'target-process'
+resolution?: {
+  mode: 'exact-locator' | 'native-identifier' | 'semantic-rebind'
+  confidence: number
+  candidateCount: number
+  targetChanged: boolean
+}
 ```
 
 模型不能通过 Tool 参数覆盖这些宿主策略。
@@ -161,13 +169,13 @@ Bundle 初始只贡献 `computer_use_activate`。加载 Skill 后，才为当前
 |---|---|
 | `computer_list_apps` | 列出有界用户应用及 bundle id、pid、前台状态和权限诊断 |
 | `computer_observe` | 返回新鲜的 full/diff Accessibility observation 与可选截图 Artifact |
-| `computer_click` | 优先使用 `AXPress`；也可通过目标进程指针输入点击已观察元素 frame 或窗口/屏幕坐标（`coordinateSpace`） |
-| `computer_set_value` | 不使用剪贴板，设置或清空可编辑 Accessibility value |
+| `computer_click` | 优先使用 `AXPress`；接受准确 index 或 opaque target handle，并可在目标进程坐标 fallback 前执行安全 rebind |
+| `computer_set_value` | 通过准确 index 或 opaque target handle 设置或清空可编辑 Accessibility value，不使用剪贴板 |
 | `computer_type_text` | 支持时通过 Accessibility 插入 Unicode，否则使用进程定向键盘 fallback |
 | `computer_press_key` | 向选定进程发送有限词表中的按键，并支持可选 modifier |
-| `computer_scroll` | 在窗口/屏幕坐标处向选定进程与窗口发送有界方向滚动 |
+| `computer_scroll` | 在已解析元素或窗口/屏幕坐标处向选定进程与窗口发送有界方向滚动 |
 | `computer_drag` | 在引用 observation 的窗口/屏幕两点之间拖拽 |
-| `computer_perform_action` | 执行选定元素声明的准确 Accessibility action |
+| `computer_perform_action` | 执行准确或安全 rebind 后的选定元素所声明的 Accessibility action |
 | `computer_wait` | 轮询一个有界 text/role/title 条件，不修改应用并返回新鲜状态 |
 | `computer_confirm` | 获取绑定准确敏感动作的一次性 token |
 
@@ -177,7 +185,7 @@ Bundle 初始只贡献 `computer_use_activate`。加载 Skill 后，才为当前
 
 ## Observation、权限与敏感动作
 
-Observation 包含 opaque id 与过期时间、准确 app 身份、frontmost/window metadata、有界 tree text、当前 indexed element、可选截图 metadata 和权限状态。Secure text value 以 `[secure]` 输出，不会进入 tree text、Tool result、截图 metadata 或 native error。截图仍可能包含应用中其他可见数据，应按敏感数据处理。
+Observation 包含 opaque id 与过期时间、准确 app 身份、frontmost/window metadata、有界 tree text、带 opaque target handle 的当前元素、可选截图 metadata 和权限状态。Target handle 不暴露 provider object reference 或 native identifier。Secure text value 以 `[secure]` 输出，不会进入 target descriptor、tree text、Tool result、截图 metadata 或 native error。截图仍可能包含应用中其他可见数据，应按敏感数据处理。
 
 技术访问模型包含两类准确 bundle-id lease：
 
@@ -190,7 +198,7 @@ Bundle 把 Session 级 read grant 和被拒绝的 app/scope 决定保存在自�
 
 DSH `danger-full-access` preset 使用 `approval/policy: never`，因此未授权应用会在弹窗前被策略阻断。插件返回可操作的 `COMPUTER_PERMISSION_REQUIRED` 错误，并且不会把它记录成用户拒绝。请在 Computer Use Settings 中添加准确 bundle id，或改用 approval policy 为 `ask` 的 preset。
 
-高影响外部通信、敏感数据传输、不可逆删除、账户/安全/隐私变更、未经请求的安装、法律条款接受，以及超出明确授权的财务完成动作，都需要在执行前立即调用 `computer_confirm`。Token 有短 TTL、只能使用一次，并绑定准确 app、process、observation 与 action；grant 不能绕过它。
+高影响外部通信、敏感数据传输、不可逆删除、账户/安全/隐私变更、未经请求的安装、法律条款接受，以及超出明确授权的财务完成动作，都需要在执行前立即调用 `computer_confirm`。Token 有短 TTL、只能使用一次，并绑定准确 app、process、observation、target handle 与 action；grant 不能绕过它。只要 resolution 不再使用原 locator，该 token 就会失效，必须重新观察并再次确认。
 
 ## macOS 权限与 native 完整性
 

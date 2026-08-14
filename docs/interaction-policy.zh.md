@@ -22,12 +22,13 @@ interaction:
 
 ## 总体设计
 
-动作路径按以下四层执行：
+动作路径按以下五层执行：
 
-1. DSH Service 把请求绑定到一个未过期 observation、准确 bundle id、pid、窗口，以及元素、窗口相对坐标或屏幕全局坐标。
-2. Native helper 再次观察目标，拒绝已经变化或存在歧义的状态。
-3. Helper 优先使用 `AXPress`、Accessibility value 赋值、selected-text 赋值，或元素声明的 action。当 `click` 目标声明了 `AXPress` 但 macOS 拒绝执行时，helper 会在有界深度内重试该元素可点击子节点的 `AXPress`，之后才考虑元素 frame 或坐标指针路由。
-4. 语义输入不可用时，键盘事件定向投递到选定 pid；指针事件定向投递到选定 pid 和窗口。任何指针 fallback 都不使用全局 event tap。
+1. DSH Service 把请求绑定到一个未过期 observation、准确 bundle id、pid、窗口，以及 element target handle、兼容 index、窗口相对坐标或屏幕全局坐标。
+2. 对 handle 动作，Service 会获取新鲜 Accessibility 状态，并通过原 locator、唯一 provider-native identifier，或唯一 semantic role/name/actions/ancestor match 解析目标。应用、进程与选定窗口身份始终保持准确；歧义和低置信度都会 fail closed。
+3. Native helper 会再次观察已解析目标，并拒绝输入前发生的 locator、属性、进程或窗口竞态变化。
+4. Helper 优先使用 `AXPress`、Accessibility value 赋值、selected-text 赋值，或元素声明的 action。当 `click` 目标声明了 `AXPress` 但 macOS 拒绝执行时，helper 会在有界深度内重试该元素可点击子节点的 `AXPress`，之后才考虑元素 frame 或坐标指针路由。
+5. 语义输入不可用时，键盘事件定向投递到选定 pid；指针事件定向投递到选定 pid 和窗口。任何指针 fallback 都不使用全局 event tap。
 
 指针投递在点位于已观察窗口内时直接使用该窗口；否则解析选定应用在该屏幕点下最上层的屏幕内窗口，再通过 `SLEventPostToPid` 投递并附带 pid/window 字段与窗口本地坐标。这与 Codex Computer Use 的 target-process 形态一致（`SynthesizedEvent.send(to: pid)` 配合 `CGWindow.window(at:)`），因此 `coordinateSpace: screen` 无需全局 HID 事件流即可支持任意坐标点击。SkyLight symbol 不可用，或该点不在选定应用的任何屏幕内窗口中时都会 fail closed。
 
@@ -41,6 +42,12 @@ interaction:
 activation: 'not-requested' | 'already-frontmost' | 'activated'
 pointerInput: boolean
 pointerRouting: 'none' | 'target-process'
+resolution?: {
+  mode: 'exact-locator' | 'native-identifier' | 'semantic-rebind'
+  confidence: number
+  candidateCount: number
+  targetChanged: boolean
+}
 ```
 
 这些字段不会声称目标应用绝不可能因自身副作用改变焦点，只报告 helper 实际请求和发出的行为。
@@ -71,6 +78,12 @@ pointerRouting: 'none' | 'target-process'
 ### Accessibility 始终是主路径
 
 语义化 Accessibility 操作比像素坐标更稳定，不需要模拟光标，并且能在许多后台应用上工作。Helper 会先重新校验准确目标，再调用这些操作，并返回 `activation: not-requested`、`pointerInput: false` 和 `pointerRouting: none`。
+
+### Stable handle 只在独立身份依据充分时 rebind
+
+公开的 `targetHandle` 是 opaque 且 observation-local 的；它不暴露 `AXUIElement`、locator 或 `AXIdentifier`。Service 把 normalized descriptor 保存在 Agent 自有内存中，并在 handle 动作前立即重新观察。系统优先使用准确 locator 身份。Rebind 必须通过 `allowRebind` 显式启用，并且只能依赖稳定语义仍一致的唯一 provider-native identifier，或 role、normalized accessible name、已声明 action 与稳定 ancestor fingerprint 全部一致的唯一 semantic candidate。Resolver 保留准确 bundle id、pid 与选定窗口身份。Truncated tree 不能授权 rebind。重复 candidate 返回 `COMPUTER_TARGET_AMBIGUOUS`；证据缺失或不足返回 `COMPUTER_TARGET_LOW_CONFIDENCE`。
+
+敏感 confirmation 绑定准确 handle action。任何 native-identifier 或 semantic fallback 都会把目标标记为 changed，在输入前使旧 token 失效，并返回 `COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION`。坐标与截图-derived box 不能变成 handle、身份依据或敏感目标授权。调用方必须选择当前 handle，并获取新的单次 confirmation。Provider-native visual hit-test 被明确拆为后续能力，因为当前视觉流程无法独立校验截图坐标。
 
 ### 默认指针路由是虚拟且目标定向的
 
@@ -112,6 +125,7 @@ Helper 不会先移动系统光标再尝试恢复。那种设计仍会打断用�
 - fixture 记录每次 `applicationDidBecomeActive` 回调，默认路径不得增加 `activationCount`；
 - 独立 native monitor 会在 click、scroll 与 drag 整个动作期间每毫秒采样系统光标和前台 pid，所有采样都必须保持不变；
 - 后台 `AXPress`、Accessibility value/action、selected-text 输入与 pid 定向按键都能修改 fixture 且不激活它；
+- native fixture 会插入无害 sibling 并重建一个带唯一 identifier 的 checkbox，证明原始 locator 已 stale，而 `AXIdentifier` resolution 仍只找到一个目标；
 - 目标进程 click 与 scroll 各只被观察到一次；drag 只产生一组 down/up gesture；目标始终不是前台应用；
 - `pointerInputPolicy: deny` 会在任何目标指针事件发出前拒绝 click fallback、scroll 与 drag；
 - 干净 Profile 与真实模型验证要求模型可见动作结果和 fixture transcript 相互一致。
@@ -123,3 +137,4 @@ Helper 不会先移动系统光标再尝试恢复。那种设计仍会打断用�
 - `focusPolicy: activate` 与 `keyboardPolicy: activate` 会有意打断前台工作，只作为操作方显式选择的兼容模式。
 - 目标应用可能因接受动作而自行改变 activation 或 focus；helper 不承诺控制应用内部副作用。
 - Agent 光标只属于当前 Space 和准确已观察窗口。`cursorAutoHideMs: 0` 会让它持续显示，直到绑定窗口变化、收到新的 hide 命令或 helper 被释放。
+- Stable handle 当前只使用准确 locator、provider-native identifier 与严格 semantic identity。Semantic-spatial rebind 和 provider-native visual hit-test 留作后续；仅凭 vision 得到的坐标永远不是已验证目标。

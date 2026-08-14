@@ -7,6 +7,7 @@ import { ComputerUseService } from '../src/service.ts'
 import {
   ComputerObservationId,
   ComputerConfirmationToken,
+  ComputerTargetHandle,
   type ComputerActionRequest,
   type ComputerUseContext,
 } from '../src/types.ts'
@@ -106,6 +107,12 @@ describe('Computer Use Service', () => {
         activation: 'not-requested',
         pointerInput: false,
         pointerRouting: 'none',
+        resolution: {
+          mode: 'exact-locator',
+          confidence: 1,
+          candidateCount: 1,
+          targetChanged: false,
+        },
       })
       expect(result.observation.observationId).not.toBe(before.observationId)
       expect(result.observation.tree.mode).toBe('diff')
@@ -117,6 +124,160 @@ describe('Computer Use Service', () => {
       ])
       await expect(service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context))
         .rejects.toMatchObject({ code: 'COMPUTER_STALE_OBSERVATION' })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('rebinds a unique target after an unrelated sibling shifts its locator', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-rebind-')
+    try {
+      const { backend, service } = serviceHarness()
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const target = before.elements.find(element => element.title === 'Apply')!
+      expect(target.targetHandle).toEqual(expect.any(String))
+      expect(target).not.toHaveProperty('nativeIdentifier')
+      backend.observation = backendObservation({
+        stateHash: 'state-reordered',
+        elements: [
+          backend.observation.elements[0]!,
+          { index: 1, locator: [0], role: 'AXStaticText', label: 'Unrelated status', actions: [] },
+          { ...backend.observation.elements[1]!, index: 2, locator: [1] },
+        ],
+      })
+
+      await expect(service.act({
+        kind: 'click',
+        observationId: before.observationId,
+        elementIndex: target.index,
+        targetHandle: target.targetHandle,
+        allowRebind: true,
+      }, context)).resolves.toMatchObject({
+        resolution: {
+          mode: 'semantic-rebind',
+          candidateCount: 1,
+          targetChanged: true,
+        },
+      })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('prefers a provider-native identifier over semantic rebinding', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-native-rebind-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.observation = backendObservation({
+        elements: backend.observation.elements.map(element => element.index === 1
+          ? { ...element, nativeIdentifier: 'fixture.apply' }
+          : element),
+      })
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const target = before.elements.find(element => element.title === 'Apply')!
+      backend.observation = backendObservation({
+        stateHash: 'state-native-reordered',
+        elements: [
+          backend.observation.elements[0]!,
+          { index: 1, locator: [0], role: 'AXStaticText', label: 'Unrelated status', actions: [] },
+          { ...backend.observation.elements[1]!, index: 2, locator: [1] },
+        ],
+      })
+
+      await expect(service.act({
+        kind: 'click',
+        observationId: before.observationId,
+        targetHandle: target.targetHandle,
+        allowRebind: true,
+      }, context)).resolves.toMatchObject({
+        resolution: {
+          mode: 'native-identifier',
+          confidence: 1,
+          candidateCount: 1,
+          targetChanged: true,
+        },
+      })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('keeps an unrelated status update from invalidating an exact handle target', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-unrelated-update-')
+    try {
+      const { backend, service } = serviceHarness()
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const target = before.elements.find(element => element.title === 'Apply')!
+      backend.observation = backendObservation({
+        ...backend.observation,
+        stateHash: 'state-timer-update',
+        treeText: `${backend.observation.treeText}\n  [2] AXStaticText "Timer: 1"`,
+        elements: [
+          ...backend.observation.elements,
+          { index: 2, locator: [1], role: 'AXStaticText', label: 'Timer', value: '1', actions: [] },
+        ],
+      })
+
+      await expect(service.act({
+        kind: 'click',
+        observationId: before.observationId,
+        targetHandle: target.targetHandle,
+        allowRebind: true,
+      }, context)).resolves.toMatchObject({
+        resolution: {
+          mode: 'exact-locator',
+          confidence: 1,
+          candidateCount: 1,
+          targetChanged: false,
+        },
+      })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('rejects unscoped, mismatched, and index-only rebinding requests before fresh provider work', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-handle-scope-')
+    try {
+      const { backend, service } = serviceHarness()
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const window = observation.elements[0]!
+      const target = observation.elements[1]!
+      const observationsBefore = backend.observations.length
+
+      await expect(service.act({
+        kind: 'click',
+        observationId: observation.observationId,
+        targetHandle: ComputerTargetHandle('unknown-handle'),
+        allowRebind: true,
+      }, context)).rejects.toMatchObject({ code: 'COMPUTER_TARGET_UNAVAILABLE' })
+      await expect(service.act({
+        kind: 'click',
+        observationId: observation.observationId,
+        elementIndex: target.index,
+        targetHandle: window.targetHandle,
+        allowRebind: true,
+      }, context)).rejects.toMatchObject({ code: 'COMPUTER_TARGET_UNAVAILABLE' })
+      await expect(service.act({
+        kind: 'click',
+        observationId: observation.observationId,
+        elementIndex: target.index,
+        allowRebind: true,
+      }, context)).rejects.toMatchObject({ code: 'COMPUTER_TARGET_UNAVAILABLE' })
+      expect(backend.observations).toHaveLength(observationsBefore)
+      expect(backend.actions).toHaveLength(0)
     } finally {
       await workspace.cleanup()
     }
@@ -170,6 +331,37 @@ describe('Computer Use Service', () => {
         code: 'COMPUTER_ACTION_BLOCKED',
       })
       expect(request).not.toHaveBeenCalled()
+      expect(backend.actions).toHaveLength(0)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('checks pointer policy from opaque-handle evidence before attempting rebinding', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-handle-pointer-policy-')
+    try {
+      const { backend, service } = serviceHarness({
+        interaction: { focusPolicy: 'preserve', pointerInputPolicy: 'deny' },
+      })
+      backend.observation = backendObservation({
+        elements: [
+          backend.observation.elements[0]!,
+          { ...backend.observation.elements[1]!, actions: [] },
+        ],
+      })
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const target = observation.elements[1]!
+      await expect(service.act({
+        kind: 'click',
+        observationId: observation.observationId,
+        targetHandle: target.targetHandle,
+        allowRebind: true,
+        allowCoordinateFallback: true,
+      }, context)).rejects.toMatchObject({ code: 'COMPUTER_ACTION_BLOCKED' })
+      expect(backend.observations).toHaveLength(1)
       expect(backend.actions).toHaveLength(0)
     } finally {
       await workspace.cleanup()
@@ -571,6 +763,48 @@ describe('Computer Use Service', () => {
         .rejects.toMatchObject({ code: 'COMPUTER_CONFIRMATION_REQUIRED' })
       await expect(service.act({ ...proposed, confirmationToken: ComputerConfirmationToken('unknown') }, context))
         .rejects.toMatchObject({ code: 'COMPUTER_CONFIRMATION_REQUIRED' })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('invalidates one-use confirmation when a sensitive target rebinds', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-confirm-rebind-')
+    try {
+      const { backend, service } = serviceHarness()
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const target = observation.elements.find(element => element.title === 'Apply')!
+      const proposed: ComputerActionRequest = {
+        kind: 'click',
+        observationId: observation.observationId,
+        targetHandle: target.targetHandle,
+        allowRebind: true,
+        sensitive: true,
+      }
+      const confirmation = await service.confirm({ action: proposed, reason: 'Publish a fixture state', target: 'fixture' }, context)
+      const original = structuredClone(backend.observation)
+      backend.observation = backendObservation({
+        stateHash: 'state-sensitive-reordered',
+        elements: [
+          original.elements[0]!,
+          { index: 1, locator: [0], role: 'AXStaticText', label: 'Unrelated status', actions: [] },
+          { ...original.elements[1]!, index: 2, locator: [1] },
+        ],
+      })
+
+      await expect(service.act({ ...proposed, confirmationToken: confirmation.token }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION',
+      })
+      expect(backend.actions).toHaveLength(0)
+
+      backend.observation = original
+      await expect(service.act({ ...proposed, confirmationToken: confirmation.token }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_CONFIRMATION_REQUIRED',
+      })
+      expect(backend.actions).toHaveLength(0)
     } finally {
       await workspace.cleanup()
     }

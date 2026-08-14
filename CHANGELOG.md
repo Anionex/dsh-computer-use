@@ -6,6 +6,7 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ### Added
 
+- Added opaque observation-local target handles with deterministic exact-locator, macOS `AXIdentifier`, and unique semantic resolution; successful element actions now report resolution mode, confidence, candidate count, and target-change metadata.
 - Added a Codex-aligned, click-through Agent cursor overlay that animates independently from the macOS system cursor, remains nonactivating, binds to the exact observed window, and can be configured or hidden from Web Settings.
 - Added `AXPress` descendant retry for `click`: when a target advertises `AXPress` but macOS rejects it, the helper retries pressable descendants within a bounded depth before falling back to coordinates.
 - Added host-owned `interaction.focusPolicy` and `interaction.pointerInputPolicy` settings with default `preserve` / `targeted` behavior and matching Web Settings controls.
@@ -19,6 +20,7 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ### Fixed
 
+- Invalidated one-use confirmation when a sensitive target requires rebinding, and added fail-closed ambiguity/low-confidence errors instead of selecting a similar element.
 - Directed screenshot OCR, visual grounding, and pixel inspection to the installed `vision-tools` Skill and native Vision Toolkit tools at both the Computer Use Skill and screenshot Artifact decision points, instead of allowing shell-built OCR substitutes.
 - Moved Session-wide read grants and rejected app/scope decisions out of unofficial Session event types into the plugin-owned `computer_use_state` storage-domain sidecar, fenced to the exact Session lifecycle and persisted after the Session audit flush.
 - Removed global HID pointer posting and system-cursor movement from the native helper.
@@ -32,6 +34,7 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ### Verification
 
+- Added resolver unit coverage and a native fixture case that inserts an unrelated sibling, recreates a stable checkbox, proves the old child-index locator fails, and verifies `AXIdentifier` rebinding.
 - The deterministic fixture now starts through `open -g` in background mode, records target activation, and probes click, scroll, and drag delivery without taking the foreground.
 - Added a native millisecond-sampling monitor that requires the system cursor and frontmost pid to remain unchanged throughout every target-process pointer action.
 - Clean Profile and real-model lanes now require the fixture to remain never-active on the default route.
