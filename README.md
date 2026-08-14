@@ -299,6 +299,10 @@ Removing or disabling the Bundle unregisters the Skill and Tools, cancels helper
 - See [CHANGELOG.md](CHANGELOG.md) for release history.
 - See [FUNDING.md](FUNDING.md) to support maintenance without purchasing roadmap control or private support.
 
+## About
+
+DSH Computer Use is maintained by [anionex](https://anionex.me/). If you would like to follow my future work, [follow me on X](https://x.com/anion_ex) or [GitHub](https://github.com/Anionex).
+
 ## License
 
 [MIT](LICENSE) © 2026 anionex.

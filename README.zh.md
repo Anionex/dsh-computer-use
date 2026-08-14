@@ -299,6 +299,10 @@ dsh plugin --profile headless remove @dsh-external/dsh-computer-use
 - 版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 - 维护支持方式见 [FUNDING.md](FUNDING.md)，赞助不购买 roadmap 控制权或私有支持。
 
+## 关于
+
+DSH Computer Use 由 [anionex](https://anionex.me/) 维护。如果你想了解我后续的更多工作，欢迎在 [X](https://x.com/anion_ex) 或 [GitHub](https://github.com/Anionex) 关注我。
+
 ## 许可证
 
 [MIT](LICENSE) © 2026 anionex。
