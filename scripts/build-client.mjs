@@ -7,7 +7,7 @@ const compiledPath = join(root, '.client-build', 'index.js')
 const outputPath = join(root, 'lib', 'client.js')
 const source = await readFile(compiledPath, 'utf8')
 const wrapped = [
-  'window.__ModuleLoader__.load({ id: "@dsh-external/dsh-computer-use", factory: (require) => {',
+  'window.__ModuleLoader__.load({ id: "@anionex/dsh-computer-use", factory: (require) => {',
   'var module = { exports: {} }; var exports = module.exports;',
   source.replace(/\n?\/\/# sourceMappingURL=.*$/u, ''),
   'return module.exports; } });',

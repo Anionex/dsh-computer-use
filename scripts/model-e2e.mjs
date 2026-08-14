@@ -183,7 +183,7 @@ async function realModelWorkflow() {
     ['--profile', 'headless', '--dump-config'],
     { env: { DSH_HOME: home }, timeoutMs: 60_000 },
   )
-  if (!dump.stdout.includes("name: '@dsh-external/dsh-computer-use'")) {
+  if (!dump.stdout.includes("name: '@anionex/dsh-computer-use'")) {
     throw new Error('real-model Profile does not mount dsh-computer-use')
   }
 
@@ -279,7 +279,7 @@ try {
 
 const report = {
   schemaVersion: 1,
-  project: '@dsh-external/dsh-computer-use',
+  project: '@anionex/dsh-computer-use',
   lane: 'real-model',
   ok: failure === undefined && cleanupFailure === undefined,
   failure: failure ?? null,

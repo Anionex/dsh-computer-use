@@ -245,7 +245,7 @@ try {
 
 const report = {
   schemaVersion: 1,
-  project: '@dsh-external/dsh-computer-use',
+  project: '@anionex/dsh-computer-use',
   lane: options?.lane ?? null,
   ok: failure === undefined,
   failure: failure ?? null,
