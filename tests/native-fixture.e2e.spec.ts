@@ -191,17 +191,18 @@ async function launchFixture(transcript: string, reorderTrigger?: string): Promi
   })
   if (launched.code !== 0) throw new Error(`fixture background launch failed: ${launched.stderr}`)
   const deadline = Date.now() + 10000
+  let lastObservationFailure: string | undefined
   while (Date.now() < deadline) {
     for (const app of await fixtureApps()) {
       const observed = await observeEnvelope(app)
       if (observed.ok === true && (observed.value?.window?.frame.width ?? 0) > 0) return app
-      if (observed.error?.code !== 'COMPUTER_APP_NOT_FOUND' && observed.error?.code !== 'COMPUTER_TARGET_UNAVAILABLE') {
-        throw new Error(`${observed.error?.code ?? 'UNKNOWN'}: ${observed.error?.message ?? 'fixture observation failed during launch'}`)
+      if (observed.ok !== true) {
+        lastObservationFailure = `${observed.error?.code ?? 'UNKNOWN'}: ${observed.error?.message ?? 'fixture observation failed during launch'}`
       }
     }
     await delay(50)
   }
-  throw new Error('fixture did not become discoverable')
+  throw new Error(`fixture did not become discoverable${lastObservationFailure === undefined ? '' : `; last observation failure: ${lastObservationFailure}`}`)
 }
 
 async function observeEnvelope(
