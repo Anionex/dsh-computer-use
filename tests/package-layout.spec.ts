@@ -30,7 +30,7 @@ async function javascriptFiles(directory: string): Promise<string[]> {
 
 describe('published package layout', () => {
   it('declares a portable DSH Bundle, Web client, and built entry points', async () => {
-    expect(PACKAGE.name).toBe('@dsh-external/dsh-computer-use')
+    expect(PACKAGE.name).toBe('@anionex/dsh-computer-use')
     expect(PACKAGE.dsh?.bundle?.patch).toBe('./cordis.patch.yml')
     expect(PACKAGE.dsh?.client).toMatchObject({ platform: 'web' })
     expect(PACKAGE.dshClient).toBeUndefined()

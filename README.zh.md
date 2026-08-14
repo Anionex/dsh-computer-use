@@ -76,18 +76,17 @@ Fixture 会记录每次 `applicationDidBecomeActive` 回调。独立 native moni
 - 只有请求截图时才需要 macOS Screen Recording 权限。
 - 构建本仓库时需要 Node.js `^22.19.0` 或 `>=24.0.0`。
 
-软件包当前尚未发布到 npm，请从 checkout 安装：
+直接从 npm 一键安装 Web 与 Headless Bundle：
 
 ```sh
-git clone https://github.com/dsh-external/dsh-computer-use.git
-PLUGIN="$PWD/dsh-computer-use"
-
-dsh plugin --profile web add "$PLUGIN"
-dsh plugin --profile headless add "$PLUGIN"
+dsh plugin --profile web add @anionex/dsh-computer-use
+dsh plugin --profile headless add @anionex/dsh-computer-use
 
 dsh --profile web --dump-config | grep computer-use
 dsh --profile headless --dump-config | grep computer-use
 ```
+
+本地开发时，把包名替换为 checkout 的绝对路径即可。
 
 修改已安装插件后，需要重启正在运行的 `dsh web` host，再创建一个新 Session，让 host 重新载入 Bundle 与 Skill catalog。
 
@@ -249,7 +248,7 @@ Settings 更新只有在校验与健康检查通过后才替换当前 provider g
 - 目标应用可能因接受动作而自行改变 activation 或 focus。
 - 软件包按请求捕获离散 observation，不提供实时桌面流。
 - 浏览器工作应继续使用 browser automation，因为 DOM/CDP 状态更窄、更精确。
-- npm 软件包名已写入 metadata，但尚未发布；请从 checkout 或本地 tarball 安装。
+- 公共 npm 包以 `@anionex/dsh-computer-use` 安装，可同时挂载到 Web 与 Headless Profile。
 
 ## 开发与发布验收
 
@@ -284,8 +283,8 @@ pnpm run validate:release
 ## 移除
 
 ```sh
-dsh plugin --profile web remove @dsh-external/dsh-computer-use
-dsh plugin --profile headless remove @dsh-external/dsh-computer-use
+dsh plugin --profile web remove @anionex/dsh-computer-use
+dsh plugin --profile headless remove @anionex/dsh-computer-use
 ```
 
 移除或禁用 Bundle 会注销 Skill 与 Tool、取消 helper 工作、释放进程内 Agent observation、turn control grant 与 confirmation、关闭 storage-domain handle，并移除 Web contribution。已经生成的截图文件和插件自有的 `computer_use_state` sidecar 会保留，供用户显式清理。
