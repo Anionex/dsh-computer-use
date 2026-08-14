@@ -1,5 +1,6 @@
 # DSH Computer Use
 
+[![X (Twitter)](https://img.shields.io/badge/-@anion__ex-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/anion_ex)
 [![MIT License](https://img.shields.io/badge/license-MIT-2f855a.svg)](LICENSE)
 ![macOS](https://img.shields.io/badge/macOS-14%2B-111827.svg)
 ![Universal binary](https://img.shields.io/badge/native-arm64%20%2B%20x86__64-2563eb.svg)
