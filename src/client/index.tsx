@@ -16,14 +16,19 @@ const en = {
   nav: 'Computer Use',
   title: 'macOS Computer Use',
   intro: 'Inspect the native helper, macOS privacy permissions, foreground/targeted-input policy, observation limits, and exact per-app read/control grants.',
+  pluginKind: 'DSH native plugin',
   privacy: 'macOS privacy',
+  access: 'Application access',
+  accessHint: 'Choose whether Computer Use may work with every app. Exact per-app rules remain available under Advanced settings.',
   advanced: 'Advanced options',
   advancedHint: 'Limits, helper path, cursor timing, and application grants.',
   cursorTiming: 'Cursor timing',
   helper: 'Native helper',
+  helperUnknown: 'Unknown',
   ready: 'Ready',
   unavailable: 'Unavailable',
-  generation: 'Generation',
+  generation: 'Applied in this run',
+  generationValue: '{generation} times',
   accessibility: 'Accessibility',
   screenRecording: 'Screen Recording',
   granted: 'Granted',
@@ -73,65 +78,70 @@ const en = {
 
 type LocaleKey = keyof typeof en
 const zh: Record<LocaleKey, string> = {
-  nav: 'Computer Use',
-  title: 'macOS Computer Use',
-  intro: '检查原生 helper、macOS 隐私权限、前台与定向输入策略、观察限制，以及按应用配置的精确 read/control grant。',
-  privacy: 'macOS 隐私',
-  advanced: '高级选项',
-  advancedHint: '限制、helper 路径、光标时序与应用授权。',
-  cursorTiming: '光标时序',
-  helper: '原生 helper',
-  ready: '可用',
+  nav: '电脑操作',
+  title: '电脑操作',
+  intro: '让智能体读取并操作 macOS 应用。这里可以检查系统权限、设置应用范围，并按需调整操作方式。',
+  pluginKind: 'DSH 原生插件',
+  privacy: '系统权限检查',
+  access: '应用访问范围',
+  accessHint: '日常使用只需决定是否允许操作所有应用；指定应用规则可在高级设置中配置。',
+  advanced: '高级设置',
+  advancedHint: '操作方式、性能限制、光标效果、指定应用规则和运行组件。一般无需修改。',
+  cursorTiming: '光标效果',
+  helper: '运行组件版本',
+  helperUnknown: '未提供',
+  ready: '已就绪',
   unavailable: '不可用',
-  generation: '世代',
+  generation: '本次运行已应用',
+  generationValue: '{generation} 次',
   accessibility: '辅助功能',
   screenRecording: '屏幕录制',
   granted: '已授权',
   denied: '需要授权',
   openSettings: '打开 macOS 设置',
-  refresh: '刷新健康状态',
-  limits: '观察与动作限制',
-  ttl: 'Observation TTL（毫秒；0 = 不限期）',
-  confirmationTtl: '确认 Token TTL（毫秒）',
+  refresh: '重新检查',
+  limits: '性能与安全限制',
+  ttl: '界面识别结果有效期（毫秒；0 表示一直有效）',
+  confirmationTtl: '操作确认有效期（毫秒）',
   actionTimeout: '动作超时（毫秒）',
-  settle: '稳定检查间隔（毫秒）',
-  maxSettle: '最大稳定等待（毫秒）',
-  maxNodes: '最大 AX 节点数',
-  maxDepth: '最大 AX 深度',
-  maxText: '最大 AX 文本字节数',
-  maxScreenshot: '最大截图字节数',
-  artifactRoot: 'Artifact 目录',
-  helperPath: '外部 helper 路径',
-  sourceBuild: '允许显式源码构建 fallback',
-  interaction: '前台与定向输入',
-  interactionHint: '默认只把指针和键盘事件投递给选定进程，不移动系统光标，也不激活目标应用。',
-  focusPolicy: '前台策略',
-  focusPreserve: '保持当前前台应用',
-  focusActivate: '允许激活目标应用',
-  keyboardPolicy: '键盘策略',
-  keyboardPreserve: '保持前台；输入兼容性因应用而异',
-  keyboardActivate: '输入前激活目标应用',
-  pointerInputPolicy: '目标进程指针输入',
-  pointerDeny: '禁止鼠标、拖拽和滚轮事件',
-  pointerAllow: '只向目标进程投递事件',
-  cursorVisualization: 'Agent 光标',
-  cursorVisible: '显示独立且点击穿透的 Agent 光标',
-  cursorHidden: '隐藏 Agent 光标',
+  settle: '操作完成后的检查间隔（毫秒）',
+  maxSettle: '等待界面稳定的最长时间（毫秒）',
+  maxNodes: '最多读取的界面元素数',
+  maxDepth: '界面结构层级上限',
+  maxText: '界面文字大小上限（字节）',
+  maxScreenshot: '截图大小上限（字节）',
+  artifactRoot: '生成文件目录',
+  helperPath: '自定义运行组件路径',
+  sourceBuild: '找不到运行组件时允许从源码构建',
+  interaction: '操作方式',
+  interactionHint: '默认只操作选定的应用，不移动你的系统光标，也不会主动切换当前应用。',
+  focusPolicy: '需要操作窗口时',
+  focusPreserve: '不主动切换当前应用',
+  focusActivate: '允许切换到目标应用',
+  keyboardPolicy: '输入文字前',
+  keyboardPreserve: '保持当前应用（部分应用可能无法输入）',
+  keyboardActivate: '先切换到目标应用',
+  pointerInputPolicy: '鼠标操作',
+  pointerDeny: '不允许点击、拖动和滚动',
+  pointerAllow: '只操作选定的应用',
+  cursorVisualization: '智能体光标',
+  cursorVisible: '显示单独的智能体光标',
+  cursorHidden: '隐藏智能体光标',
   cursorMotion: '光标移动时长（毫秒）',
   cursorAutoHide: '光标自动隐藏（毫秒；0 = 保持显示）',
-  grants: '应用授权',
-  grantsHint: '每行一个精确 bundle id，后接 read 或 read,control；不接受通配符。',
-  allowAllApps: '允许 read/control 所有应用',
-  allowAllAppsHint: '开启后忽略下方精确授权，所有运行中的应用都可读取和控制。',
-  save: '保存并应用',
-  saving: '正在应用...',
+  grants: '指定应用规则',
+  grantsHint: '每行填写一个应用标识，后接 read 或 read,control。应用标识必须完整，不能使用通配符。',
+  allowAllApps: '允许读取和操作所有应用',
+  allowAllAppsHint: '开启后无需逐个添加应用。关闭后，可在高级设置中填写允许访问的应用。',
+  save: '保存设置',
+  saving: '正在保存...',
   saved: '设置已生效。',
-  readOnly: '当前 Settings 提供方为只读。',
-  loading: '正在加载 Computer Use 设置...',
+  readOnly: '当前配置为只读，无法在这里修改。',
+  loading: '正在加载电脑操作设置...',
   retry: '重试',
 }
 
-type Translate = (key: LocaleKey) => string
+type Translate = (key: LocaleKey, params?: Record<string, string | number>) => string
 
 interface ConfigValue {
   observationTtlMs?: number
@@ -393,10 +403,6 @@ function LoadedSettings({ controller, t }: { controller: ComputerUseSettingsCont
   }
   const numberField = (key: keyof Draft, label: string) => <Field label={label}><Input value={String(draft[key])} onChange={event => update(key, event.target.value as never)} /></Field>
   return <div className="dcu-settings">
-    <header className="dcu-header">
-      <div><span className="dcu-kicker">DSH native capability</span><h2>{t('title')}</h2><p>{t('intro')}</p></div>
-      <div className="dcu-release"><span>{t('helper')} <strong>{snapshot.provider.helperVersion ?? 'unknown'}</strong></span><span>{t('generation')} <strong>{snapshot.provider.generation}</strong></span><span className={snapshot.provider.ready ? 'ok' : 'bad'}>{snapshot.provider.ready ? t('ready') : t('unavailable')}</span></div>
-    </header>
     {snapshot.provider.lastError === undefined ? null : <div className="dcu-alert error">{snapshot.provider.lastError}</div>}
     {!snapshot.writable ? <div className="dcu-alert warning">{t('readOnly')}</div> : null}
     {state.error === undefined && draftError === undefined ? null : <div className="dcu-alert error">{draftError ?? state.error}</div>}
@@ -408,38 +414,43 @@ function LoadedSettings({ controller, t }: { controller: ComputerUseSettingsCont
         <PermissionCard label={t('screenRecording')} state={snapshot.provider.screenRecording} kind="screen-recording" controller={controller} t={t} />
       </div>
     </section>
-    <section className="dcu-panel">
-      <div className="dcu-panel-title"><div><h3>{t('interaction')}</h3><p>{t('interactionHint')}</p></div></div>
-      <div className="dcu-grid">
-        <Field label={t('focusPolicy')}>
-          <select value={draft.focusPolicy} onChange={event => update('focusPolicy', event.target.value as Draft['focusPolicy'])}>
-            <option value="preserve">{t('focusPreserve')}</option>
-            <option value="activate">{t('focusActivate')}</option>
-          </select>
-        </Field>
-        <Field label={t('keyboardPolicy')}>
-          <select value={draft.keyboardPolicy} onChange={event => update('keyboardPolicy', event.target.value as Draft['keyboardPolicy'])}>
-            <option value="preserve">{t('keyboardPreserve')}</option>
-            <option value="activate">{t('keyboardActivate')}</option>
-          </select>
-        </Field>
-        <Field label={t('pointerInputPolicy')}>
-          <select value={draft.pointerInputPolicy} onChange={event => update('pointerInputPolicy', event.target.value as Draft['pointerInputPolicy'])}>
-            <option value="deny">{t('pointerDeny')}</option>
-            <option value="targeted">{t('pointerAllow')}</option>
-          </select>
-        </Field>
-        <Field label={t('cursorVisualization')}>
-          <select value={draft.cursorVisualization} onChange={event => update('cursorVisualization', event.target.value as Draft['cursorVisualization'])}>
-            <option value="visible">{t('cursorVisible')}</option>
-            <option value="hidden">{t('cursorHidden')}</option>
-          </select>
-        </Field>
-      </div>
+    <section className="dcu-panel dcu-essential">
+      <div className="dcu-panel-title"><div><h3>{t('access')}</h3><p>{t('accessHint')}</p></div></div>
+      <label className="dcu-check dcu-check-primary"><input type="checkbox" checked={draft.allowAllApps} onChange={event => update('allowAllApps', event.target.checked)} /><span><strong>{t('allowAllApps')}</strong><small>{t('allowAllAppsHint')}</small></span></label>
     </section>
+    <div className="dcu-actions"><Button variant="primary" disabled={!snapshot.writable || state.action !== undefined} onClick={save}>{state.action === 'save' ? t('saving') : t('save')}</Button></div>
     <details className="dcu-advanced">
       <summary><span>{t('advanced')}</span><small>{t('advancedHint')}</small></summary>
       <div className="dcu-advanced-body">
+        <section className="dcu-panel">
+          <div className="dcu-panel-title"><div><h3>{t('interaction')}</h3><p>{t('interactionHint')}</p></div></div>
+          <div className="dcu-grid">
+            <Field label={t('focusPolicy')}>
+              <select value={draft.focusPolicy} onChange={event => update('focusPolicy', event.target.value as Draft['focusPolicy'])}>
+                <option value="preserve">{t('focusPreserve')}</option>
+                <option value="activate">{t('focusActivate')}</option>
+              </select>
+            </Field>
+            <Field label={t('keyboardPolicy')}>
+              <select value={draft.keyboardPolicy} onChange={event => update('keyboardPolicy', event.target.value as Draft['keyboardPolicy'])}>
+                <option value="preserve">{t('keyboardPreserve')}</option>
+                <option value="activate">{t('keyboardActivate')}</option>
+              </select>
+            </Field>
+            <Field label={t('pointerInputPolicy')}>
+              <select value={draft.pointerInputPolicy} onChange={event => update('pointerInputPolicy', event.target.value as Draft['pointerInputPolicy'])}>
+                <option value="deny">{t('pointerDeny')}</option>
+                <option value="targeted">{t('pointerAllow')}</option>
+              </select>
+            </Field>
+            <Field label={t('cursorVisualization')}>
+              <select value={draft.cursorVisualization} onChange={event => update('cursorVisualization', event.target.value as Draft['cursorVisualization'])}>
+                <option value="visible">{t('cursorVisible')}</option>
+                <option value="hidden">{t('cursorHidden')}</option>
+              </select>
+            </Field>
+          </div>
+        </section>
         <section className="dcu-panel">
           <div className="dcu-panel-title"><h3>{t('limits')}</h3></div>
           <div className="dcu-grid">
@@ -473,17 +484,19 @@ function LoadedSettings({ controller, t }: { controller: ComputerUseSettingsCont
         </section>
         <section className="dcu-panel">
           <div className="dcu-panel-title"><div><h3>{t('grants')}</h3><p>{t('grantsHint')}</p></div></div>
-          <label className="dcu-check"><input type="checkbox" checked={draft.allowAllApps} onChange={event => update('allowAllApps', event.target.checked)} /><span>{t('allowAllApps')} — {t('allowAllAppsHint')}</span></label>
           <textarea value={draft.grants} disabled={draft.allowAllApps} onChange={event => update('grants', event.target.value)} placeholder={'com.example.App read\ncom.example.Editor read,control'} />
         </section>
       </div>
     </details>
-    <div className="dcu-actions"><Button disabled={!snapshot.writable || state.action !== undefined} onClick={save}>{state.action === 'save' ? t('saving') : t('save')}</Button></div>
+    <footer className="dcu-footer">
+      <div><span className="dcu-kicker">{t('pluginKind')}</span><h2>{t('title')}</h2><p>{t('intro')}</p></div>
+      <div className="dcu-release"><span>{t('helper')} <strong>{snapshot.provider.helperVersion ?? t('helperUnknown')}</strong></span><span>{t('generation')} <strong>{t('generationValue', { generation: snapshot.provider.generation })}</strong></span><span className={snapshot.provider.ready ? 'ok' : 'bad'}>{snapshot.provider.ready ? t('ready') : t('unavailable')}</span></div>
+    </footer>
   </div>
 }
 
 const CSS = `
-.dcu-settings{display:grid;gap:14px;max-width:920px;padding:2px 0 24px}.dcu-header{display:flex;justify-content:space-between;gap:22px;align-items:flex-start;padding:18px 20px;border-radius:16px;background:linear-gradient(135deg,var(--dsw-alias-bg-layer-2,#f5f4f1),var(--dsw-alias-bg-layer-1,#fff));border:1px solid var(--dsw-alias-border-subtle,#dedbd5)}.dcu-header h2{margin:4px 0 6px;font-size:20px}.dcu-header p{margin:0;max-width:610px;font-size:12px;line-height:1.55;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-kicker{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#687f74;font-weight:700}.dcu-release{display:grid;gap:5px;min-width:190px;padding:10px 12px;border-radius:11px;background:rgba(255,255,255,.58);font-size:10px}.dcu-release span{display:flex;justify-content:space-between;gap:12px}.dcu-release .ok{color:#277d52}.dcu-release .bad{color:#aa3939}.dcu-panel{display:grid;gap:13px;padding:16px;border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff)}.dcu-panel-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.dcu-panel-title h3{margin:0;font-size:14px}.dcu-panel-title p{margin:4px 0 0;font-size:10px;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-permissions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.dcu-permission{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px;border-radius:11px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);border-left:3px solid #cc5555}.dcu-permission[data-granted]{border-left-color:#3ca26b}.dcu-permission div{display:grid;gap:3px}.dcu-permission span{font-size:10px}.dcu-permission strong{font-size:11px}.dcu-path{display:block;overflow:auto;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);font-size:10px;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.dcu-field{display:grid;gap:5px}.dcu-field>span{font-size:10px;font-weight:650}.dcu-field select,.dcu-panel textarea{border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:9px;background:var(--dsw-alias-bg-layer-1,#fff);color:inherit}.dcu-field select{min-height:34px;padding:6px 9px;font:11px inherit}.dcu-check{display:flex;align-items:center;gap:8px;padding-top:19px;font-size:11px}.dcu-panel textarea{min-height:110px;resize:vertical;padding:10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.dcu-alert{padding:10px 12px;border-radius:10px;font-size:11px}.dcu-alert.error{background:rgba(205,72,72,.1);color:#a13b3b}.dcu-alert.warning{background:rgba(211,151,49,.12);color:#8b651f}.dcu-alert.ok{background:rgba(48,154,100,.12);color:#267d52}.dcu-actions{display:flex;justify-content:flex-end}@media(max-width:720px){.dcu-header{display:grid}.dcu-release{width:auto}.dcu-grid,.dcu-permissions{grid-template-columns:1fr}}
+.dcu-settings{display:grid;gap:14px;max-width:920px;padding:2px 0 24px}.dcu-footer{display:flex;justify-content:space-between;gap:22px;align-items:flex-start;margin-top:8px;padding:20px 2px 4px;border-top:1px solid var(--dsw-alias-border-subtle,#dedbd5);opacity:.82}.dcu-footer h2{margin:4px 0 6px;font-size:18px}.dcu-footer p{margin:0;max-width:610px;font-size:11px;line-height:1.55;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-kicker{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#687f74;font-weight:700}.dcu-release{display:grid;gap:5px;min-width:220px;padding:10px 12px;border-radius:11px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);font-size:10px}.dcu-release span{display:flex;justify-content:space-between;gap:12px;white-space:nowrap}.dcu-release .ok{color:#277d52}.dcu-release .bad{color:#aa3939}.dcu-panel{display:grid;gap:13px;padding:16px;border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff)}.dcu-essential{border-color:color-mix(in srgb,#687f74 35%,var(--dsw-alias-border-subtle,#dedbd5));box-shadow:0 0 0 3px rgba(104,127,116,.05)}.dcu-panel-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.dcu-panel-title h3{margin:0;font-size:14px}.dcu-panel-title p{margin:4px 0 0;font-size:10px;line-height:1.45;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-permissions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.dcu-permission{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px;border-radius:11px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);border-left:3px solid #cc5555}.dcu-permission[data-granted]{border-left-color:#3ca26b}.dcu-permission div{display:grid;gap:3px}.dcu-permission span{font-size:10px}.dcu-permission strong{font-size:11px}.dcu-path{display:block;overflow:auto;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);font-size:10px;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.dcu-field{display:grid;gap:5px}.dcu-field>span{font-size:10px;font-weight:650}.dcu-field select,.dcu-panel textarea{border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:9px;background:var(--dsw-alias-bg-layer-1,#fff);color:inherit}.dcu-field select{min-height:34px;padding:6px 9px;font:11px inherit}.dcu-check{display:flex;align-items:center;gap:8px;padding-top:19px;font-size:11px}.dcu-check-primary{align-items:flex-start;padding:10px 0}.dcu-check-primary input{margin-top:2px}.dcu-check-primary span{display:grid;gap:3px}.dcu-check-primary strong{font-size:12px}.dcu-check-primary small{font-size:10px;line-height:1.45;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-panel textarea{min-height:110px;resize:vertical;padding:10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.dcu-alert{padding:10px 12px;border-radius:10px;font-size:11px}.dcu-alert.error{background:rgba(205,72,72,.1);color:#a13b3b}.dcu-alert.warning{background:rgba(211,151,49,.12);color:#8b651f}.dcu-alert.ok{background:rgba(48,154,100,.12);color:#267d52}.dcu-actions{display:flex;justify-content:flex-start;padding:2px 0}@media(max-width:720px){.dcu-footer{display:grid}.dcu-release{width:auto}.dcu-grid,.dcu-permissions{grid-template-columns:1fr}}
 `
 
 const ADVANCED_CSS = `.dcu-advanced{border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff);overflow:hidden}.dcu-advanced>summary{display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;list-style:none;font-size:13px;font-weight:650}.dcu-advanced>summary::-webkit-details-marker{display:none}.dcu-advanced>summary small{margin-left:auto;font-size:10px;font-weight:400;color:var(--dsw-alias-fg-muted,#706d67)}.dcu-advanced>summary::after{content:"▸";margin-left:2px;font-size:12px;color:var(--dsw-alias-fg-muted,#706d67);transform:rotate(0deg);transition:transform .15s ease}.dcu-advanced[open]>summary::after{transform:rotate(90deg)}.dcu-advanced-body{display:grid;gap:14px;padding:2px 16px 16px}`
