@@ -85,7 +85,7 @@ function sameSemanticIdentity(left: ComputerTargetDescriptor, right: ComputerTar
 }
 
 function sameExactIdentity(left: ComputerTargetDescriptor, right: ComputerTargetDescriptor): boolean {
-  if (left.nativeIdentifier !== undefined && right.nativeIdentifier !== undefined) {
+  if (left.nativeIdentifier !== undefined || right.nativeIdentifier !== undefined) {
     return left.nativeIdentifier === right.nativeIdentifier && sameStableFields(left, right)
   }
   if (!sameStableFields(left, right)) return false

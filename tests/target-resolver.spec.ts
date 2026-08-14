@@ -60,6 +60,22 @@ describe('provider-independent target resolver', () => {
     })
   })
 
+  it('does not downgrade exact identity when a native identifier disappears', () => {
+    const originalTarget = target({ index: 0, locator: [0], nativeIdentifier: 'fixture.apply' })
+    const original = observation([originalTarget])
+    const fresh = observation([
+      target({ index: 0, locator: [0] }),
+      target({ index: 1, locator: [1], nativeIdentifier: 'fixture.apply' }),
+    ], { stateHash: 'state-2' })
+
+    expect(resolveComputerTarget(original, fresh, describeComputerTarget(originalTarget, original), true)).toMatchObject({
+      element: { index: 1, locator: [1] },
+      resolution: { mode: 'native-identifier', candidateCount: 1, targetChanged: true },
+    })
+    expect(() => resolveComputerTarget(original, fresh, describeComputerTarget(originalTarget, original), false))
+      .toThrow(expect.objectContaining({ code: 'COMPUTER_STALE_OBSERVATION' }))
+  })
+
   it('uses a unique semantic match after an unrelated sibling shifts the locator', () => {
     const root = target({ index: 0, locator: [], role: 'AXWindow', title: 'Fixture', label: 'Fixture', actions: [] })
     const originalTarget = target({ index: 1, locator: [0] })
