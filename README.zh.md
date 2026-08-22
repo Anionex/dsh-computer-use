@@ -78,6 +78,11 @@ Fixture 会记录每次 `applicationDidBecomeActive` 回调。独立 native moni
 
 直接从 npm 一键安装 Web 与 Headless Bundle：
 
+> [!IMPORTANT]
+> 已发布的包名为 `@anionex/dsh-computer-use`。旧名
+> `@dsh-external/dsh-computer-use` 从未发布到 npm，不可安装；
+> 安装前请先更新旧的 profile 或 manifest 引用。
+
 ```sh
 dsh plugin --profile web add @anionex/dsh-computer-use
 dsh plugin --profile headless add @anionex/dsh-computer-use

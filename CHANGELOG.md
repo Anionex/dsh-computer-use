@@ -49,6 +49,7 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ### Documentation
 
+- Documented the npm package name as `@anionex/dsh-computer-use`: the former `@dsh-external/dsh-computer-use` name was never published to npm, so downstream profiles must reference the current name.
 - Reworked the public repository facade around non-interfering target-process input, the fresh-observation protocol, deterministic native proof, permissions, security, support, and contribution paths.
 - Added a reusable native-integrity command and structured community intake.
 - Documented the Codex Computer Use alignment evidence (`SynthesizedEvent.send(to: pid)` and `CGWindow.window(at:)`) behind the screen-coordinate and keyboard-policy behavior.

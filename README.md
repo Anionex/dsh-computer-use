@@ -78,6 +78,11 @@ See [Foreground-safe input policy](docs/interaction-policy.md) for the requireme
 
 Install the Web and Headless bundles directly from npm:
 
+> [!IMPORTANT]
+> The published package name is `@anionex/dsh-computer-use`. The former
+> `@dsh-external/dsh-computer-use` name was never published to npm and is not
+> installable; update any old profile or manifest references before installing.
+
 ```sh
 dsh plugin --profile web add @anionex/dsh-computer-use
 dsh plugin --profile headless add @anionex/dsh-computer-use
