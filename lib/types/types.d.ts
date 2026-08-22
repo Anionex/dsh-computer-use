@@ -233,7 +233,7 @@ export interface ComputerUseContext {
 /** Provider and permission diagnostics exposed to Settings. */
 export interface ComputerUseStatus {
     platform: NodeJS.Platform;
-    provider: 'macos-ax';
+    provider: 'macos-ax' | 'unsupported';
     generation: number;
     ready: boolean;
     helperPath: string;

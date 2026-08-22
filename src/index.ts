@@ -59,6 +59,12 @@ export class ComputerUseBundle extends MacOSComputerUseProvider {
   /** Publish model-facing capabilities only after provider integrity and health pass. */
   protected override async [Service.init](): Promise<void> {
     await super[Service.init]()
+    if (process.platform !== 'darwin') {
+      // Non-macOS hosts keep the profile healthy and show the reason in Web Settings,
+      // but never expose Computer Use Tools or the Skill to the model.
+      installComputerUseWeb(this.ctx)
+      return
+    }
     this.consumerDispose = installComputerUseConsumer(this.ctx)
   }
 }

@@ -241,6 +241,7 @@ Settings updates replace the active provider generation only after validation an
 
 - Status: early `0.1.0`; model-facing and provider behavior may change before a stable release.
 - The current provider is macOS-only. Windows UI Automation and Linux providers are not implemented.
+- On non-macOS hosts the plugin degrades gracefully: the DSH profile starts normally, Computer Use Tools and the Skill are not registered, and Web Settings reports `COMPUTER_UNSUPPORTED_PLATFORM` instead of failing startup.
 - Target-process pointer delivery uses dynamically resolved SkyLight SPI. If it is unavailable, pointer fallback fails closed rather than switching to global input.
 - The clicked point must fall inside an on-screen window of the selected app; the helper resolves the topmost matching window so ambiguous frame/title matches no longer block coordinate actions. Minimized, hidden, or windowless targets fail closed.
 - Custom canvases, games, hardened input surfaces, and future macOS releases may reject target-process pointer or keyboard events. Prefer semantic Accessibility whenever possible.

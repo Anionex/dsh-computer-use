@@ -86,11 +86,15 @@ export interface BackendHealth {
   helperSha256: string
   accessibility: ComputerPermissionState
   screenRecording: ComputerPermissionState
+  /** False when the provider is intentionally disabled on this host (for example non-macOS). */
+  ready?: boolean
+  /** Operator-facing reason shown in Settings when `ready` is false. */
+  error?: string
 }
 
 /** Platform backend used by the provider-independent Service implementation. */
 export interface ComputerUseBackend {
-  readonly name: 'macos-ax'
+  readonly name: 'macos-ax' | 'unsupported'
   readonly helperPath: string
   resolveApp(selector: ComputerAppSelector, signal: AbortSignal): Promise<ComputerAppIdentity>
   listApps(signal: AbortSignal): Promise<ComputerAppSummary[]>

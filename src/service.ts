@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { BackendCursorAction, BackendObservation, ComputerUseBackend } from './backend.ts'
+import type { BackendCursorAction, BackendHealth, BackendObservation, ComputerUseBackend } from './backend.ts'
 import { allocateScreenshotPath, describeScreenshot } from './artifacts.ts'
 import type { ResolvedComputerUseConfig } from './config.ts'
 import { ComputerConfirmationManager } from './confirmations.ts'
@@ -197,6 +197,18 @@ export class ComputerUseService extends Service {
     screenRecording: 'unavailable',
   }
 
+  /** Persist backend health facts while allowing a disabled provider to stay ready=false with a visible reason. */
+  private applyHealth(health: BackendHealth): void {
+    this.healthState = {
+      ready: health.ready ?? true,
+      helperVersion: health.helperVersion,
+      helperSha256: health.helperSha256,
+      accessibility: health.accessibility,
+      screenRecording: health.screenRecording,
+      ...(health.error === undefined ? {} : { lastError: health.error }),
+    }
+  }
+
   /** Register `ctx.computerUse` using one validated backend and configuration generation. */
   constructor(ctx: Context, backend: ComputerUseBackend, config: ResolvedComputerUseConfig) {
     super(ctx, 'computerUse')
@@ -215,8 +227,7 @@ export class ComputerUseService extends Service {
   protected async initialize(): Promise<void> {
     try {
       await this.leases.initialize()
-      const health = await this.backend.health(this.lifecycle.signal)
-      this.healthState = { ready: true, ...health }
+      this.applyHealth(await this.backend.health(this.lifecycle.signal))
     } catch (error) {
       const failure = computerUseError(error, 'Computer Use provider initialization failed')
       this.healthState = {
@@ -237,7 +248,7 @@ export class ComputerUseService extends Service {
     this.config = config
     this.generation += 1
     this.clearState()
-    this.healthState = { ready: true, ...health }
+    this.applyHealth(health)
     await previous.dispose()
   }
 
@@ -245,7 +256,7 @@ export class ComputerUseService extends Service {
   status(): ComputerUseStatus {
     return {
       platform: process.platform,
-      provider: 'macos-ax',
+      provider: this.backend.name,
       generation: this.generation,
       helperPath: this.backend.helperPath,
       ...this.healthState,
@@ -255,8 +266,7 @@ export class ComputerUseService extends Service {
   /** Re-run non-mutating provider health checks. */
   async health(signal: AbortSignal): Promise<ComputerUseStatus> {
     try {
-      const health = await this.backend.health(AbortSignal.any([signal, this.lifecycle.signal]))
-      this.healthState = { ready: true, ...health }
+      this.applyHealth(await this.backend.health(AbortSignal.any([signal, this.lifecycle.signal])))
     } catch (error) {
       const failure = computerUseError(error, 'Computer Use health check failed')
       this.healthState = { ...this.healthState, ready: false, lastError: failure.message }

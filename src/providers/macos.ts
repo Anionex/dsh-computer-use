@@ -22,10 +22,10 @@ import {
   type ComputerUseConfig,
   type ResolvedComputerUseConfig,
 } from '../config.ts'
-import { ComputerUseError } from '../errors.ts'
 import { ComputerUseService } from '../service.ts'
 import type { ComputerAppIdentity, ComputerAppSelector, ComputerAppSummary } from '../types.ts'
 import { NativeHelperClient } from './native-helper.ts'
+import { UnsupportedPlatformBackend } from './unsupported.ts'
 
 interface NativeHealth {
   helperVersion: string
@@ -34,6 +34,12 @@ interface NativeHealth {
 }
 
 interface NativeObservation extends BackendObservation {}
+
+function createBackend(ctx: Context, config: ResolvedComputerUseConfig): ComputerUseBackend {
+  return process.platform === 'darwin'
+    ? new MacOSBackend(ctx, config)
+    : new UnsupportedPlatformBackend(process.platform)
+}
 
 /** Fixed-command native backend. */
 class MacOSBackend implements ComputerUseBackend {
@@ -152,20 +158,20 @@ export class MacOSComputerUseProvider extends ComputerUseService {
   private readonly settings
 
   constructor(ctx: Context, config: ComputerUseConfig = {}) {
-    if (process.platform !== 'darwin') {
-      throw new ComputerUseError('COMPUTER_UNSUPPORTED_PLATFORM', `dsh-computer-use 0.1.0 supports macOS only; current platform is ${process.platform}`)
-    }
     const settings = ctx.settings.register(COMPUTER_USE_SETTINGS_NAMESPACE, Config, {
       base: config,
       applies: 'live',
       validate: (value) => { resolveConfig(value) },
     })
     const resolved = resolveConfig(settings.get())
-    super(ctx, new MacOSBackend(ctx, resolved), resolved)
+    super(ctx, createBackend(ctx, resolved), resolved)
     this.settings = settings
+    if (process.platform !== 'darwin') {
+      ctx.logger.warn('dsh-computer-use: supports macOS only; Computer Use Tools are disabled on %s', process.platform)
+    }
     ctx.effect(() => this.settings.watch(async (next) => {
       const candidate = resolveConfig(next)
-      const backend = new MacOSBackend(ctx, candidate)
+      const backend = createBackend(ctx, candidate)
       try {
         await this.reconfigure(backend, candidate)
       } catch (error) {

@@ -19,6 +19,8 @@ export declare class ComputerUseService extends Service {
     private readonly confirmations;
     private readonly lifecycle;
     private healthState;
+    /** Persist backend health facts while allowing a disabled provider to stay ready=false with a visible reason. */
+    private applyHealth;
     /** Register `ctx.computerUse` using one validated backend and configuration generation. */
     constructor(ctx: Context, backend: ComputerUseBackend, config: ResolvedComputerUseConfig);
     /** Verify the active backend before consumers become injectable. */

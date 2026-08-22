@@ -241,6 +241,7 @@ Settings 更新只有在校验与健康检查通过后才替换当前 provider g
 
 - 状态：早期 `0.1.0`；稳定版本发布前，模型可见和 provider 行为仍可能变化。
 - 当前 provider 只支持 macOS；Windows UI Automation 和 Linux provider 尚未实现。
+- 在非 macOS 主机上插件会优雅降级：DSH profile 正常启动，不会注册 Computer Use 工具与 Skill，Web Settings 会显示 `COMPUTER_UNSUPPORTED_PLATFORM`，而不是让启动失败。
 - 目标进程指针投递使用动态解析的 SkyLight SPI。该路由不可用时，pointer fallback 会 fail closed，不会切换到全局输入。
 - 点击点必须落在选定应用的某个屏幕内窗口中；helper 会解析该点下最上层的匹配窗口，frame/title 匹配有歧义不再阻塞坐标动作。最小化、隐藏或无窗口目标会 fail closed。
 - 自定义 canvas、游戏、强化输入 surface 与未来 macOS 版本可能拒绝目标进程指针或键盘事件。应尽量优先使用语义化 Accessibility。
