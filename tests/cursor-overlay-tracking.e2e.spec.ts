@@ -186,16 +186,21 @@ describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
     }
     const moves = responses.filter(entry => entry.op === 'move')
     expect(moves, JSON.stringify(responses)).toHaveLength(1)
+
+    // The command is not an error -- native input is unaffected -- but the
+    // response must say the panel is not on screen, and why.
     expect(
-      { reportedOk: moves[0]!.ok === true, panelExists: panel !== undefined },
-      'a move must not answer ok while leaving no visible panel',
-    ).toEqual({ reportedOk: true, panelExists: true })
+      { visible: moves[0]!.visible, panelExists: panel !== undefined },
+      `a move must report its own visibility: ${JSON.stringify(responses)}`,
+    ).toEqual({ visible: false, panelExists: false })
+    expect(String(moves[0]!.reason ?? ''), JSON.stringify(responses)).toContain('hidden')
   }, 40_000)
 
   it('moves a bound panel to each point it is told to move to', async () => {
     const binding = await launchBoundFixture()
     const overlay = await openOverlay()
     const seen: Array<{ requested: { x: number; y: number }; panel: { x: number; y: number } | undefined }> = []
+    let responses: Array<Record<string, unknown>> = []
     try {
       // Three separated points inside the bound window: a panel that tracks
       // lands somewhere new each time, a frozen one repeats its frame.
@@ -209,8 +214,14 @@ describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
         await delay(400)
         seen.push({ requested: point, panel: await overlayFrame(overlay.pid) })
       }
+      responses = await overlay.close()
     } finally {
-      await overlay.close()
+      await terminateFixtures()
+    }
+
+    // A bound move reports itself visible, matching what the panel does.
+    for (const entry of responses.filter(item => item.op === 'move')) {
+      expect(entry.visible, JSON.stringify(responses)).toBe(true)
     }
 
     const detail = JSON.stringify({ binding, seen })

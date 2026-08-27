@@ -188,6 +188,16 @@ private final class CursorOverlayController: NSObject {
         window.sharingType = .readOnly
     }
 
+    /// Outcome of a placement request, so the caller can distinguish a cursor
+    /// that moved from one that was hidden because its window binding no
+    /// longer holds. Reporting success for the second is how a live session
+    /// ends up with a frozen agent cursor and no error anywhere.
+    enum Placement {
+        case shown
+        case targetUnavailable
+    }
+
+    @discardableResult
     func show(
         at quartzPoint: CGPoint,
         durationMs: Int,
@@ -195,11 +205,11 @@ private final class CursorOverlayController: NSObject {
         targetPid: pid_t?,
         targetWindowNumber: Int64?,
         targetWindowFrame: CGRect?
-    ) {
+    ) -> Placement {
         hideWork?.cancel()
         guard targetWindowIsCurrent(pid: targetPid, windowNumber: targetWindowNumber, expectedFrame: targetWindowFrame) else {
             hide()
-            return
+            return .targetUnavailable
         }
         self.targetPid = targetPid
         self.targetWindowNumber = targetWindowNumber
@@ -221,6 +231,7 @@ private final class CursorOverlayController: NSObject {
             window.orderFrontRegardless()
         }
         scheduleHide(after: autoHideMs)
+        return .shown
     }
 
     func press(autoHideMs: Int, sustained: Bool) {
@@ -245,9 +256,14 @@ private final class CursorOverlayController: NSObject {
         scheduleHide(after: autoHideMs)
     }
 
-    func validateTarget(pid: pid_t?, windowNumber: Int64?, expectedFrame: CGRect?) {
-        guard window.isVisible else { return }
-        if !targetWindowIsCurrent(pid: pid, windowNumber: windowNumber, expectedFrame: expectedFrame) { hide() }
+    @discardableResult
+    func validateTarget(pid: pid_t?, windowNumber: Int64?, expectedFrame: CGRect?) -> Placement {
+        guard window.isVisible else { return .targetUnavailable }
+        if !targetWindowIsCurrent(pid: pid, windowNumber: windowNumber, expectedFrame: expectedFrame) {
+            hide()
+            return .targetUnavailable
+        }
+        return .shown
     }
 
     func hide() {
@@ -437,43 +453,55 @@ private final class CursorCommandParser: @unchecked Sendable {
 private func handleCursorCommand(_ object: [String: Any], controller: CursorOverlayController) {
     do {
         let command = try CursorOverlayCommand(object)
+        // Whether the panel is actually on screen after this command. A hidden
+        // overlay still leaves native input working, so the operation is not an
+        // error -- but the caller must be able to tell, or the user silently
+        // loses sight of where the agent is acting.
+        var visible = true
         switch command.operation {
         case "show", "move":
             guard let point = command.point else {
                 throw CursorOverlayError(message: "cursor overlay command needs x and y")
             }
-            controller.show(
+            visible = controller.show(
                 at: point,
                 durationMs: command.durationMs,
                 autoHideMs: command.autoHideMs,
                 targetPid: command.targetPid,
                 targetWindowNumber: command.targetWindowNumber,
                 targetWindowFrame: command.targetWindowFrame
-            )
+            ) == .shown
         case "press":
-            controller.validateTarget(
+            visible = controller.validateTarget(
                 pid: command.targetPid,
                 windowNumber: command.targetWindowNumber,
                 expectedFrame: command.targetWindowFrame
-            )
+            ) == .shown
             controller.press(autoHideMs: command.autoHideMs, sustained: command.sustainedPress)
         case "release":
-            controller.validateTarget(
+            visible = controller.validateTarget(
                 pid: command.targetPid,
                 windowNumber: command.targetWindowNumber,
                 expectedFrame: command.targetWindowFrame
-            )
+            ) == .shown
             controller.release(autoHideMs: command.autoHideMs)
         case "hide":
             controller.hide()
+            visible = false
         case "stop":
             controller.stop()
+            visible = false
         case "ping":
             break
         default:
             throw CursorOverlayError(message: "unknown cursor overlay operation")
         }
-        emitCursorResponse(["ok": true, "op": command.operation])
+        var response: [String: Any] = ["ok": true, "op": command.operation, "visible": visible]
+        if !visible && (command.operation == "show" || command.operation == "move"
+            || command.operation == "press" || command.operation == "release") {
+            response["reason"] = "the bound target window is no longer at its observed frame; the agent cursor is hidden"
+        }
+        emitCursorResponse(response)
     } catch let error as CursorOverlayError {
         emitCursorResponse(["ok": false, "error": error.message])
     } catch {

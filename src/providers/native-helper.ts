@@ -46,6 +46,8 @@ interface CursorProcess {
   done: Promise<SubprocessOutcome>
   terminate: () => void
   waitForExit: SubprocessHandle['waitForExit']
+  /** Next response line from the overlay, in command order. */
+  nextResponse: () => Promise<Record<string, unknown>>
 }
 
 function collected(reader: SubprocessOutputReader | undefined): string {
@@ -187,7 +189,7 @@ export class NativeHelperClient {
   }
 
   /** Send one best-effort command to the persistent, click-through Agent cursor overlay. */
-  async cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<void> {
+  async cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
     const prepared = this.prepared ?? await this.prepare(signal)
     const cursor = await this.getCursor(prepared, signal)
     signal.throwIfAborted()
@@ -198,6 +200,7 @@ export class NativeHelperClient {
           else rejectWrite(error)
         })
       })
+      return await cursor.nextResponse()
     } catch (error) {
       if (this.cursor === cursor) this.cursor = undefined
       cursor.terminate()
@@ -308,10 +311,43 @@ export class NativeHelperClient {
         { cause: error },
       )
     }
-    handle.stdout.resume()
+    // The overlay answers one line per command, in order. Discarding stdout
+    // (the previous behaviour) makes every outcome invisible to the caller,
+    // including the one that says the agent cursor is not on screen.
+    const pending: Array<(response: Record<string, unknown>) => void> = []
+    const buffered: Array<Record<string, unknown>> = []
+    let residue = ''
+    handle.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+      residue += chunk
+      while (true) {
+        const newline = residue.indexOf('\n')
+        if (newline < 0) break
+        const line = residue.slice(0, newline).trim()
+        residue = residue.slice(newline + 1)
+        if (line.length === 0) continue
+        let parsed: Record<string, unknown>
+        try { parsed = JSON.parse(line) as Record<string, unknown> }
+        catch { continue }
+        const waiter = pending.shift()
+        if (waiter === undefined) buffered.push(parsed)
+        else waiter(parsed)
+      }
+    })
     return {
       stdin: handle.stdin,
       done: handle.done,
+      nextResponse: async () => {
+        const ready = buffered.shift()
+        if (ready !== undefined) return ready
+        return await new Promise<Record<string, unknown>>((resolveResponse, rejectResponse) => {
+          const timer = setTimeout(() => {
+            const index = pending.indexOf(resolveResponse)
+            if (index >= 0) pending.splice(index, 1)
+            rejectResponse(new Error('the cursor overlay did not answer its command'))
+          }, CURSOR_READY_TIMEOUT_MS)
+          pending.push(response => { clearTimeout(timer); resolveResponse(response) })
+        })
+      },
       terminate: () => {
         cursorSignal.abort()
         handle.terminate()

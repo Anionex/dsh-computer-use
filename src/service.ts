@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { BackendCursorAction, BackendHealth, BackendObservation, ComputerUseBackend } from './backend.ts'
+import type { BackendCursorAction, BackendHealth, BackendObservation, ComputerUseBackend, CursorVisibility } from './backend.ts'
 import { allocateScreenshotPath, describeScreenshot } from './artifacts.ts'
 import type { ResolvedComputerUseConfig } from './config.ts'
 import { ComputerConfirmationManager } from './confirmations.ts'
@@ -377,12 +377,20 @@ export class ComputerUseService extends Service {
     this.confirmations.consume(context.agent, stored.backend.app, action)
     const visualization = cursorAction(action, element, actionObservation.window, actionObservation.app)
     let cursorStarted = false
+    // The overlay is presentation-only and never blocks native input, but its
+    // outcome is reported rather than swallowed: a hidden agent cursor means
+    // the user can no longer see where the action landed, and silence about
+    // that is how a session ends up with a frozen cursor and no explanation.
+    let cursorState: CursorVisibility | undefined
     if (visualization !== undefined && this.config.interaction.cursorVisualization === 'visible') {
       try {
-        await this.backend.visualizeCursor(visualization, 'before', signal)
+        cursorState = await this.backend.visualizeCursor(visualization, 'before', signal)
         cursorStarted = true
-      } catch {
-        // The overlay is presentation-only; native input remains authoritative.
+      } catch (error) {
+        cursorState = {
+          visible: false,
+          reason: `the agent cursor could not be driven: ${error instanceof Error ? error.message : String(error)}`,
+        }
       }
     }
     let outcome
@@ -431,6 +439,12 @@ export class ComputerUseService extends Service {
       activation: outcome.activation,
       pointerInput: outcome.pointerInput,
       pointerRouting: outcome.pointerRouting,
+      // Only reported when the cursor is meant to be showing and is not, so a
+      // normal result stays unchanged and a lost cursor becomes visible to the
+      // caller instead of to nobody.
+      ...(cursorState === undefined || cursorState.visible ? {} : {
+        agentCursor: { visible: false, ...(cursorState.reason === undefined ? {} : { reason: cursorState.reason }) },
+      }),
       ...(resolution === undefined ? {} : { resolution }),
       observation,
     }

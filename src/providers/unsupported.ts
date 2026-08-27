@@ -8,6 +8,7 @@ import type {
   BackendObservation,
   BackendObserveOptions,
   ComputerUseBackend,
+  CursorVisibility,
 } from '../backend.ts'
 import { ComputerUseError } from '../errors.ts'
 import type { ComputerAppIdentity, ComputerAppSelector, ComputerAppSummary } from '../types.ts'
@@ -54,7 +55,7 @@ export class UnsupportedPlatformBackend implements ComputerUseBackend {
     return Promise.reject(unsupported(this.platform))
   }
 
-  visualizeCursor(_action: BackendCursorAction, _phase: 'before' | 'after'): Promise<void> {
+  visualizeCursor(_action: BackendCursorAction, _phase: 'before' | 'after'): Promise<CursorVisibility> {
     return Promise.reject(unsupported(this.platform))
   }
 
