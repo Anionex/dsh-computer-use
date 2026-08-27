@@ -23,7 +23,7 @@ export declare class NativeHelperClient {
     /** Invoke one fixed helper command and parse its bounded JSON envelope. */
     invoke<T>(request: Record<string, unknown>, signal: AbortSignal): Promise<T>;
     /** Send one best-effort command to the persistent, click-through Agent cursor overlay. */
-    cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<void>;
+    cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>>;
     /** Stop the cursor process before a provider generation is replaced or disposed. */
     dispose(): Promise<void>;
     /** Prepared integrity facts used by provider health. */

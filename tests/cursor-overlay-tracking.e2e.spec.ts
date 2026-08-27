@@ -196,6 +196,35 @@ describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
     expect(String(moves[0]!.reason ?? ''), JSON.stringify(responses)).toContain('hidden')
   }, 40_000)
 
+  it('moves a bound panel with the animated duration a live session uses', async () => {
+    // The production path passes cursorMotionMs (180 by default), which takes
+    // the animator branch in `show`. The direct branch only runs while the
+    // panel is hidden, so every move after the first is animated -- and a live
+    // session shows the panel landing once and never moving again.
+    const binding = await launchBoundFixture()
+    const overlay = await openOverlay()
+    const seen: Array<{ x: number; y: number } | undefined> = []
+    try {
+      const { x, y, width, height } = binding.targetWindowFrame
+      for (const point of [
+        { x: Math.round(x + width * 0.25), y: Math.round(y + height * 0.3) },
+        { x: Math.round(x + width * 0.75), y: Math.round(y + height * 0.7) },
+        { x: Math.round(x + width * 0.5), y: Math.round(y + height * 0.45) },
+      ]) {
+        overlay.send({ op: 'move', ...point, durationMs: 180, autoHideMs: 0, ...binding })
+        await delay(700)
+        seen.push(await overlayFrame(overlay.pid))
+      }
+    } finally {
+      await overlay.close()
+      await terminateFixtures()
+    }
+    const detail = JSON.stringify(seen)
+    for (const panel of seen) expect(panel, detail).toBeDefined()
+    const distinct = new Set(seen.map(panel => `${panel!.x},${panel!.y}`))
+    expect(distinct.size, `an animated move left the panel where it was: ${detail}`).toBe(seen.length)
+  }, 60_000)
+
   it('moves a bound panel to each point it is told to move to', async () => {
     const binding = await launchBoundFixture()
     const overlay = await openOverlay()

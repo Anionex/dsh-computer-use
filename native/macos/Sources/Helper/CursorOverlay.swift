@@ -161,6 +161,7 @@ private final class CursorOverlayController: NSObject {
     private var hideWork: DispatchWorkItem?
     private var releaseWork: DispatchWorkItem?
     private var targetCheckTimer: Timer?
+    private var glideTimer: Timer?
     private var targetPid: pid_t?
     private var targetWindowNumber: Int64?
     private var targetWindowFrame: CGRect?
@@ -220,18 +221,53 @@ private final class CursorOverlayController: NSObject {
             x: point.x,
             y: point.y - Self.size.height
         )
-        if window.isVisible && durationMs > 0 {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = Double(durationMs) / 1000
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                window.animator().setFrameOrigin(targetOrigin)
-            }
-        } else {
-            window.setFrameOrigin(targetOrigin)
-            window.orderFrontRegardless()
-        }
+        glide(to: targetOrigin, durationMs: durationMs)
         scheduleHide(after: autoHideMs)
         return .shown
+    }
+
+    /// Travel to `targetOrigin`, interpolated on the main run loop.
+    ///
+    /// `window.animator().setFrameOrigin` does not move this panel: the overlay
+    /// runs with `.prohibited` activation policy, and the implicit animator
+    /// silently does nothing there. Because the animated branch only ran once
+    /// the panel was already visible, the first placement worked and every
+    /// later move was a no-op — a cursor that appears once and then never
+    /// follows the agent again.
+    ///
+    /// Stepping the origin directly is the same call the first placement
+    /// already proved works, so the glide is both visible and correct.
+    private func glide(to targetOrigin: NSPoint, durationMs: Int) {
+        glideTimer?.invalidate()
+        glideTimer = nil
+        let origin = window.frame.origin
+        guard window.isVisible, durationMs > 0, origin != targetOrigin else {
+            window.setFrameOrigin(targetOrigin)
+            window.orderFrontRegardless()
+            return
+        }
+        let started = Date()
+        let duration = Double(durationMs) / 1000
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { timer.invalidate(); return }
+                let elapsed = Date().timeIntervalSince(started)
+                if elapsed >= duration {
+                    timer.invalidate()
+                    self.glideTimer = nil
+                    self.window.setFrameOrigin(targetOrigin)
+                    return
+                }
+                // Ease out, matching the intent of the animation this replaces.
+                let fraction = 1 - pow(1 - elapsed / duration, 3)
+                self.window.setFrameOrigin(NSPoint(
+                    x: origin.x + (targetOrigin.x - origin.x) * fraction,
+                    y: origin.y + (targetOrigin.y - origin.y) * fraction
+                ))
+            }
+        }
+        glideTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func press(autoHideMs: Int, sustained: Bool) {
@@ -267,6 +303,8 @@ private final class CursorOverlayController: NSObject {
     }
 
     func hide() {
+        glideTimer?.invalidate()
+        glideTimer = nil
         hideWork?.cancel()
         hideWork = nil
         releaseWork?.cancel()
