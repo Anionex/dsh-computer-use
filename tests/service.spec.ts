@@ -157,7 +157,7 @@ describe('Computer Use Service', () => {
         context,
       )
       expect(inert.effect.targetChanged).toBe(false)
-      expect(inert.effect.note).toContain('verify visually')
+      expect(inert.effect.note).toContain('window move or resize would have shown here')
       // The attempt still reads as a clean success, which is exactly why the
       // outcome needs its own field.
       expect(inert.pointerRouting).toBe('target-process')
