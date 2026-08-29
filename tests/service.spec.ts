@@ -129,6 +129,64 @@ describe('Computer Use Service', () => {
     }
   })
 
+  it('reports whether the target changed, so a no-op is not indistinguishable from success', async () => {
+    // Every other field on the result describes the attempt: `pointerRouting`
+    // and `pointerInput` read identically whether the target reacted or
+    // ignored the input. A drag onto a window title bar is routed perfectly
+    // and moves nothing, because window movement belongs to the window server
+    // rather than the process the events reached.
+    const workspace = await temporaryDirectory('dsh-computer-effect-')
+    try {
+      const { backend, service } = serviceHarness()
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const effective = await service.act(
+        { kind: 'click', observationId: before.observationId, elementIndex: 1 },
+        context,
+      )
+      expect(effective.effect.targetChanged).toBe(true)
+      expect(effective.effect).not.toHaveProperty('note')
+
+      backend.inert = true
+      const after = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const inert = await service.act(
+        { kind: 'click', observationId: after.observationId, elementIndex: 1 },
+        context,
+      )
+      expect(inert.effect.targetChanged).toBe(false)
+      expect(inert.effect.note).toContain('verify visually')
+      // The attempt still reads as a clean success, which is exactly why the
+      // outcome needs its own field.
+      expect(inert.pointerRouting).toBe('target-process')
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('reports a lost agent cursor instead of dropping it', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-')
+    try {
+      const { backend, service } = serviceHarness()
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+
+      const visible = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const shown = await service.act({ kind: 'click', observationId: visible.observationId, elementIndex: 1 }, context)
+      expect(shown).not.toHaveProperty('agentCursor')
+
+      backend.cursorVisibility = { visible: false, reason: 'the bound target window moved' }
+      const next = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const hidden = await service.act({ kind: 'click', observationId: next.observationId, elementIndex: 1 }, context)
+      expect(hidden.agentCursor).toEqual({ visible: false, reason: 'the bound target window moved' })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
   it('rebinds a unique target after an unrelated sibling shifts its locator', async () => {
     const workspace = await temporaryDirectory('dsh-computer-rebind-')
     try {

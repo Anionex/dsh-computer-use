@@ -252,7 +252,29 @@ export interface ComputerActionResult {
   pointerRouting: 'none' | 'target-process'
   /** Present when the action addressed an observed element. */
   resolution?: ComputerTargetResolutionResult
+  /** Present only when the agent cursor should be on screen and is not. */
+  agentCursor?: { visible: false; reason?: string }
+  /** Whether the target actually changed, which no other field reports. */
+  effect: ComputerActionEffect
   observation: ComputerObservation
+}
+
+/**
+ * What the target did, as opposed to what was attempted.
+ *
+ * `pointerRouting` and `pointerInput` describe the request; they stay the same
+ * whether the target reacted or ignored it. A drag onto a window title bar
+ * reports a perfectly routed pointer stream and moves nothing, because window
+ * movement belongs to the window server rather than the process the events
+ * were delivered to.
+ */
+export interface ComputerActionEffect {
+  /** True when the accessibility state hash differed after the action settled. */
+  targetChanged: boolean
+  /** How long the settle loop watched, in milliseconds. */
+  observedForMs: number
+  /** Guidance for the caller when nothing observable changed. */
+  note?: string
 }
 
 /** Confirmation request binding an exact proposed action to human-readable impact. */

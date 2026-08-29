@@ -38,6 +38,9 @@ interface HelperSuccess<T> {
 
 type HelperEnvelope<T> = HelperFailure | HelperSuccess<T>
 
+/** A silent overlay is tolerated; this only bounds how long we listen. */
+const CURSOR_RESPONSE_TIMEOUT_MS = 1_500
+
 const CURSOR_READY_TIMEOUT_MS = 2_000
 const CURSOR_PROTOCOL_MAX_BYTES = 64 * 1024
 
@@ -336,16 +339,23 @@ export class NativeHelperClient {
     return {
       stdin: handle.stdin,
       done: handle.done,
+      // Reading the reply is an improvement on the previous fire-and-forget
+      // write, not a new requirement: an overlay that stays silent yields an
+      // empty response rather than failing the action. The cursor is
+      // presentation-only, so an unanswered command must never take an
+      // otherwise-good action down with it.
       nextResponse: async () => {
         const ready = buffered.shift()
         if (ready !== undefined) return ready
-        return await new Promise<Record<string, unknown>>((resolveResponse, rejectResponse) => {
-          const timer = setTimeout(() => {
-            const index = pending.indexOf(resolveResponse)
+        return await new Promise<Record<string, unknown>>((resolveResponse) => {
+          const settle = (response: Record<string, unknown>): void => {
+            const index = pending.indexOf(settle)
             if (index >= 0) pending.splice(index, 1)
-            rejectResponse(new Error('the cursor overlay did not answer its command'))
-          }, CURSOR_READY_TIMEOUT_MS)
-          pending.push(response => { clearTimeout(timer); resolveResponse(response) })
+            clearTimeout(timer)
+            resolveResponse(response)
+          }
+          const timer = setTimeout(() => settle({}), CURSOR_RESPONSE_TIMEOUT_MS)
+          pending.push(settle)
         })
       },
       terminate: () => {
