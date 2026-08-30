@@ -265,6 +265,22 @@ describe.skipIf(!REQUIRE_TCC)('action surface, verified by the target', () => {
     expect(envelope).toMatchObject({ ok: false, error: { code: 'COMPUTER_STALE_OBSERVATION' } })
   }, 40_000)
 
+  it('resolves a window id, without which the agent cursor is skipped in silence', async () => {
+    // `cursorAction` returns undefined when the observation has no window id,
+    // so the whole cursor path is skipped and `cursorState` stays undefined —
+    // meaning not even `agentCursor` is reported. The caller cannot tell it
+    // lost sight of the agent.
+    //
+    // Notes lost its id to a title comparison: accessibility reports
+    // "备忘录 – 5个备忘录" while the window server calls the same window
+    // "备忘录", and the lookup required them to be equal.
+    const observation = await observe()
+    expect(
+      observation.window.id,
+      `no window id for ${observation.app.bundleId}, so any cursor for it would be skipped silently`,
+    ).toBeDefined()
+  }, 30_000)
+
   it('never activates the target while doing any of this', async () => {
     // Everything above is worthless if it steals the user's foreground.
     const observation = await observe()

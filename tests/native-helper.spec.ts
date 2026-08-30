@@ -188,13 +188,19 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(helperSource).toContain('let coordinateSpace = action["coordinateSpace"] as? String ?? "window"')
   })
 
-  it('requires complete frame and title evidence when resolving a missing AX window number', async () => {
+  it('resolves a missing AX window number from evidence, never from a guess', async () => {
+    // The property under test is that an ambiguous match yields nothing rather
+    // than a guess. It used to be spelled as "frame and title must both
+    // match", which was stricter than the property and cost real windows their
+    // id: Notes reports "备忘录 – 5个备忘录" through accessibility while the
+    // window server calls the same window "备忘录". Losing the id silently
+    // skips the agent cursor, so the strictness had a cost and no benefit.
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
     expect(helperSource).toContain('guard let bounds = window[kCGWindowBounds as String] as? [String: Any]')
     expect(helperSource).toContain('let candidate = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }')
-    expect(helperSource).toContain('guard let candidateTitle = window[kCGWindowName as String] as? String,')
-    expect(helperSource).toContain('candidateTitle == title else { return false }')
-    expect(helperSource).toContain('guard candidates.count == 1 else { return nil }')
+    // One candidate is an answer; more than one needs the title to separate them.
+    expect(helperSource).toContain('if candidates.count == 1 {')
+    expect(helperSource).toContain('guard titled.count == 1 else { return nil }')
   })
 
   it('routes AXRaise through explicit foreground authorization and refreshed target validation', async () => {

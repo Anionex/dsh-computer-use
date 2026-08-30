@@ -342,14 +342,26 @@ private func windowNumber(
                   abs(candidate.width - frame.width) <= tolerance,
                   abs(candidate.height - frame.height) <= tolerance else { return false }
         }
-        if let title, !title.isEmpty {
-            guard let candidateTitle = window[kCGWindowName as String] as? String,
-                  candidateTitle == title else { return false }
-        }
         return true
     }
-    guard candidates.count == 1 else { return nil }
-    return (candidates[0][kCGWindowNumber as String] as? NSNumber)?.intValue
+    // Frame plus owner already identifies one window in the common case, and
+    // requiring the titles to be equal on top of that loses more than it
+    // gains: Notes reports "备忘录 – 5个备忘录" through accessibility while the
+    // window server calls the same window "备忘录". The mismatch silently cost
+    // the window id, and without an id the agent cursor is skipped entirely
+    // with nothing reported — the caller cannot even tell it lost the cursor.
+    //
+    // So the title only has to disambiguate, and only when the frame did not.
+    if candidates.count == 1 {
+        return (candidates[0][kCGWindowNumber as String] as? NSNumber)?.intValue
+    }
+    guard let title, !title.isEmpty else { return nil }
+    let titled = candidates.filter { window in
+        guard let candidateTitle = window[kCGWindowName as String] as? String else { return false }
+        return candidateTitle == title || title.hasPrefix(candidateTitle) || candidateTitle.hasPrefix(title)
+    }
+    guard titled.count == 1 else { return nil }
+    return (titled[0][kCGWindowNumber as String] as? NSNumber)?.intValue
 }
 
 private func sha256(_ value: String) -> String {
