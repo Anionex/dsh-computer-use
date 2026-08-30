@@ -224,6 +224,11 @@ export interface ComputerActionResult {
  * reports a perfectly routed pointer stream and moves nothing, because window
  * movement belongs to the window server rather than the process the events
  * were delivered to.
+ *
+ * The comparison covers the window's title, id and frame alongside the element
+ * tree, so it is wider than the accessibility tree alone: a window that moved
+ * or resized changes this hash. Verified by moving a window 100px and watching
+ * the hash change.
  */
 export interface ComputerActionEffect {
     /** True when the accessibility state hash differed after the action settled. */

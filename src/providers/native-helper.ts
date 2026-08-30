@@ -39,7 +39,12 @@ interface HelperSuccess<T> {
 type HelperEnvelope<T> = HelperFailure | HelperSuccess<T>
 
 /** A silent overlay is tolerated; this only bounds how long we listen. */
-const CURSOR_RESPONSE_TIMEOUT_MS = 1_500
+// The overlay answers in well under a millisecond when it answers at all.
+// This only bounds how long a silent one is waited on, and it sits on the
+// action's critical path: the cursor is presentation, and presentation must
+// not slow the action down. An earlier 1500ms here added up to three seconds
+// per click and pushed the native fixture suite past its timeouts.
+const CURSOR_RESPONSE_TIMEOUT_MS = 120
 
 const CURSOR_READY_TIMEOUT_MS = 2_000
 const CURSOR_PROTOCOL_MAX_BYTES = 64 * 1024
