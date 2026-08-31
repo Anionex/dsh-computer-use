@@ -1,6 +1,6 @@
 {
   "name": "@anionex/dsh-computer-use",
-  "version": "0.1.2",
+  "version": "0.1.0",
   "description": "Accessibility-first macOS Computer Use capability for DeepSeek Harness with stale-observation protection, app leases, confirmations, screenshots, and Web diagnostics",
   "keywords": [
     "deepseek",
