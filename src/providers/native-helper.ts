@@ -273,15 +273,26 @@ export class NativeHelperClient {
   /** Send one serialized command to the persistent, click-through Agent cursor overlay. */
   cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<CursorVisibility> {
     const run = this.cursorCommandTail.then(async () => {
+      if (signal.aborted) throw new ComputerUseError('COMPUTER_CANCELLED', 'native cursor overlay command was cancelled')
       if (this.disposed) throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay client is disposed')
       return await this.executeCursorCommand(command, signal)
     })
     this.cursorCommandTail = run.then(() => undefined, () => undefined)
-    return run
+    return new Promise<CursorVisibility>((resolveCommand, rejectCommand) => {
+      const onAbort = (): void => {
+        rejectCommand(new ComputerUseError('COMPUTER_CANCELLED', 'native cursor overlay command was cancelled'))
+      }
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+      void run.then(resolveCommand, rejectCommand).finally(() => {
+        signal.removeEventListener('abort', onAbort)
+      })
+    })
   }
 
   private async executeCursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<CursorVisibility> {
     const prepared = this.prepared ?? await this.prepare(signal)
+    if (this.disposed) throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay client is disposed')
     const cursor = await this.getCursor(prepared, signal)
     signal.throwIfAborted()
     if (this.disposed) {
@@ -370,8 +381,10 @@ export class NativeHelperClient {
 
   private async getCursor(prepared: PreparedNativeHelper, signal: AbortSignal): Promise<CursorProcess> {
     signal.throwIfAborted()
+    if (this.disposed) throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay client is disposed')
     if (this.cursor !== undefined) return this.cursor
     if (this.cursorStart === undefined) {
+      if (this.disposed) throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay client is disposed')
       const start: { promise: Promise<CursorProcess> } = { promise: Promise.resolve(undefined as never) }
       start.promise = this.spawnCursor(prepared).then(cursor => {
         this.cursor = cursor
@@ -386,6 +399,10 @@ export class NativeHelperClient {
     }
     const cursor = await this.cursorStart.promise
     signal.throwIfAborted()
+    if (this.disposed) {
+      this.discardCursor(cursor)
+      throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay client is disposed')
+    }
     return cursor
   }
 

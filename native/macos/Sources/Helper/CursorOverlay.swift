@@ -185,6 +185,7 @@ private final class CursorOverlayController: NSObject {
     private var glideTimer: Timer?
     private var glideCompletion: ((Bool) -> Void)?
     private var hasPosition = false
+    private var currentQuartzPoint: CGPoint?
     private var targetPid: pid_t?
     private var targetWindowNumber: Int64?
     private var targetWindowFrame: CGRect?
@@ -254,14 +255,10 @@ private final class CursorOverlayController: NSObject {
         self.targetWindowNumber = targetWindowNumber
         self.targetWindowFrame = targetWindowFrame
         scheduleTargetChecks()
-        let point = appKitPoint(fromQuartz: quartzPoint)
-        let targetOrigin = NSPoint(
-            x: point.x,
-            y: point.y - Self.size.height
-        )
         if !hasPosition {
             let mouse = NSEvent.mouseLocation
             window.setFrameOrigin(NSPoint(x: mouse.x, y: mouse.y - Self.size.height))
+            currentQuartzPoint = self.quartzPoint(fromAppKit: mouse)
             hasPosition = true
         }
         window.orderFrontRegardless()
@@ -272,7 +269,8 @@ private final class CursorOverlayController: NSObject {
             return
         }
         glide(
-            to: targetOrigin,
+            from: currentQuartzPoint ?? quartzPoint,
+            to: quartzPoint,
             durationMs: durationMs,
             speedPxPerSecond: speedPxPerSecond,
             accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
@@ -308,21 +306,22 @@ private final class CursorOverlayController: NSObject {
     /// Stepping the origin directly is the same call the first placement
     /// already proved works, so the glide is both visible and correct.
     private func glide(
-        to targetOrigin: NSPoint,
+        from origin: CGPoint,
+        to target: CGPoint,
         durationMs: Int?,
         speedPxPerSecond: Double?,
         accelerationPxPerSecondSquared: Double?,
         completion: @escaping (Bool) -> Void
     ) {
         finishGlide(reached: false)
-        let origin = window.frame.origin
-        guard origin != targetOrigin else {
-            window.setFrameOrigin(targetOrigin)
+        guard origin != target else {
+            currentQuartzPoint = target
+            window.setFrameOrigin(panelOrigin(fromQuartz: target))
             window.orderFrontRegardless()
             completion(true)
             return
         }
-        let distance = hypot(targetOrigin.x - origin.x, targetOrigin.y - origin.y)
+        let distance = hypot(target.x - origin.x, target.y - origin.y)
         let duration = motionDuration(
             distance: distance,
             explicitDurationMs: durationMs,
@@ -330,23 +329,12 @@ private final class CursorOverlayController: NSObject {
             accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
         )
         guard duration > 0 else {
-            window.setFrameOrigin(targetOrigin)
+            currentQuartzPoint = target
+            window.setFrameOrigin(panelOrigin(fromQuartz: target))
             window.orderFrontRegardless()
             completion(true)
             return
         }
-        let delta = NSPoint(x: targetOrigin.x - origin.x, y: targetOrigin.y - origin.y)
-        let directionSign: CGFloat = Int(abs(origin.x + origin.y + targetOrigin.x + targetOrigin.y)) % 2 == 0 ? 1 : -1
-        let bend = min(18, distance * 0.06) * directionSign
-        let normal = NSPoint(x: -delta.y / distance, y: delta.x / distance)
-        let control1 = NSPoint(
-            x: origin.x + delta.x * 0.32 + normal.x * bend,
-            y: origin.y + delta.y * 0.32 + normal.y * bend
-        )
-        let control2 = NSPoint(
-            x: origin.x + delta.x * 0.72 + normal.x * bend * 0.45,
-            y: origin.y + delta.y * 0.72 + normal.y * bend * 0.45
-        )
         let started = CACurrentMediaTime()
         glideCompletion = completion
         let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] timer in
@@ -359,7 +347,8 @@ private final class CursorOverlayController: NSObject {
                 }
                 let elapsed = CACurrentMediaTime() - started
                 if elapsed >= duration {
-                    self.window.setFrameOrigin(targetOrigin)
+                    self.currentQuartzPoint = target
+                    self.window.setFrameOrigin(self.panelOrigin(fromQuartz: target))
                     self.hasPosition = true
                     self.finishGlide(reached: true)
                     return
@@ -367,27 +356,18 @@ private final class CursorOverlayController: NSObject {
                 let linear = elapsed / duration
                 let fraction: Double
                 if let speedPxPerSecond, let accelerationPxPerSecondSquared {
-                    fraction = self.physicalMotionFraction(
+                    fraction = cursorMotionFraction(
                         progress: linear,
                         distance: distance,
-                        speedPxPerSecond: speedPxPerSecond,
-                        accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
+                        speed: speedPxPerSecond,
+                        acceleration: accelerationPxPerSecondSquared
                     )
                 } else {
                     fraction = linear * linear * (3 - 2 * linear)
                 }
-                let inverse = 1 - fraction
-                let point = NSPoint(
-                    x: inverse * inverse * inverse * origin.x
-                        + 3 * inverse * inverse * fraction * control1.x
-                        + 3 * inverse * fraction * fraction * control2.x
-                        + fraction * fraction * fraction * targetOrigin.x,
-                    y: inverse * inverse * inverse * origin.y
-                        + 3 * inverse * inverse * fraction * control1.y
-                        + 3 * inverse * fraction * fraction * control2.y
-                        + fraction * fraction * fraction * targetOrigin.y
-                )
-                self.window.setFrameOrigin(point)
+                let point = cursorMotionPoint(from: origin, to: target, fraction: fraction)
+                self.currentQuartzPoint = point
+                self.window.setFrameOrigin(self.panelOrigin(fromQuartz: point))
             }
         }
         glideTimer = timer
@@ -402,56 +382,11 @@ private final class CursorOverlayController: NSObject {
     ) -> Double {
         if let explicitDurationMs { return Double(explicitDurationMs) / 1000 }
         guard let speedPxPerSecond, let accelerationPxPerSecondSquared else { return 0.18 }
-        let seconds = rawPhysicalMotionDuration(
+        return cursorMotionDuration(
             distance: distance,
-            speedPxPerSecond: speedPxPerSecond,
-            accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
+            speed: speedPxPerSecond,
+            acceleration: accelerationPxPerSecondSquared
         )
-        return min(2, max(0.048, seconds))
-    }
-
-    private func rawPhysicalMotionDuration(
-        distance: Double,
-        speedPxPerSecond: Double,
-        accelerationPxPerSecondSquared: Double
-    ) -> Double {
-        let accelerationDistance = speedPxPerSecond * speedPxPerSecond / accelerationPxPerSecondSquared
-        if distance <= accelerationDistance {
-            return 2 * sqrt(distance / accelerationPxPerSecondSquared)
-        }
-        return 2 * speedPxPerSecond / accelerationPxPerSecondSquared
-            + (distance - accelerationDistance) / speedPxPerSecond
-    }
-
-    private func physicalMotionFraction(
-        progress: Double,
-        distance: Double,
-        speedPxPerSecond: Double,
-        accelerationPxPerSecondSquared: Double
-    ) -> Double {
-        let rawDuration = rawPhysicalMotionDuration(
-            distance: distance,
-            speedPxPerSecond: speedPxPerSecond,
-            accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
-        )
-        let elapsed = min(1, max(0, progress)) * rawDuration
-        let accelerationTime = min(
-            speedPxPerSecond / accelerationPxPerSecondSquared,
-            rawDuration / 2
-        )
-        let peakSpeed = accelerationPxPerSecondSquared * accelerationTime
-        let cruiseTime = max(0, rawDuration - 2 * accelerationTime)
-        let accelerationDistance = 0.5 * accelerationPxPerSecondSquared * accelerationTime * accelerationTime
-        let traveled: Double
-        if elapsed <= accelerationTime {
-            traveled = 0.5 * accelerationPxPerSecondSquared * elapsed * elapsed
-        } else if elapsed <= accelerationTime + cruiseTime {
-            traveled = accelerationDistance + peakSpeed * (elapsed - accelerationTime)
-        } else {
-            let remaining = rawDuration - elapsed
-            traveled = distance - 0.5 * accelerationPxPerSecondSquared * remaining * remaining
-        }
-        return min(1, max(0, traveled / distance))
     }
 
     private func finishGlide(reached: Bool) {
@@ -584,6 +519,37 @@ private final class CursorOverlayController: NSObject {
             x: appKitFrame.origin.x + (point.x - quartzFrame.origin.x),
             y: appKitFrame.maxY - (point.y - quartzFrame.origin.y)
         )
+    }
+
+    private func quartzPoint(fromAppKit point: NSPoint) -> CGPoint {
+        for screen in NSScreen.screens {
+            guard screen.frame.contains(point),
+                  let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+                continue
+            }
+            let quartzFrame = CGDisplayBounds(CGDirectDisplayID(screenNumber.uint32Value))
+            return CGPoint(
+                x: quartzFrame.origin.x + (point.x - screen.frame.origin.x),
+                y: quartzFrame.origin.y + (screen.frame.maxY - point.y)
+            )
+        }
+        let mainDisplay = CGMainDisplayID()
+        let quartzFrame = CGDisplayBounds(mainDisplay)
+        let appKitFrame = NSScreen.main?.frame ?? NSRect(
+            x: quartzFrame.origin.x,
+            y: quartzFrame.origin.y,
+            width: quartzFrame.width,
+            height: quartzFrame.height
+        )
+        return CGPoint(
+            x: quartzFrame.origin.x + (point.x - appKitFrame.origin.x),
+            y: quartzFrame.origin.y + (appKitFrame.maxY - point.y)
+        )
+    }
+
+    private func panelOrigin(fromQuartz point: CGPoint) -> NSPoint {
+        let appKit = appKitPoint(fromQuartz: point)
+        return NSPoint(x: appKit.x, y: appKit.y - Self.size.height)
     }
 
     private func targetPlacement(pid: pid_t?, windowNumber: Int64?, expectedFrame: CGRect?) -> Placement {

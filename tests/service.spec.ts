@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApprovalOutcome, ApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import { resolveConfig, type ComputerUseConfig } from '../src/config.ts'
 import type { ComputerUseSessionState } from '../src/leases.ts'
+import { ComputerUseError } from '../src/errors.ts'
 import { ComputerUseService } from '../src/service.ts'
 import {
   ComputerObservationId,
@@ -252,13 +253,71 @@ describe('Computer Use Service', () => {
     }
   })
 
-  it('does not start native drag input until the complete before-phase cursor sequence resolves', async () => {
+  it('does not bypass cursor feedback after activation-mode focus loss', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-activation-focus-loss-')
+    try {
+      const { backend, service } = serviceHarness({ interaction: { focusPolicy: 'activate' } })
+      backend.cursorVisibility = {
+        visible: false,
+        reason: 'the bound target application is not frontmost',
+        reasonCode: 'target-not-frontmost',
+      }
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      await expect(service.act({
+        kind: 'click',
+        observationId: before.observationId,
+        x: 300,
+        y: 350,
+        coordinateSpace: 'window',
+      }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_PROVIDER_FAILURE',
+        message: expect.stringContaining('not frontmost'),
+      })
+      expect(backend.actions).toHaveLength(0)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('keeps semantic background clicks nonactivating in activation mode', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-semantic-background-')
+    try {
+      const { backend, service } = serviceHarness({ interaction: { focusPolicy: 'activate' } })
+      backend.observation = backendObservation({ frontmost: false })
+      backend.cursorVisibility = {
+        visible: false,
+        reason: 'the bound target application is not frontmost',
+        reasonCode: 'target-not-frontmost',
+      }
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const result = await service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context)
+      expect(result.agentCursor).toEqual({
+        visible: false,
+        reason: 'the bound target application is not frontmost',
+      })
+      expect(backend.cursorActivations).toHaveLength(0)
+      expect(backend.actions).toHaveLength(1)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('starts native drag input with the separate live cursor-tracking phase', async () => {
     const workspace = await temporaryDirectory('dsh-computer-cursor-drag-order-')
     try {
       const { backend, service } = serviceHarness()
       const beforeCursor = Promise.withResolvers<{ visible: boolean }>()
+      const duringCursor = Promise.withResolvers<{ visible: boolean }>()
       const visualize = vi.spyOn(backend, 'visualizeCursor').mockImplementation((_action, phase) => (
-        phase === 'before' ? beforeCursor.promise : Promise.resolve({ visible: true })
+        phase === 'before' ? beforeCursor.promise : phase === 'during' ? duringCursor.promise : Promise.resolve({ visible: true })
       ))
       await service.initializeForTest()
       const agent = fakeAgent(workspace.path)
@@ -277,9 +336,16 @@ describe('Computer Use Service', () => {
       expect(backend.actions).toHaveLength(0)
 
       beforeCursor.resolve({ visible: true })
+      await vi.waitFor(() => { expect(backend.actions).toHaveLength(1) })
+      expect(visualize.mock.calls.map(call => call[1])).toEqual(['before', 'during'])
+      let settled = false
+      void action.then(() => { settled = true })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+
+      duringCursor.resolve({ visible: true })
       await expect(action).resolves.toMatchObject({ effect: expect.any(Object) })
-      expect(backend.actions).toHaveLength(1)
-      expect(visualize.mock.calls.map(call => call[1])).toEqual(['before', 'after'])
+      expect(visualize.mock.calls.map(call => call[1])).toEqual(['before', 'during', 'after'])
     } finally {
       await workspace.cleanup()
     }
@@ -306,7 +372,54 @@ describe('Computer Use Service', () => {
     }
   })
 
-  it('reports that the cursor cannot be bound when the observation has no window id', async () => {
+  it('releases cursor feedback when confirmation consumption fails after arrival', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-confirmation-cleanup-')
+    try {
+      const { backend, service } = serviceHarness()
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+
+      await expect(service.act({
+        kind: 'click',
+        observationId: before.observationId,
+        elementIndex: 1,
+        sensitive: true,
+        confirmationToken: ComputerConfirmationToken('unknown'),
+      }, context)).rejects.toMatchObject({ code: 'COMPUTER_CONFIRMATION_REQUIRED' })
+      expect(backend.cursorActions.map(entry => entry.phase)).toEqual(['before', 'after'])
+      expect(backend.actions).toHaveLength(0)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('uses an independent bounded signal for cursor cleanup after cancellation', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-cancel-cleanup-')
+    try {
+      const { backend, service } = serviceHarness()
+      const controller = new AbortController()
+      vi.spyOn(backend, 'act').mockImplementation(() => {
+        controller.abort()
+        return Promise.reject(new ComputerUseError('COMPUTER_CANCELLED', 'fixture action cancelled'))
+      })
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = { ...callContext(agent, workspace.path), signal: controller.signal }
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+
+      await expect(service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context))
+        .rejects.toMatchObject({ code: 'COMPUTER_CANCELLED' })
+      expect(backend.cursorActions.map(entry => entry.phase)).toEqual(['before', 'after'])
+      expect(backend.cursorSignals[0]?.aborted).toBe(true)
+      expect(backend.cursorSignals[1]?.aborted).toBe(false)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('fails closed before foreground input when the cursor has no stable window id', async () => {
     const workspace = await temporaryDirectory('dsh-computer-cursor-window-id-')
     try {
       const { backend, service } = serviceHarness()
@@ -321,12 +434,42 @@ describe('Computer Use Service', () => {
       const context = callContext(agent, workspace.path)
 
       const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
-      const result = await service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context)
-      expect(result.agentCursor).toEqual({
-        visible: false,
-        reason: 'the agent cursor could not be bound because the target window has no stable window id',
+      await expect(service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_PROVIDER_FAILURE',
+        message: expect.stringContaining('no stable window id'),
       })
       expect(backend.cursorActions).toHaveLength(0)
+      expect(backend.actions).toHaveLength(0)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('activates a background pointer target before running the cursor sequence', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-activate-')
+    try {
+      const { backend, service } = serviceHarness({ interaction: { focusPolicy: 'activate' } })
+      backend.observation = backendObservation({ frontmost: false })
+      const activate = vi.spyOn(backend, 'activateForCursor')
+      const visualize = vi.spyOn(backend, 'visualizeCursor')
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const result = await service.act({
+        kind: 'click',
+        observationId: before.observationId,
+        x: 300,
+        y: 350,
+        coordinateSpace: 'window',
+      }, context)
+
+      expect(activate).toHaveBeenCalledOnce()
+      expect(visualize).toHaveBeenCalled()
+      expect(activate.mock.invocationCallOrder[0]).toBeLessThan(visualize.mock.invocationCallOrder[0]!)
+      expect(result.activation).toBe('activated')
+      expect(backend.actions[0]?.expectedStateHash).toBe(backend.cursorActivations[0])
     } finally {
       await workspace.cleanup()
     }
@@ -595,6 +738,10 @@ describe('Computer Use Service', () => {
       expect(backend.cursorActions).toEqual([
         {
           phase: 'before',
+          action: { kind: 'drag', from: { x: 101, y: 202 }, to: { x: 103, y: 204 }, targetPid: FIXTURE_APP.pid, targetWindowNumber: 7, targetWindowFrame: { x: 100, y: 200, width: 760, height: 592 } },
+        },
+        {
+          phase: 'during',
           action: { kind: 'drag', from: { x: 101, y: 202 }, to: { x: 103, y: 204 }, targetPid: FIXTURE_APP.pid, targetWindowNumber: 7, targetWindowFrame: { x: 100, y: 200, width: 760, height: 592 } },
         },
         {

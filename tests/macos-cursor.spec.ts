@@ -100,7 +100,7 @@ describe('macOS cursor visualization', () => {
     expect(cursorCommand.mock.calls[0]?.[0]).toMatchObject({ op: 'move' })
   })
 
-  it('completes both drag moves around sustained press feedback before returning', async () => {
+  it('moves to drag start and presses before tracking the live drag separately', async () => {
     const backend = new MacOSBackend({} as never, resolveConfig({
       interaction: { cursorVisualization: 'visible', cursorClickDelayMs: 0 },
     }))
@@ -118,20 +118,25 @@ describe('macOS cursor visualization', () => {
       to: { x: 500, y: 540 },
       ...target,
     }
-    let settled = false
-    const visualization = backend.visualizeCursor(action, 'before', new AbortController().signal)
-    void visualization.then(() => { settled = true })
+    const signal = new AbortController().signal
+    const visualization = backend.visualizeCursor(action, 'before', signal)
 
     await vi.waitFor(() => { expect(cursorCommand).toHaveBeenCalledTimes(1) })
     expect(cursorCommand.mock.calls[0]?.[0]).toMatchObject({ op: 'move', x: 200, y: 240, autoHideMs: 0 })
     startArrival.resolve({ visible: true })
-    await vi.waitFor(() => { expect(cursorCommand).toHaveBeenCalledTimes(3) })
+    await vi.waitFor(() => { expect(cursorCommand).toHaveBeenCalledTimes(2) })
     expect(cursorCommand.mock.calls[1]?.[0]).toMatchObject({ op: 'press', sustainedPress: true, autoHideMs: 0 })
+    await expect(visualization).resolves.toEqual({ visible: true })
+
+    let settled = false
+    const tracking = backend.visualizeCursor(action, 'during', signal)
+    void tracking.then(() => { settled = true })
+    await vi.waitFor(() => { expect(cursorCommand).toHaveBeenCalledTimes(3) })
     expect(cursorCommand.mock.calls[2]?.[0]).toMatchObject({ op: 'move', x: 500, y: 540, autoHideMs: 0 })
     expect(settled).toBe(false)
 
     endArrival.resolve({ visible: true })
-    await expect(visualization).resolves.toEqual({ visible: true })
+    await expect(tracking).resolves.toEqual({ visible: true })
   })
 
   for (const [kind, operation] of [

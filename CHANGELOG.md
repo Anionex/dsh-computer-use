@@ -12,8 +12,14 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ### Changed
 
-- The Agent cursor now appears only over the current frontmost target application, follows a slightly curved acceleration-shaped path from its previous point, and completes native movement before click or drag press feedback and input are delivered.
+- The Agent cursor now appears only over the current frontmost target application, follows a slightly curved acceleration-shaped path from its previous point, completes arrival before click or drag press, and tracks the endpoint while native drag input runs.
 - Existing 0.2.x `cursorMotionMs` values remain accepted during upgrade but no longer control runtime movement; the physical speed, acceleration, and click-delay defaults replace the fixed duration.
+
+### Fixed
+
+- Background pointer targets using `focusPolicy: activate` are now activated and freshly revalidated before cursor movement, so activation mode cannot bypass visible movement and dwell.
+- Foreground cursor setup failures now block input consistently, queued cursor commands cancel promptly, and disposal cannot launch a late overlay process.
+- Web Settings now rejects cursor values outside the host-supported ranges with localized validation messages.
 
 ## [0.2.1] - 2026-09-01
 

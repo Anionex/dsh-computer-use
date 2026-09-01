@@ -64,6 +64,7 @@ declare const en: {
     readonly readOnly: "The current Settings provider is read-only.";
     readonly loading: "Loading Computer Use settings...";
     readonly retry: "Retry";
+    readonly numberRange: "{field} must be an integer from {min} to {max}.";
 };
 type LocaleKey = keyof typeof en;
 declare module '@deepseek-ai/dsh-client-ui-slots' {

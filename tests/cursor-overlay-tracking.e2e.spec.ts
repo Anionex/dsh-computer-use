@@ -18,7 +18,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { rm, writeFile } from 'node:fs/promises'
+import { access, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -104,12 +104,20 @@ async function launchBoundFixture(background = false): Promise<WindowBinding> {
 async function activateFixture(binding: WindowBinding): Promise<void> {
   await writeFile(ACTIVATION_TRIGGER, '')
   const deadline = Date.now() + 5_000
+  let acknowledged = false
   while (Date.now() < deadline) {
+    acknowledged ||= await access(ACTIVATION_TRIGGER).then(() => false, () => true)
+    if (!acknowledged) {
+      await delay(20)
+      continue
+    }
     const monitored = await monitorWindows(binding.targetPid, 80)
-    if (monitored.finalFrontmostPid === binding.targetPid) return
+    if (monitored.finalFrontmostPid === binding.targetPid
+      && monitored.observedFrontmostPids.length === 1
+      && monitored.observedFrontmostPids[0] === binding.targetPid) return
     await delay(50)
   }
-  throw new Error('fixture did not become frontmost')
+  throw new Error('fixture did not acknowledge and hold foreground activation')
 }
 
 async function deactivateFixture(binding: WindowBinding): Promise<void> {
@@ -133,6 +141,7 @@ interface WindowMonitorPayload {
   matchingWindowFrames: Array<{ X: number; Y: number; Width: number; Height: number }>
   matchingWindowNumbers: number[]
   finalFrontmostPid?: number
+  observedFrontmostPids: number[]
 }
 
 async function monitorWindows(ownerPid: number, durationMs: number): Promise<WindowMonitorPayload> {

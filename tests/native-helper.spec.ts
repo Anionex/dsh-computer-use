@@ -502,6 +502,33 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     }
   })
 
+  it('rejects a cancelled queued command immediately without breaking FIFO', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-queued-abort-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ autoRespond: false })
+      const client = new NativeHelperClient({ subprocess: { spawn: () => cursor.handle } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const first = client.cursorCommand({ op: 'move', x: 1, y: 2 }, new AbortController().signal)
+      const queuedController = new AbortController()
+      const queued = client.cursorCommand({ op: 'press' }, queuedController.signal)
+      await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(1) })
+
+      queuedController.abort()
+      await expect(queued).rejects.toMatchObject({ code: 'COMPUTER_CANCELLED' })
+      expect(cursor.stdinLines).toHaveLength(1)
+
+      cursor.respond({ ok: true, op: 'move', visible: true })
+      await expect(first).resolves.toEqual({ visible: true })
+      await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(1) })
+      await client.dispose()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
   it('does not spawn queued cursor work after disposal starts', async () => {
     const temporary = await temporaryDirectory('dsh-computer-cursor-dispose-')
     try {
@@ -523,6 +550,31 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
       await expect(queued).rejects.toMatchObject({ code: 'COMPUTER_PROVIDER_FAILURE', message: expect.stringContaining('disposed') })
       await disposed
       expect(spawn).toHaveBeenCalledOnce()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('does not spawn a cursor when disposal begins during helper preparation', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-prepare-dispose-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ autoRespond: false })
+      const spawn = vi.fn(() => cursor.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+      const preparation = Promise.withResolvers<{ path: string; version: string; sha256: string }>()
+      vi.spyOn(client, 'prepare').mockReturnValue(preparation.promise)
+
+      const command = client.cursorCommand({ op: 'move', x: 1, y: 2 }, new AbortController().signal)
+      await vi.waitFor(() => { expect(client.prepare).toHaveBeenCalledOnce() })
+      const disposed = client.dispose()
+      preparation.resolve({ path: executable, version: '0.3.0', sha256: 'fixture' })
+
+      await expect(command).rejects.toMatchObject({ code: 'COMPUTER_PROVIDER_FAILURE', message: expect.stringContaining('disposed') })
+      await disposed
+      expect(spawn).not.toHaveBeenCalled()
     } finally {
       await temporary.cleanup()
     }

@@ -1023,9 +1023,24 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
         let coordinateSpace = action["coordinateSpace"] as? String ?? "window"
         let from = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "fromX", yKey: "fromY", coordinateSpace: coordinateSpace)
         let to = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "toX", yKey: "toY", coordinateSpace: coordinateSpace)
+        let cursorSpeed = try double(interaction["cursorSpeedPxPerSecond"], "request.interaction.cursorSpeedPxPerSecond")
+        let cursorAcceleration = try double(
+            interaction["cursorAccelerationPxPerSecondSquared"],
+            "request.interaction.cursorAccelerationPxPerSecondSquared"
+        )
+        guard cursorSpeed.isFinite, cursorSpeed >= 100, cursorSpeed <= 50_000,
+              cursorAcceleration.isFinite, cursorAcceleration >= 100, cursorAcceleration <= 500_000 else {
+            throw fail("COMPUTER_PROVIDER_FAILURE", "request.interaction cursor motion is outside the supported range")
+        }
         let target = try pointerTarget(app: app, window: current.snapshot.windowJSON, at: from)
         try pointerAction {
-            try targetedDrag(from: from, to: to, target: target)
+            try targetedDrag(
+                from: from,
+                to: to,
+                target: target,
+                speedPxPerSecond: cursorSpeed,
+                accelerationPxPerSecondSquared: cursorAcceleration
+            )
         }
         return actionResult(channel: "coordinates", activation: current.activation, pointerInput: true, pointerRouting: "target-process")
     case "perform-action":
@@ -1112,6 +1127,31 @@ private func handle(_ request: [String: Any]) async throws -> Any {
             screenshot = try await captureWindow(snapshot, path: path, required: mode == "required")
         }
         return observationJSON(snapshot, screenshot: screenshot)
+    case "activate-for-cursor":
+        let appIdentity = try dictionary(request["app"], "app")
+        let app = try resolveApp([
+            "bundleId": try string(appIdentity["bundleId"], "app.bundleId"),
+            "pid": try int(appIdentity["pid"], "app.pid"),
+        ])
+        let options = try dictionary(request["options"], "options")
+        let snapshot = try observeSnapshot(app: app, limits: options)
+        let expected = try string(request["expectedStateHash"], "expectedStateHash")
+        guard snapshot.stateHash == expected else {
+            throw fail("COMPUTER_STALE_OBSERVATION", "the application UI changed before foreground activation")
+        }
+        if app.isActive {
+            return ["observation": observationJSON(snapshot, screenshot: nil), "activation": "already-frontmost"]
+        }
+        let actionTimeoutMs = try int(request["actionTimeoutMs"], "actionTimeoutMs")
+        guard actionTimeoutMs >= 1_000 && actionTimeoutMs <= 120_000 else {
+            throw fail("COMPUTER_PROVIDER_FAILURE", "actionTimeoutMs must be between 1000 and 120000")
+        }
+        try activate(app, timeoutMs: actionTimeoutMs)
+        let refreshed = try observeSnapshot(app: app, limits: options)
+        guard activationStateMatches(snapshot, current: refreshed) else {
+            throw fail("COMPUTER_STALE_OBSERVATION", "the application UI changed while the target application was activated")
+        }
+        return ["observation": observationJSON(refreshed, screenshot: nil), "activation": "activated"]
     case "act":
         return try performAction(try dictionary(request["request"], "request"))
     default:

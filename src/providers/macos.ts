@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {
   BackendActionRequest,
   BackendActionResult,
+  BackendCursorActivation,
   BackendCursorAction,
   BackendHealth,
   BackendObservation,
@@ -35,6 +36,11 @@ interface NativeHealth {
 }
 
 interface NativeObservation extends BackendObservation {}
+
+interface NativeCursorActivation {
+  observation: NativeObservation
+  activation: BackendCursorActivation['activation']
+}
 
 function createBackend(ctx: Context, config: ResolvedComputerUseConfig): ComputerUseBackend {
   return process.platform === 'darwin'
@@ -71,6 +77,21 @@ export class MacOSBackend implements ComputerUseBackend {
     }, signal)
   }
 
+  async activateForCursor(
+    app: ComputerAppIdentity,
+    expectedStateHash: string,
+    options: BackendObserveOptions,
+    signal: AbortSignal,
+  ): Promise<BackendCursorActivation> {
+    return await this.client.invoke<NativeCursorActivation>({
+      command: 'activate-for-cursor',
+      app,
+      expectedStateHash,
+      options,
+      actionTimeoutMs: this.config.actionTimeoutMs,
+    }, signal)
+  }
+
   async act(request: BackendActionRequest, signal: AbortSignal): Promise<BackendActionResult> {
     return await this.client.invoke<BackendActionResult>({
       command: 'act',
@@ -86,7 +107,7 @@ export class MacOSBackend implements ComputerUseBackend {
     }, signal)
   }
 
-  async visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<CursorVisibility> {
+  async visualizeCursor(action: BackendCursorAction, phase: 'before' | 'during' | 'after', signal: AbortSignal): Promise<CursorVisibility> {
     if (this.config.interaction.cursorVisualization !== 'visible') return { visible: false, reason: 'the agent cursor is disabled by configuration' }
     // The overlay answers per command; the least visible outcome wins, because
     // a cursor that vanished partway through is a cursor the user cannot follow.
@@ -122,6 +143,11 @@ export class MacOSBackend implements ComputerUseBackend {
       }, signal))
       return outcome
     }
+    if (phase === 'during') {
+      if (action.kind !== 'drag') return { visible: false, reason: 'only drag has a during-action cursor phase' }
+      await move(action.to)
+      return outcome
+    }
     const start = action.kind === 'drag' ? action.from : action.to
     if (start === undefined) return { visible: false, reason: 'this action has no cursor position to show' }
     // A move response means the native overlay reached its destination. Keep
@@ -139,9 +165,6 @@ export class MacOSBackend implements ComputerUseBackend {
       targetWindowFrame: action.targetWindowFrame,
       sustainedPress: action.kind === 'drag',
     }, signal))
-    if (action.kind === 'drag') {
-      await move(action.to)
-    }
     return outcome
   }
 

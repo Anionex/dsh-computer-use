@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-settings/types'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { integerInRange } from './settings-validation.js'
 
 const NS = 'computer-use'
 const ROUTE = '/_dsh/computer-use/settings'
@@ -76,6 +77,7 @@ const en = {
   readOnly: 'The current Settings provider is read-only.',
   loading: 'Loading Computer Use settings...',
   retry: 'Retry',
+  numberRange: '{field} must be an integer from {min} to {max}.',
 } as const
 
 type LocaleKey = keyof typeof en
@@ -143,6 +145,7 @@ const zh: Record<LocaleKey, string> = {
   readOnly: '当前配置为只读，无法在这里修改。',
   loading: '正在加载电脑操作设置...',
   retry: '重试',
+  numberRange: '{field}必须是 {min} 到 {max} 之间的整数。',
 }
 
 type Translate = (key: LocaleKey, params?: Record<string, string | number>) => string
@@ -332,7 +335,8 @@ function integer(value: string, name: string): number {
   return parsed
 }
 
-function configOf(draft: Draft): ConfigValue {
+function configOf(draft: Draft, t: Translate): ConfigValue {
+  const rangeError = (field: string, min: number, max: number): string => t('numberRange', { field, min, max })
   const grants = draft.grants.split(/\r?\n/u).map(line => line.trim()).filter(Boolean).map((line) => {
     const [bundleId, rawScopes, ...extra] = line.split(/\s+/u)
     if (bundleId === undefined || rawScopes === undefined || extra.length > 0) throw new Error(`invalid grant line: ${line}`)
@@ -360,10 +364,10 @@ function configOf(draft: Draft): ConfigValue {
       keyboardPolicy: draft.keyboardPolicy,
       pointerInputPolicy: draft.pointerInputPolicy,
       cursorVisualization: draft.cursorVisualization,
-      cursorSpeedPxPerSecond: integer(draft.cursorSpeedPxPerSecond, 'interaction.cursorSpeedPxPerSecond'),
-      cursorAccelerationPxPerSecondSquared: integer(draft.cursorAccelerationPxPerSecondSquared, 'interaction.cursorAccelerationPxPerSecondSquared'),
-      cursorClickDelayMs: integer(draft.cursorClickDelayMs, 'interaction.cursorClickDelayMs'),
-      cursorAutoHideMs: integer(draft.cursorAutoHideMs, 'interaction.cursorAutoHideMs'),
+      cursorSpeedPxPerSecond: integerInRange(draft.cursorSpeedPxPerSecond, t('cursorSpeed'), 100, 50000, rangeError),
+      cursorAccelerationPxPerSecondSquared: integerInRange(draft.cursorAccelerationPxPerSecondSquared, t('cursorAcceleration'), 100, 500000, rangeError),
+      cursorClickDelayMs: integerInRange(draft.cursorClickDelayMs, t('cursorClickDelay'), 0, 1000, rangeError),
+      cursorAutoHideMs: integerInRange(draft.cursorAutoHideMs, t('cursorAutoHide'), 0, 30000, rangeError),
     },
     allowAllApps: draft.allowAllApps,
     grants,
@@ -409,7 +413,7 @@ function LoadedSettings({ controller, t }: { controller: ComputerUseSettingsCont
   const save = (): void => {
     try {
       setDraftError(undefined)
-      void controller.action('save', { expectedRevision: snapshot.settings.revision, value: configOf(draft) }, 'save')
+      void controller.action('save', { expectedRevision: snapshot.settings.revision, value: configOf(draft, t) }, 'save')
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : String(error))
     }
