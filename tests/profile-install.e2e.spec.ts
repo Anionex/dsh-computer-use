@@ -118,11 +118,21 @@ async function launchFixture(transcript: string): Promise<{ bundleId: string; pi
   if (launched.code !== 0) throw new Error(`fixture background launch failed: ${launched.stderr}`)
   const deadline = Date.now() + 10000
   while (Date.now() < deadline) {
-    const [app] = await fixtureApps()
-    if (app !== undefined) return app
+    for (const app of await fixtureApps()) {
+      try {
+        const observation = await helper<{ window: { frame: { width: number; height: number } } }>({
+          command: 'observe',
+          app,
+          options: { screenshot: 'none', maxNodes: 1000, maxDepth: 20, maxTextBytes: 128000 },
+        })
+        if (observation.window.frame.width > 0 && observation.window.frame.height > 0) return app
+      } catch {
+        // The process can be visible before AppKit publishes its first window.
+      }
+    }
     await delay(50)
   }
-  throw new Error('fixture did not launch')
+  throw new Error('fixture did not expose an observable window')
 }
 
 function recursiveObservation(value: unknown): { observationId: string; elements: Array<{ index: number; label?: string; title?: string }> } | undefined {

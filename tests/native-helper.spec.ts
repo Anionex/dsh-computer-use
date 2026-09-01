@@ -266,7 +266,7 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     const managed = new NativeHelperClient({} as never, resolveConfig())
     await expect(managed.prepare(new AbortController().signal)).resolves.toMatchObject({
       path: HELPER,
-      version: '0.2.0',
+      version: '0.2.1',
       sha256: await sha256(HELPER),
     })
 
@@ -297,7 +297,7 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
       const managed = new NativeHelperClient({} as never, resolveConfig(), managedRoot)
       await expect(managed.prepare(new AbortController().signal)).resolves.toMatchObject({
         path: await realpath(packagedHelper),
-        version: '0.2.0',
+        version: '0.2.1',
         sha256: await sha256(HELPER),
       })
       expect((await stat(packagedHelper)).mode & 0o100).toBe(0o100)
