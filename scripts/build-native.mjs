@@ -16,6 +16,9 @@ const MONITOR_SOURCE = join(NATIVE, 'Sources', 'Monitor', 'main.swift')
 const HELPER_OUTPUT = join(NATIVE, 'bin', 'dsh-computer-use-helper')
 const FIXTURE_APP = join(NATIVE, 'fixture', 'DSHComputerUseFixture.app')
 const MONITOR_OUTPUT = join(NATIVE, 'fixture', 'dsh-computer-use-input-monitor')
+const packageManifest = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8'))
+const packageVersion = packageManifest.version
+if (typeof packageVersion !== 'string' || packageVersion.length === 0) throw new Error('package.json version is missing')
 const args = new Set(process.argv.slice(2))
 const helperOnly = args.has('--helper-only')
 const fixtureOnly = args.has('--fixture-only')
@@ -61,6 +64,10 @@ async function hashDirectory(directory) {
 }
 
 async function buildHelper() {
+  const mainSource = await readFile(join(HELPER_SOURCE, 'main.swift'), 'utf8')
+  if (!mainSource.includes(`private let helperVersion = "${packageVersion}"`)) {
+    throw new Error(`native helper version must match package.json version ${packageVersion}`)
+  }
   await mkdir(BUILD, { recursive: true })
   await mkdir(dirname(HELPER_OUTPUT), { recursive: true })
   const sources = (await readdir(HELPER_SOURCE)).filter(name => name.endsWith('.swift')).sort().map(name => join(HELPER_SOURCE, name))
@@ -88,7 +95,7 @@ async function buildHelper() {
   if (architectures.join(',') !== 'arm64,x86_64') throw new Error(`helper is not universal: ${architectures.join(', ')}`)
   const manifest = {
     schemaVersion: 1,
-    helperVersion: '0.1.0',
+    helperVersion: packageVersion,
     sourceSha256: await hashDirectory(HELPER_SOURCE),
     binary: {
       path: 'bin/dsh-computer-use-helper',

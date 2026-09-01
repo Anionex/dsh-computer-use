@@ -33,13 +33,22 @@ function commandAvailable(command: string): boolean {
   return spawnSync(command, ['--version'], { stdio: 'ignore', timeout: 10000 }).status === 0
 }
 
+function externalCommand(command: string, args: readonly string[]): { command: string; args: readonly string[] } {
+  // A direct Vitest-worker child leaves DSH without its internal ESM loader.
+  // A login shell matches the real CLI entry and keeps profile package resolution isolated.
+  return command === 'dsh' && process.platform === 'darwin'
+    ? { command: '/bin/bash', args: ['-lc', 'exec dsh "$@"', 'dsh', ...args] }
+    : { command, args }
+}
+
 function run(
   command: string,
   args: readonly string[],
   options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const invoked = externalCommand(command, args)
+    const child = spawn(invoked.command, invoked.args, {
       cwd: options.cwd ?? ROOT,
       env: { ...process.env, ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -269,7 +278,8 @@ async function startWeb(home: string) {
   })
   const port = (probe.address() as AddressInfo).port
   await new Promise<void>(resolve => probe.close(() => resolve()))
-  const child = spawn('dsh', ['web', '--host', '127.0.0.1', '--port', String(port)], {
+  const invoked = externalCommand('dsh', ['web', '--host', '127.0.0.1', '--port', String(port)])
+  const child = spawn(invoked.command, invoked.args, {
     cwd: ROOT,
     env: { ...process.env, DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1', DEEPSEEK_API_KEY: 'mock-computer-key' },
     stdio: ['ignore', 'pipe', 'pipe'],

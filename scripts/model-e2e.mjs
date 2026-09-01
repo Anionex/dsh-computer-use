@@ -41,10 +41,19 @@ function tail(value, length = 8000) {
   return value.length <= length ? value : value.slice(-length)
 }
 
+function externalCommand(command, args) {
+  // A long-running Node harness can leave DSH without its internal ESM loader.
+  // A login shell matches the real CLI entry and keeps profile package resolution isolated.
+  return command === 'dsh' && process.platform === 'darwin'
+    ? { command: '/bin/bash', args: ['-lc', 'exec dsh "$@"', 'dsh', ...args] }
+    : { command, args }
+}
+
 async function runCommand(name, command, args, options = {}) {
   const startedAt = Date.now()
   const result = await new Promise((resolveResult) => {
-    const child = spawn(command, args, {
+    const invoked = externalCommand(command, args)
+    const child = spawn(invoked.command, invoked.args, {
       cwd: options.cwd ?? ROOT,
       env: { ...process.env, ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -209,7 +218,7 @@ async function realModelWorkflow() {
   const result = await runCommand(
     'DeepSeek V4 computer-use fixture workflow',
     'dsh',
-    ['run', '--profile', 'headless', '--patch', patch, prompt],
+    ['--profile', 'headless', '--patch', patch, prompt],
     {
       cwd: workspace,
       env: {
