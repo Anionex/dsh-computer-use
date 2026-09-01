@@ -252,7 +252,27 @@ export interface ComputerActionResult {
   pointerRouting: 'none' | 'target-process'
   /** Present when the action addressed an observed element. */
   resolution?: ComputerTargetResolutionResult
+  /** Present only when the agent cursor should be on screen and is not. */
+  agentCursor?: { visible: false; reason?: string }
+  /** What changed in the bounded post-action structural observation. */
+  effect: ComputerActionEffect
   observation: ComputerObservation
+}
+
+/**
+ * What changed in the bounded structural observation after an action.
+ *
+ * The comparison covers the window title, id and frame plus the Accessibility
+ * element tree. It does not prove that the action caused the change, and it
+ * cannot observe pixel-only, transient, remote, or otherwise external effects.
+ */
+export interface ComputerActionEffect {
+  /** True when the post-action structural state hash differed. */
+  observedStateChanged: boolean
+  /** How long the settle loop watched, in milliseconds. */
+  observedForMs: number
+  /** Scope guidance when no structural change was observed. */
+  note?: string
 }
 
 /** Confirmation request binding an exact proposed action to human-readable impact. */

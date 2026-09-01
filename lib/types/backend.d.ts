@@ -56,6 +56,11 @@ export interface BackendActionResult {
     pointerRouting: 'none' | 'target-process';
 }
 /** One model-selected point or gesture for the non-interactive Agent cursor overlay. */
+/** Whether the agent cursor ended up visible, and why not when it did not. */
+export interface CursorVisibility {
+    readonly visible: boolean;
+    readonly reason?: string;
+}
 export interface BackendCursorAction {
     kind: 'click' | 'scroll' | 'drag';
     from?: {
@@ -90,7 +95,13 @@ export interface ComputerUseBackend {
     listApps(signal: AbortSignal): Promise<ComputerAppSummary[]>;
     observe(app: ComputerAppIdentity, options: BackendObserveOptions, signal: AbortSignal): Promise<BackendObservation>;
     act(request: BackendActionRequest, signal: AbortSignal): Promise<BackendActionResult>;
-    visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<void>;
+    /**
+     * Drive the agent cursor for one action.
+     * @returns whether the cursor is on screen afterwards, plus why not when it
+     * is hidden. A hidden cursor is not an error — native input is unaffected —
+     * but the caller must be able to report that the user cannot see the agent.
+     */
+    visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<CursorVisibility>;
     dispose(): Promise<void>;
     health(signal: AbortSignal): Promise<BackendHealth>;
     openSettings(kind: 'accessibility' | 'screen-recording', signal: AbortSignal): Promise<void>;

@@ -161,6 +161,7 @@ private final class CursorOverlayController: NSObject {
     private var hideWork: DispatchWorkItem?
     private var releaseWork: DispatchWorkItem?
     private var targetCheckTimer: Timer?
+    private var glideTimer: Timer?
     private var targetPid: pid_t?
     private var targetWindowNumber: Int64?
     private var targetWindowFrame: CGRect?
@@ -188,6 +189,16 @@ private final class CursorOverlayController: NSObject {
         window.sharingType = .readOnly
     }
 
+    /// Outcome of a placement request, so the caller can distinguish a cursor
+    /// that moved from one that was hidden because its window binding no
+    /// longer holds. Reporting success for the second is how a live session
+    /// ends up with a frozen agent cursor and no error anywhere.
+    enum Placement {
+        case shown
+        case targetUnavailable
+    }
+
+    @discardableResult
     func show(
         at quartzPoint: CGPoint,
         durationMs: Int,
@@ -195,11 +206,11 @@ private final class CursorOverlayController: NSObject {
         targetPid: pid_t?,
         targetWindowNumber: Int64?,
         targetWindowFrame: CGRect?
-    ) {
+    ) -> Placement {
         hideWork?.cancel()
         guard targetWindowIsCurrent(pid: targetPid, windowNumber: targetWindowNumber, expectedFrame: targetWindowFrame) else {
             hide()
-            return
+            return .targetUnavailable
         }
         self.targetPid = targetPid
         self.targetWindowNumber = targetWindowNumber
@@ -210,17 +221,53 @@ private final class CursorOverlayController: NSObject {
             x: point.x,
             y: point.y - Self.size.height
         )
-        if window.isVisible && durationMs > 0 {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = Double(durationMs) / 1000
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                window.animator().setFrameOrigin(targetOrigin)
-            }
-        } else {
+        glide(to: targetOrigin, durationMs: durationMs)
+        scheduleHide(after: autoHideMs)
+        return .shown
+    }
+
+    /// Travel to `targetOrigin`, interpolated on the main run loop.
+    ///
+    /// `window.animator().setFrameOrigin` does not move this panel: the overlay
+    /// runs with `.prohibited` activation policy, and the implicit animator
+    /// silently does nothing there. Because the animated branch only ran once
+    /// the panel was already visible, the first placement worked and every
+    /// later move was a no-op — a cursor that appears once and then never
+    /// follows the agent again.
+    ///
+    /// Stepping the origin directly is the same call the first placement
+    /// already proved works, so the glide is both visible and correct.
+    private func glide(to targetOrigin: NSPoint, durationMs: Int) {
+        glideTimer?.invalidate()
+        glideTimer = nil
+        let origin = window.frame.origin
+        guard window.isVisible, durationMs > 0, origin != targetOrigin else {
             window.setFrameOrigin(targetOrigin)
             window.orderFrontRegardless()
+            return
         }
-        scheduleHide(after: autoHideMs)
+        let started = Date()
+        let duration = Double(durationMs) / 1000
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { timer.invalidate(); return }
+                let elapsed = Date().timeIntervalSince(started)
+                if elapsed >= duration {
+                    timer.invalidate()
+                    self.glideTimer = nil
+                    self.window.setFrameOrigin(targetOrigin)
+                    return
+                }
+                // Ease out, matching the intent of the animation this replaces.
+                let fraction = 1 - pow(1 - elapsed / duration, 3)
+                self.window.setFrameOrigin(NSPoint(
+                    x: origin.x + (targetOrigin.x - origin.x) * fraction,
+                    y: origin.y + (targetOrigin.y - origin.y) * fraction
+                ))
+            }
+        }
+        glideTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func press(autoHideMs: Int, sustained: Bool) {
@@ -245,12 +292,21 @@ private final class CursorOverlayController: NSObject {
         scheduleHide(after: autoHideMs)
     }
 
-    func validateTarget(pid: pid_t?, windowNumber: Int64?, expectedFrame: CGRect?) {
-        guard window.isVisible else { return }
-        if !targetWindowIsCurrent(pid: pid, windowNumber: windowNumber, expectedFrame: expectedFrame) { hide() }
+    var isVisible: Bool { window.isVisible }
+
+    @discardableResult
+    func validateTarget(pid: pid_t?, windowNumber: Int64?, expectedFrame: CGRect?) -> Placement {
+        guard window.isVisible else { return .targetUnavailable }
+        if !targetWindowIsCurrent(pid: pid, windowNumber: windowNumber, expectedFrame: expectedFrame) {
+            hide()
+            return .targetUnavailable
+        }
+        return .shown
     }
 
     func hide() {
+        glideTimer?.invalidate()
+        glideTimer = nil
         hideWork?.cancel()
         hideWork = nil
         releaseWork?.cancel()
@@ -437,43 +493,62 @@ private final class CursorCommandParser: @unchecked Sendable {
 private func handleCursorCommand(_ object: [String: Any], controller: CursorOverlayController) {
     do {
         let command = try CursorOverlayCommand(object)
+        // Whether the panel is actually on screen after this command. A hidden
+        // overlay still leaves native input working, so the operation is not an
+        // error -- but the caller must be able to tell, or the user silently
+        // loses sight of where the agent is acting.
+        var visible = true
         switch command.operation {
         case "show", "move":
             guard let point = command.point else {
                 throw CursorOverlayError(message: "cursor overlay command needs x and y")
             }
-            controller.show(
+            visible = controller.show(
                 at: point,
                 durationMs: command.durationMs,
                 autoHideMs: command.autoHideMs,
                 targetPid: command.targetPid,
                 targetWindowNumber: command.targetWindowNumber,
                 targetWindowFrame: command.targetWindowFrame
-            )
+            ) == .shown
         case "press":
-            controller.validateTarget(
+            visible = controller.validateTarget(
                 pid: command.targetPid,
                 windowNumber: command.targetWindowNumber,
                 expectedFrame: command.targetWindowFrame
-            )
+            ) == .shown
             controller.press(autoHideMs: command.autoHideMs, sustained: command.sustainedPress)
         case "release":
-            controller.validateTarget(
+            visible = controller.validateTarget(
                 pid: command.targetPid,
                 windowNumber: command.targetWindowNumber,
                 expectedFrame: command.targetWindowFrame
-            )
+            ) == .shown
             controller.release(autoHideMs: command.autoHideMs)
+        case "validate":
+            visible = controller.validateTarget(
+                pid: command.targetPid,
+                windowNumber: command.targetWindowNumber,
+                expectedFrame: command.targetWindowFrame
+            ) == .shown
         case "hide":
             controller.hide()
+            visible = false
         case "stop":
             controller.stop()
+            visible = false
         case "ping":
-            break
+            visible = controller.isVisible
         default:
             throw CursorOverlayError(message: "unknown cursor overlay operation")
         }
-        emitCursorResponse(["ok": true, "op": command.operation])
+        var response: [String: Any] = ["ok": true, "op": command.operation, "visible": visible]
+        if !visible && (command.operation == "show" || command.operation == "move"
+            || command.operation == "press" || command.operation == "release"
+            || command.operation == "validate") {
+            response["reason"] = "the bound target window is no longer at its observed frame; the agent cursor is hidden"
+        }
+        emitCursorResponse(response)
     } catch let error as CursorOverlayError {
         emitCursorResponse(["ok": false, "error": error.message])
     } catch {

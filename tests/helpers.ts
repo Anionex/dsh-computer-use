@@ -10,6 +10,7 @@ import type {
   BackendObservation,
   BackendObserveOptions,
   ComputerUseBackend,
+  CursorVisibility,
 } from '../src/backend.ts'
 import { ComputerUseError } from '../src/errors.ts'
 import type { ComputerAppIdentity, ComputerAppSelector, ComputerAppSummary } from '../src/types.ts'
@@ -111,11 +112,26 @@ export class FakeBackend implements ComputerUseBackend {
     })
   }
 
+  /**
+   * When true the action is accepted and the observation is left untouched,
+   * standing in for a target that received the input and did nothing with it —
+   * a drag onto a title bar, a click on inert canvas.
+   */
+  inert = false
+
   act(request: BackendActionRequest): Promise<BackendActionResult> {
     if (request.expectedStateHash !== this.observation.stateHash) {
       throw new ComputerUseError('COMPUTER_STALE_OBSERVATION', 'fake UI changed')
     }
     this.actions.push(structuredClone(request))
+    if (this.inert) {
+      return Promise.resolve({
+        channel: 'coordinates',
+        activation: 'not-requested',
+        pointerInput: true,
+        pointerRouting: 'target-process',
+      })
+    }
     const sequence = this.actions.length + 1
     this.observation = backendObservation({
       ...this.observation,
@@ -137,9 +153,12 @@ export class FakeBackend implements ComputerUseBackend {
     })
   }
 
-  visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after'): Promise<void> {
+  /** Overridable so a test can make the agent cursor fail to show. */
+  cursorVisibility: CursorVisibility = { visible: true }
+
+  visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after'): Promise<CursorVisibility> {
     this.cursorActions.push({ action: structuredClone(action), phase })
-    return Promise.resolve()
+    return Promise.resolve(this.cursorVisibility)
   }
 
   dispose(): Promise<void> {

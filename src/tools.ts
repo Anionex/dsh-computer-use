@@ -170,6 +170,24 @@ const actionResultSchema = {
         targetChanged: { type: 'boolean', required: true },
       },
     },
+    agentCursor: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        visible: { type: 'boolean', const: false, required: true },
+        reason: { type: 'string' },
+      },
+    },
+    effect: {
+      type: 'object',
+      additionalProperties: false,
+      required: true,
+      properties: {
+        observedStateChanged: { type: 'boolean', required: true },
+        observedForMs: { type: 'integer', required: true },
+        note: { type: 'string' },
+      },
+    },
     observation: { ...observationSchema, required: true },
   },
 } as const satisfies ValueSchemaSpec

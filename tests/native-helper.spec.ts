@@ -56,7 +56,15 @@ function abortingHandle(signal: AbortSignal | undefined) {
   }
 }
 
-function cursorHandle(options: { ready?: string; holdReady?: boolean } = {}) {
+interface CursorHandleOptions {
+  ready?: string
+  holdReady?: boolean
+  autoRespond?: boolean
+  holdTerminate?: boolean
+  onCommand?: (command: Record<string, unknown>, stdout: PassThrough) => void
+}
+
+function cursorHandle(options: CursorHandleOptions = {}) {
   const stdinLines: string[] = []
   const stdout = new PassThrough()
   const stderr = reader('')
@@ -70,7 +78,15 @@ function cursorHandle(options: { ready?: string; holdReady?: boolean } = {}) {
   }
   const stdin = new Writable({
     write(chunk, _encoding, callback) {
-      stdinLines.push(chunk.toString())
+      const line = chunk.toString()
+      stdinLines.push(line)
+      const command = JSON.parse(line) as Record<string, unknown>
+      if (command.op !== 'stop') {
+        if (options.onCommand !== undefined) options.onCommand(command, stdout)
+        else if (options.autoRespond !== false) {
+          stdout.write(`${JSON.stringify({ ok: true, op: command.op, visible: true })}\n`)
+        }
+      }
       callback()
     },
     final(callback) {
@@ -78,7 +94,9 @@ function cursorHandle(options: { ready?: string; holdReady?: boolean } = {}) {
       callback()
     },
   })
-  const terminate = vi.fn(() => { exit({ exitCode: null, signal: 'SIGTERM' }) })
+  const terminate = vi.fn(() => {
+    if (options.holdTerminate !== true) exit({ exitCode: null, signal: 'SIGTERM' })
+  })
   const waitForExit = vi.fn(async (signal?: AbortSignal) => {
     if (exited) return true
     if (signal === undefined) {
@@ -104,7 +122,10 @@ function cursorHandle(options: { ready?: string; holdReady?: boolean } = {}) {
     waitForExit,
   }
   if (!options.holdReady) queueMicrotask(() => { stdout.write(options.ready ?? '{"ok":true,"ready":true,"pid":7331}\n') })
-  return { handle, stdinLines, terminate, exit }
+  const respond = (response: Record<string, unknown> | string): void => {
+    stdout.write(typeof response === 'string' ? response : `${JSON.stringify(response)}\n`)
+  }
+  return { handle, stdinLines, terminate, exit, respond }
 }
 
 describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
@@ -186,15 +207,6 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(pointerTargetSource).toContain('no on-screen window of the selected app contains the requested coordinate')
     expect(pointerTargetSource).toContain('windowFrame.contains(point)')
     expect(helperSource).toContain('let coordinateSpace = action["coordinateSpace"] as? String ?? "window"')
-  })
-
-  it('requires complete frame and title evidence when resolving a missing AX window number', async () => {
-    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
-    expect(helperSource).toContain('guard let bounds = window[kCGWindowBounds as String] as? [String: Any]')
-    expect(helperSource).toContain('let candidate = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }')
-    expect(helperSource).toContain('guard let candidateTitle = window[kCGWindowName as String] as? String,')
-    expect(helperSource).toContain('candidateTitle == title else { return false }')
-    expect(helperSource).toContain('guard candidates.count == 1 else { return nil }')
   })
 
   it('routes AXRaise through explicit foreground authorization and refreshed target validation', async () => {
@@ -374,6 +386,123 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     }
   })
 
+  it('serializes concurrent commands so each response maps to the command that produced it', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-order-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ autoRespond: false })
+      const client = new NativeHelperClient({ subprocess: { spawn: () => cursor.handle } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const signal = new AbortController().signal
+
+      const first = client.cursorCommand({ op: 'move', x: 1, y: 2 }, signal)
+      const second = client.cursorCommand({ op: 'press' }, signal)
+      await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(1) })
+      expect(cursor.stdinLines[0]).toContain('"op":"move"')
+
+      cursor.respond({ ok: true, op: 'move', visible: true })
+      await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(2) })
+      expect(cursor.stdinLines[1]).toContain('"op":"press"')
+      cursor.respond({ ok: true, op: 'press', visible: false, reason: 'press target moved' })
+
+      await expect(first).resolves.toEqual({ visible: true })
+      await expect(second).resolves.toEqual({ visible: false, reason: 'press target moved' })
+      await client.dispose()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('discards a timed-out generation so its late response cannot satisfy the next command', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-timeout-')
+    vi.useFakeTimers()
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const firstCursor = cursorHandle({ autoRespond: false, holdTerminate: true })
+      const secondCursor = cursorHandle({ autoRespond: false })
+      const handles = [firstCursor, secondCursor]
+      const spawn = vi.fn(() => handles.shift()!.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const signal = new AbortController().signal
+
+      const timedOut = client.cursorCommand({ op: 'move', x: 1, y: 2 }, signal)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(firstCursor.stdinLines).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(121)
+      await expect(timedOut).resolves.toEqual({
+        visible: false,
+        reason: 'the native cursor overlay did not respond within 120 milliseconds',
+      })
+      expect(firstCursor.terminate).toHaveBeenCalledOnce()
+
+      let secondSettled = false
+      const next = client.cursorCommand({ op: 'press' }, signal)
+      void next.then(() => { secondSettled = true })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(spawn).toHaveBeenCalledTimes(2)
+      expect(secondCursor.stdinLines).toHaveLength(1)
+
+      firstCursor.respond({ ok: true, op: 'move', visible: false, reason: 'late first-generation reply' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(secondSettled).toBe(false)
+
+      secondCursor.respond({ ok: true, op: 'press', visible: true })
+      await expect(next).resolves.toEqual({ visible: true })
+      firstCursor.exit({ exitCode: null, signal: 'SIGTERM' })
+      await client.dispose()
+    } finally {
+      vi.useRealTimers()
+      await temporary.cleanup()
+    }
+  })
+
+  it('reports malformed and rejected cursor replies as explicitly not visible', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-invalid-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const invalidJson = cursorHandle({ onCommand: (_command, stdout) => { stdout.write('{not-json\n') } })
+      const missingVisibility = cursorHandle({ onCommand: (command, stdout) => {
+        stdout.write(`${JSON.stringify({ ok: true, op: command.op })}\n`)
+      } })
+      const rejected = cursorHandle({ onCommand: (_command, stdout) => {
+        stdout.write(`${JSON.stringify({ ok: false, error: { message: 'target validation failed' } })}\n`)
+      } })
+      const handles = [invalidJson, missingVisibility, rejected]
+      const spawn = vi.fn(() => handles.shift()!.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const signal = new AbortController().signal
+
+      await expect(client.cursorCommand({ op: 'move' }, signal)).resolves.toEqual({
+        visible: false,
+        reason: 'the native cursor overlay returned invalid JSON',
+      })
+      expect(invalidJson.terminate).toHaveBeenCalledOnce()
+
+      await expect(client.cursorCommand({ op: 'move' }, signal)).resolves.toEqual({
+        visible: false,
+        reason: 'the native cursor overlay did not report boolean visibility',
+      })
+      expect(missingVisibility.terminate).toHaveBeenCalledOnce()
+
+      await expect(client.cursorCommand({ op: 'move' }, signal)).resolves.toEqual({
+        visible: false,
+        reason: 'the native cursor overlay rejected its command: target validation failed',
+      })
+      expect(rejected.terminate).not.toHaveBeenCalled()
+      await client.dispose()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
   it('shares concurrent cursor startup and recovers after the overlay exits', async () => {
     const temporary = await temporaryDirectory('dsh-computer-cursor-restart-')
     try {
@@ -389,7 +518,7 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
       const signal = new AbortController().signal
       const one = client.cursorCommand({ op: 'move', x: 1, y: 2 }, signal)
       const two = client.cursorCommand({ op: 'move', x: 3, y: 4 }, signal)
-      expect(spawn).toHaveBeenCalledTimes(1)
+      await vi.waitFor(() => { expect(spawn).toHaveBeenCalledTimes(1) })
       first.handle.stdout!.write('{"ok":true,"ready":true,"pid":7331}\n')
       await Promise.all([one, two])
       first.exit({ exitCode: 0, signal: null })

@@ -40,6 +40,37 @@ function observation(withScreenshot = false): ComputerObservation {
 }
 
 describe('model-facing Computer Use tools', () => {
+  it('declares every field an action result actually carries', async () => {
+    // The schema is `additionalProperties: false`, so a field the service
+    // returns but the schema omits fails output validation and takes the whole
+    // action down with INVALID_TOOL_OUTPUT. Adding `effect` and `agentCursor`
+    // to the result without adding them here did exactly that, and no unit or
+    // e2e test caught it because neither goes through output validation.
+    const current = observation()
+    const produced = {
+      action: 'drag',
+      channel: 'coordinates',
+      activation: 'not-requested',
+      pointerInput: true,
+      pointerRouting: 'target-process',
+      agentCursor: { visible: false, reason: 'the bound target window moved' },
+      effect: { observedStateChanged: false, observedForMs: 420, note: 'verify visually' },
+      observation: current,
+    }
+    const service = {
+      listApps: vi.fn(),
+      observe: vi.fn(async () => current),
+      act: vi.fn(async () => produced),
+      confirm: vi.fn(),
+    }
+    const tools = createComputerUseTools(service as never)
+    const drag = tools.find(tool => tool.name === 'computer_drag')!
+    const declared = Object.keys((drag.output?.schema as { properties: Record<string, unknown> }).properties)
+    for (const field of Object.keys(produced)) {
+      expect(declared, `the schema must declare "${field}" or output validation rejects the result`).toContain(field)
+    }
+  })
+
   it('exposes only the focused tool vocabulary with structured output and render intent', async () => {
     const current = observation(true)
     const service = {
@@ -51,6 +82,7 @@ describe('model-facing Computer Use tools', () => {
         activation: 'not-requested',
         pointerInput: false,
         pointerRouting: 'none',
+        effect: { observedStateChanged: true, observedForMs: 1 },
         observation: current,
       })),
       confirm: vi.fn(async () => ({
@@ -99,12 +131,16 @@ describe('model-facing Computer Use tools', () => {
     expect(tools[6]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
     expect(tools[7]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
     expect(tools[2]?.output.schema).toMatchObject({
-      required: ['action', 'channel', 'activation', 'pointerInput', 'pointerRouting', 'observation'],
+      // `effect` is required: every action must report whether its bounded
+      // post-action structural observation changed.
+      required: ['action', 'channel', 'activation', 'pointerInput', 'pointerRouting', 'effect', 'observation'],
       properties: {
         activation: { enum: ['not-requested', 'already-frontmost', 'activated'] },
         pointerInput: { type: 'boolean' },
         pointerRouting: { enum: ['none', 'target-process'] },
         resolution: { properties: { mode: { enum: ['exact-locator', 'native-identifier', 'semantic-rebind'] } } },
+        agentCursor: { properties: { visible: { const: false } } },
+        effect: { properties: { observedStateChanged: { type: 'boolean' } } },
       },
     })
     const confirmationBranches = (tools[10]?.parameters as {

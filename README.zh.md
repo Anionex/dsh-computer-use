@@ -158,7 +158,15 @@ resolution?: {
   candidateCount: number
   targetChanged: boolean
 }
+agentCursor?: { visible: false; reason?: string }
+effect: {
+  observedStateChanged: boolean
+  observedForMs: number
+  note?: string
+}
 ```
+
+`effect.observedStateChanged` 比较窗口 title、id、frame 与 Accessibility 元素树；它不证明变化由本次动作造成，也无法观察纯像素、瞬时、远端或其他外部效果。只有独立 Agent 光标本应显示却无法显示或验证时，结果才会出现 `agentCursor`。
 
 模型不能通过 Tool 参数覆盖这些宿主策略。
 

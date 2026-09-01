@@ -14,6 +14,7 @@ import type {
   BackendObservation,
   BackendObserveOptions,
   ComputerUseBackend,
+  CursorVisibility,
 } from '../backend.ts'
 import {
   Config,
@@ -42,7 +43,7 @@ function createBackend(ctx: Context, config: ResolvedComputerUseConfig): Compute
 }
 
 /** Fixed-command native backend. */
-class MacOSBackend implements ComputerUseBackend {
+export class MacOSBackend implements ComputerUseBackend {
   readonly name = 'macos-ax' as const
   readonly client: NativeHelperClient
 
@@ -85,11 +86,17 @@ class MacOSBackend implements ComputerUseBackend {
     }, signal)
   }
 
-  async visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<void> {
-    if (this.config.interaction.cursorVisualization !== 'visible') return
+  async visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<CursorVisibility> {
+    if (this.config.interaction.cursorVisualization !== 'visible') return { visible: false, reason: 'the agent cursor is disabled by configuration' }
+    // The overlay answers per command; the least visible outcome wins, because
+    // a cursor that vanished partway through is a cursor the user cannot follow.
+    let outcome: CursorVisibility = { visible: true }
+    const record = (response: CursorVisibility): void => {
+      if (!response.visible && outcome.visible) outcome = response
+    }
     const autoHideMs = this.config.interaction.cursorAutoHideMs
     const move = async (point: { x: number; y: number }, durationMs: number): Promise<void> => {
-      await this.client.cursorCommand({
+      record(await this.client.cursorCommand({
         op: 'move',
         x: point.x,
         y: point.y,
@@ -98,36 +105,39 @@ class MacOSBackend implements ComputerUseBackend {
         targetPid: action.targetPid,
         targetWindowNumber: action.targetWindowNumber,
         targetWindowFrame: action.targetWindowFrame,
-      }, signal)
+      }, signal))
     }
     if (phase === 'after') {
-      if (action.kind === 'drag') await this.client.cursorCommand({
-        op: 'release',
+      // Every action validates the bound target after native input. Only drag
+      // needs release semantics; click and scroll use a side-effect-free check.
+      record(await this.client.cursorCommand({
+        op: action.kind === 'drag' ? 'release' : 'validate',
         autoHideMs,
         targetPid: action.targetPid,
         targetWindowNumber: action.targetWindowNumber,
         targetWindowFrame: action.targetWindowFrame,
-      }, signal)
-      return
+      }, signal))
+      return outcome
     }
     const start = action.kind === 'drag' ? action.from : action.to
-    if (start === undefined) return
+    if (start === undefined) return { visible: false, reason: 'this action has no cursor position to show' }
     await move(start, this.config.interaction.cursorMotionMs)
     if (this.config.interaction.cursorMotionMs > 0) {
       await delay(this.config.interaction.cursorMotionMs, undefined, { signal })
     }
-    if (action.kind === 'scroll') return
-    await this.client.cursorCommand({
+    if (action.kind === 'scroll') return outcome
+    record(await this.client.cursorCommand({
       op: 'press',
       autoHideMs,
       targetPid: action.targetPid,
       targetWindowNumber: action.targetWindowNumber,
       targetWindowFrame: action.targetWindowFrame,
       sustainedPress: action.kind === 'drag',
-    }, signal)
+    }, signal))
     if (action.kind === 'drag') {
       await move(action.to, Math.max(this.config.interaction.cursorMotionMs, 240))
     }
+    return outcome
   }
 
   async dispose(): Promise<void> {
