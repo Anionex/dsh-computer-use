@@ -8,6 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputReader } from '@deepseek-ai/dsh-subprocess'
+import type { CursorVisibility } from '../backend.ts'
 import type { ResolvedComputerUseConfig } from '../config.ts'
 import { ComputerUseError, computerUseError, type ComputerUseErrorCode } from '../errors.ts'
 
@@ -38,24 +39,26 @@ interface HelperSuccess<T> {
 
 type HelperEnvelope<T> = HelperFailure | HelperSuccess<T>
 
-/** A silent overlay is tolerated; this only bounds how long we listen. */
-// The overlay answers in well under a millisecond when it answers at all.
-// This only bounds how long a silent one is waited on, and it sits on the
-// action's critical path: the cursor is presentation, and presentation must
-// not slow the action down. An earlier 1500ms here added up to three seconds
-// per click and pushed the native fixture suite past its timeouts.
+/** The overlay normally answers in under a millisecond; silence is a visibility failure. */
+// Keep this off the native action's critical path. A timed-out generation is
+// discarded before the next serialized command, so a late frame cannot be
+// mistaken for the next command's response.
 const CURSOR_RESPONSE_TIMEOUT_MS = 120
 
 const CURSOR_READY_TIMEOUT_MS = 2_000
 const CURSOR_PROTOCOL_MAX_BYTES = 64 * 1024
+
+type CursorProtocolFrame =
+  | { kind: 'response'; response: Record<string, unknown> }
+  | { kind: 'failure'; reason: string }
 
 interface CursorProcess {
   stdin: Writable
   done: Promise<SubprocessOutcome>
   terminate: () => void
   waitForExit: SubprocessHandle['waitForExit']
-  /** Next response line from the overlay, in command order. */
-  nextResponse: () => Promise<Record<string, unknown>>
+  /** Next response line from this process generation, in command order. */
+  nextResponse: () => Promise<CursorProtocolFrame>
 }
 
 function collected(reader: SubprocessOutputReader | undefined): string {
@@ -73,6 +76,59 @@ function nativeRoot(): string {
   return fileURLToPath(new URL('../../native/macos/', import.meta.url))
 }
 
+function cursorErrorMessage(error: unknown): string | undefined {
+  if (typeof error === 'string' && error.length > 0) return error.slice(0, 1000)
+  if (typeof error !== 'object' || error === null) return undefined
+  const message = (error as { message?: unknown }).message
+  return typeof message === 'string' && message.length > 0 ? message.slice(0, 1000) : undefined
+}
+
+function normalizeCursorResponse(
+  command: Record<string, unknown>,
+  response: Record<string, unknown>,
+): { result: CursorVisibility; discardGeneration: boolean } {
+  if (response.ok === false) {
+    const detail = cursorErrorMessage(response.error)
+    return {
+      result: {
+        visible: false,
+        reason: detail === undefined
+          ? 'the native cursor overlay rejected its command'
+          : `the native cursor overlay rejected its command: ${detail}`,
+      },
+      discardGeneration: false,
+    }
+  }
+  if (response.ok !== true) {
+    return {
+      result: { visible: false, reason: 'the native cursor overlay returned a malformed response' },
+      discardGeneration: true,
+    }
+  }
+  if (typeof command.op !== 'string' || response.op !== command.op) {
+    return {
+      result: { visible: false, reason: 'the native cursor overlay response did not match its command' },
+      discardGeneration: true,
+    }
+  }
+  if (response.visible === true) return { result: { visible: true }, discardGeneration: false }
+  if (response.visible === false) {
+    return {
+      result: {
+        visible: false,
+        ...(typeof response.reason === 'string' && response.reason.length > 0
+          ? { reason: response.reason.slice(0, 1000) }
+          : { reason: 'the native cursor overlay reported that the cursor is not visible' }),
+      },
+      discardGeneration: false,
+    }
+  }
+  return {
+    result: { visible: false, reason: 'the native cursor overlay did not report boolean visibility' },
+    discardGeneration: true,
+  }
+}
+
 /** Exact helper paths and integrity data for one active generation. */
 export interface PreparedNativeHelper {
   path: string
@@ -85,6 +141,7 @@ export class NativeHelperClient {
   private prepared?: PreparedNativeHelper
   private cursor: CursorProcess | undefined
   private cursorStart: { promise: Promise<CursorProcess> } | undefined
+  private cursorCommandTail: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly ctx: Context,
@@ -196,8 +253,14 @@ export class NativeHelperClient {
     return envelope.value
   }
 
-  /** Send one best-effort command to the persistent, click-through Agent cursor overlay. */
-  async cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+  /** Send one serialized command to the persistent, click-through Agent cursor overlay. */
+  cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<CursorVisibility> {
+    const run = this.cursorCommandTail.then(async () => await this.executeCursorCommand(command, signal))
+    this.cursorCommandTail = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  private async executeCursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<CursorVisibility> {
     const prepared = this.prepared ?? await this.prepare(signal)
     const cursor = await this.getCursor(prepared, signal)
     signal.throwIfAborted()
@@ -208,12 +271,23 @@ export class NativeHelperClient {
           else rejectWrite(error)
         })
       })
-      return await cursor.nextResponse()
+      const frame = await cursor.nextResponse()
+      if (frame.kind === 'failure') {
+        this.discardCursor(cursor)
+        return { visible: false, reason: frame.reason }
+      }
+      const normalized = normalizeCursorResponse(command, frame.response)
+      if (normalized.discardGeneration) this.discardCursor(cursor)
+      return normalized.result
     } catch (error) {
-      if (this.cursor === cursor) this.cursor = undefined
-      cursor.terminate()
+      this.discardCursor(cursor)
       throw computerUseError(error, 'native cursor overlay command failed')
     }
+  }
+
+  private discardCursor(cursor: CursorProcess): void {
+    if (this.cursor === cursor) this.cursor = undefined
+    cursor.terminate()
   }
 
   /** Stop the cursor process before a provider generation is replaced or disposed. */
@@ -319,47 +393,71 @@ export class NativeHelperClient {
         { cause: error },
       )
     }
-    // The overlay answers one line per command, in order. Discarding stdout
-    // (the previous behaviour) makes every outcome invisible to the caller,
-    // including the one that says the agent cursor is not on screen.
-    const pending: Array<(response: Record<string, unknown>) => void> = []
-    const buffered: Array<Record<string, unknown>> = []
+    // Commands are serialized by the client and the overlay answers one line
+    // per command. A protocol failure invalidates this entire process
+    // generation; its buffered or late frames can never reach a replacement.
+    const pending: Array<(frame: CursorProtocolFrame) => void> = []
+    const buffered: CursorProtocolFrame[] = []
+    const dispatch = (frame: CursorProtocolFrame): void => {
+      const waiter = pending.shift()
+      if (waiter === undefined) buffered.push(frame)
+      else waiter(frame)
+    }
     let residue = ''
     handle.stdout.setEncoding('utf8').on('data', (chunk: string) => {
       residue += chunk
+      if (Buffer.byteLength(residue) > CURSOR_PROTOCOL_MAX_BYTES && !residue.includes('\n')) {
+        residue = ''
+        dispatch({ kind: 'failure', reason: 'the native cursor overlay response exceeded its protocol limit' })
+        return
+      }
       while (true) {
         const newline = residue.indexOf('\n')
         if (newline < 0) break
         const line = residue.slice(0, newline).trim()
         residue = residue.slice(newline + 1)
         if (line.length === 0) continue
-        let parsed: Record<string, unknown>
-        try { parsed = JSON.parse(line) as Record<string, unknown> }
-        catch { continue }
-        const waiter = pending.shift()
-        if (waiter === undefined) buffered.push(parsed)
-        else waiter(parsed)
+        if (Buffer.byteLength(line) > CURSOR_PROTOCOL_MAX_BYTES) {
+          dispatch({ kind: 'failure', reason: 'the native cursor overlay response exceeded its protocol limit' })
+          continue
+        }
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(line)
+        } catch {
+          dispatch({ kind: 'failure', reason: 'the native cursor overlay returned invalid JSON' })
+          continue
+        }
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+          dispatch({ kind: 'failure', reason: 'the native cursor overlay returned a malformed response' })
+          continue
+        }
+        dispatch({ kind: 'response', response: parsed as Record<string, unknown> })
       }
+    })
+    handle.stdout.once('end', () => {
+      dispatch({ kind: 'failure', reason: 'the native cursor overlay closed before replying' })
+    })
+    handle.stdout.once('error', error => {
+      dispatch({ kind: 'failure', reason: `the native cursor overlay response stream failed: ${error.message}` })
     })
     return {
       stdin: handle.stdin,
       done: handle.done,
-      // Reading the reply is an improvement on the previous fire-and-forget
-      // write, not a new requirement: an overlay that stays silent yields an
-      // empty response rather than failing the action. The cursor is
-      // presentation-only, so an unanswered command must never take an
-      // otherwise-good action down with it.
       nextResponse: async () => {
         const ready = buffered.shift()
         if (ready !== undefined) return ready
-        return await new Promise<Record<string, unknown>>((resolveResponse) => {
-          const settle = (response: Record<string, unknown>): void => {
+        return await new Promise<CursorProtocolFrame>((resolveResponse) => {
+          const settle = (frame: CursorProtocolFrame): void => {
             const index = pending.indexOf(settle)
             if (index >= 0) pending.splice(index, 1)
             clearTimeout(timer)
-            resolveResponse(response)
+            resolveResponse(frame)
           }
-          const timer = setTimeout(() => settle({}), CURSOR_RESPONSE_TIMEOUT_MS)
+          const timer = setTimeout(() => settle({
+            kind: 'failure',
+            reason: `the native cursor overlay did not respond within ${CURSOR_RESPONSE_TIMEOUT_MS} milliseconds`,
+          }), CURSOR_RESPONSE_TIMEOUT_MS)
           pending.push(settle)
         })
       },

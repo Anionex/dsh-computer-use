@@ -15,6 +15,7 @@ export declare class ComputerUseService extends Service {
     private config;
     private generation;
     private readonly agents;
+    private readonly actionTails;
     private readonly leases;
     private readonly confirmations;
     private readonly lifecycle;
@@ -41,6 +42,9 @@ export declare class ComputerUseService extends Service {
     confirm(request: ComputerConfirmRequest, context: ComputerUseContext): Promise<ComputerConfirmation>;
     /** Execute one observation-bound action and always return a fresh post-action observation. */
     act(action: ComputerActionRequest, context: ComputerUseContext): Promise<ComputerActionResult>;
+    /** Keep this service's actions for one process ordered through post-action observation. */
+    private actNow;
+    private enqueueAction;
     /** Release all scoped observations and confirmations for one disposed Agent. */
     releaseAgent(agent: Agent): void;
     private state;

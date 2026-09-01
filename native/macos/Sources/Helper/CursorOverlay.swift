@@ -292,6 +292,8 @@ private final class CursorOverlayController: NSObject {
         scheduleHide(after: autoHideMs)
     }
 
+    var isVisible: Bool { window.isVisible }
+
     @discardableResult
     func validateTarget(pid: pid_t?, windowNumber: Int64?, expectedFrame: CGRect?) -> Placement {
         guard window.isVisible else { return .targetUnavailable }
@@ -523,6 +525,12 @@ private func handleCursorCommand(_ object: [String: Any], controller: CursorOver
                 expectedFrame: command.targetWindowFrame
             ) == .shown
             controller.release(autoHideMs: command.autoHideMs)
+        case "validate":
+            visible = controller.validateTarget(
+                pid: command.targetPid,
+                windowNumber: command.targetWindowNumber,
+                expectedFrame: command.targetWindowFrame
+            ) == .shown
         case "hide":
             controller.hide()
             visible = false
@@ -530,13 +538,14 @@ private func handleCursorCommand(_ object: [String: Any], controller: CursorOver
             controller.stop()
             visible = false
         case "ping":
-            break
+            visible = controller.isVisible
         default:
             throw CursorOverlayError(message: "unknown cursor overlay operation")
         }
         var response: [String: Any] = ["ok": true, "op": command.operation, "visible": visible]
         if !visible && (command.operation == "show" || command.operation == "move"
-            || command.operation == "press" || command.operation == "release") {
+            || command.operation == "press" || command.operation == "release"
+            || command.operation == "validate") {
             response["reason"] = "the bound target window is no longer at its observed frame; the agent cursor is hidden"
         }
         emitCursorResponse(response)

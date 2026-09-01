@@ -129,12 +129,10 @@ describe('Computer Use Service', () => {
     }
   })
 
-  it('reports whether the target changed, so a no-op is not indistinguishable from success', async () => {
-    // Every other field on the result describes the attempt: `pointerRouting`
-    // and `pointerInput` read identically whether the target reacted or
-    // ignored the input. A drag onto a window title bar is routed perfectly
-    // and moves nothing, because window movement belongs to the window server
-    // rather than the process the events reached.
+  it('reports bounded structural observation changes without claiming causal proof', async () => {
+    // Routing fields describe the attempt. The effect reports only the
+    // structural state hash and explicitly preserves uncertainty about pixels,
+    // transient UI, remote effects, and unrelated external changes.
     const workspace = await temporaryDirectory('dsh-computer-effect-')
     try {
       const { backend, service } = serviceHarness()
@@ -147,7 +145,7 @@ describe('Computer Use Service', () => {
         { kind: 'click', observationId: before.observationId, elementIndex: 1 },
         context,
       )
-      expect(effective.effect.targetChanged).toBe(true)
+      expect(effective.effect.observedStateChanged).toBe(true)
       expect(effective.effect).not.toHaveProperty('note')
 
       backend.inert = true
@@ -156,11 +154,49 @@ describe('Computer Use Service', () => {
         { kind: 'click', observationId: after.observationId, elementIndex: 1 },
         context,
       )
-      expect(inert.effect.targetChanged).toBe(false)
-      expect(inert.effect.note).toContain('window move or resize would have shown here')
+      expect(inert.effect.observedStateChanged).toBe(false)
+      expect(inert.effect.note).toContain('pixel-only, remote, or transient effects may still have occurred')
       // The attempt still reads as a clean success, which is exactly why the
       // outcome needs its own field.
       expect(inert.pointerRouting).toBe('target-process')
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('serializes actions for one app through their post-action observation', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-action-queue-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.inert = true
+      await service.initializeForTest()
+      const firstAgent = fakeAgent(workspace.path, 'queue-1')
+      const secondAgent = fakeAgent(workspace.path, 'queue-2')
+      const firstContext = callContext(firstAgent, workspace.path)
+      const secondContext = callContext(secondAgent, workspace.path)
+      const firstObservation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, firstContext)
+      const secondObservation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, secondContext)
+      const originalAct = backend.act.bind(backend)
+      let active = 0
+      let maximumActive = 0
+      vi.spyOn(backend, 'act').mockImplementation(async request => {
+        active += 1
+        maximumActive = Math.max(maximumActive, active)
+        await new Promise(resolve => setTimeout(resolve, 20))
+        try {
+          return await originalAct(request)
+        } finally {
+          active -= 1
+        }
+      })
+
+      const [first, second] = await Promise.all([
+        service.act({ kind: 'click', observationId: firstObservation.observationId, elementIndex: 1 }, firstContext),
+        service.act({ kind: 'click', observationId: secondObservation.observationId, elementIndex: 1 }, secondContext),
+      ])
+      expect(maximumActive).toBe(1)
+      expect(first.effect.observedStateChanged).toBe(false)
+      expect(second.effect.observedStateChanged).toBe(false)
     } finally {
       await workspace.cleanup()
     }
@@ -182,6 +218,53 @@ describe('Computer Use Service', () => {
       const next = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
       const hidden = await service.act({ kind: 'click', observationId: next.observationId, elementIndex: 1 }, context)
       expect(hidden.agentCursor).toEqual({ visible: false, reason: 'the bound target window moved' })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('reports an after-only cursor failure instead of dropping release validation', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-after-')
+    try {
+      const { backend, service } = serviceHarness()
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      vi.spyOn(backend, 'visualizeCursor').mockImplementation((_action, phase) => Promise.resolve(
+        phase === 'before'
+          ? { visible: true }
+          : { visible: false, reason: 'the target window moved during the action' },
+      ))
+
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const result = await service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context)
+      expect(result.agentCursor).toEqual({ visible: false, reason: 'the target window moved during the action' })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('reports that the cursor cannot be bound when the observation has no window id', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-window-id-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.observation = backendObservation({
+        window: {
+          title: 'DSH Computer Use Fixture',
+          frame: { x: 100, y: 200, width: 760, height: 592 },
+        },
+      })
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const result = await service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context)
+      expect(result.agentCursor).toEqual({
+        visible: false,
+        reason: 'the agent cursor could not be bound because the target window has no stable window id',
+      })
+      expect(backend.cursorActions).toHaveLength(0)
     } finally {
       await workspace.cleanup()
     }
@@ -896,7 +979,19 @@ describe('Computer Use Service', () => {
         timeoutMs: 200,
       }, context)
       expect(result.channel).toBe('wait')
+      expect(result.effect.observedStateChanged).toBe(true)
       expect(result.observation.tree.text).toContain('delayed complete')
+
+      const alreadySatisfied = await service.act({
+        kind: 'wait',
+        observationId: result.observation.observationId,
+        condition: { text: 'delayed complete' },
+        timeoutMs: 200,
+      }, context)
+      expect(alreadySatisfied.effect).toMatchObject({
+        observedStateChanged: false,
+        note: 'the wait condition was already satisfied by the referenced observation',
+      })
     } finally {
       await workspace.cleanup()
     }

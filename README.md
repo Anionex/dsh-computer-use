@@ -158,7 +158,15 @@ resolution?: {
   candidateCount: number
   targetChanged: boolean
 }
+agentCursor?: { visible: false; reason?: string }
+effect: {
+  observedStateChanged: boolean
+  observedForMs: number
+  note?: string
+}
 ```
+
+`effect.observedStateChanged` compares the window title, id and frame plus the Accessibility element tree. It does not prove causation and cannot see pixel-only, transient, remote, or otherwise external effects. `agentCursor` appears only when the separate Agent cursor was expected but could not be shown or validated.
 
 The model cannot override these host policies through Tool arguments.
 

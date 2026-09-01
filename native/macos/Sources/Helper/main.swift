@@ -352,16 +352,17 @@ private func windowNumber(
     // with nothing reported — the caller cannot even tell it lost the cursor.
     //
     // So the title only has to disambiguate, and only when the frame did not.
-    if candidates.count == 1 {
-        return (candidates[0][kCGWindowNumber as String] as? NSNumber)?.intValue
-    }
-    guard let title, !title.isEmpty else { return nil }
-    let titled = candidates.filter { window in
-        guard let candidateTitle = window[kCGWindowName as String] as? String else { return false }
-        return candidateTitle == title || title.hasPrefix(candidateTitle) || candidateTitle.hasPrefix(title)
-    }
-    guard titled.count == 1 else { return nil }
-    return (titled[0][kCGWindowNumber as String] as? NSNumber)?.intValue
+    // Empty WindowServer titles carry no identity and must not participate in
+    // prefix matching: every string has an empty prefix.
+    return matchedWindowNumber(
+        candidates: candidates.map { window in
+            WindowNumberCandidate(
+                number: (window[kCGWindowNumber as String] as? NSNumber)?.intValue,
+                title: window[kCGWindowName as String] as? String
+            )
+        },
+        observedTitle: title
+    )
 }
 
 private func sha256(_ value: String) -> String {

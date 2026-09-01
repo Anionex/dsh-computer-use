@@ -43,7 +43,7 @@ function createBackend(ctx: Context, config: ResolvedComputerUseConfig): Compute
 }
 
 /** Fixed-command native backend. */
-class MacOSBackend implements ComputerUseBackend {
+export class MacOSBackend implements ComputerUseBackend {
   readonly name = 'macos-ax' as const
   readonly client: NativeHelperClient
 
@@ -91,10 +91,8 @@ class MacOSBackend implements ComputerUseBackend {
     // The overlay answers per command; the least visible outcome wins, because
     // a cursor that vanished partway through is a cursor the user cannot follow.
     let outcome: CursorVisibility = { visible: true }
-    const record = (response: Record<string, unknown>): void => {
-      if (response.visible === false && outcome.visible) {
-        outcome = { visible: false, ...(typeof response.reason === 'string' ? { reason: response.reason } : {}) }
-      }
+    const record = (response: CursorVisibility): void => {
+      if (!response.visible && outcome.visible) outcome = response
     }
     const autoHideMs = this.config.interaction.cursorAutoHideMs
     const move = async (point: { x: number; y: number }, durationMs: number): Promise<void> => {
@@ -110,8 +108,10 @@ class MacOSBackend implements ComputerUseBackend {
       }, signal))
     }
     if (phase === 'after') {
-      if (action.kind === 'drag') record(await this.client.cursorCommand({
-        op: 'release',
+      // Every action validates the bound target after native input. Only drag
+      // needs release semantics; click and scroll use a side-effect-free check.
+      record(await this.client.cursorCommand({
+        op: action.kind === 'drag' ? 'release' : 'validate',
         autoHideMs,
         targetPid: action.targetPid,
         targetWindowNumber: action.targetWindowNumber,

@@ -265,11 +265,10 @@ describe.skipIf(!REQUIRE_TCC)('action surface, verified by the target', () => {
     expect(envelope).toMatchObject({ ok: false, error: { code: 'COMPUTER_STALE_OBSERVATION' } })
   }, 40_000)
 
-  it('resolves a window id, without which the agent cursor is skipped in silence', async () => {
-    // `cursorAction` returns undefined when the observation has no window id,
-    // so the whole cursor path is skipped and `cursorState` stays undefined —
-    // meaning not even `agentCursor` is reported. The caller cannot tell it
-    // lost sight of the agent.
+  it('resolves a window id for safe overlay binding', async () => {
+    // The Service now reports agentCursor.visible=false when an observation has
+    // no stable window id, but resolving the real id is still the preferred path:
+    // it lets the overlay bind to the exact window and remain visible safely.
     //
     // Notes lost its id to a title comparison: accessibility reports
     // "备忘录 – 5个备忘录" while the window server calls the same window
@@ -277,7 +276,7 @@ describe.skipIf(!REQUIRE_TCC)('action surface, verified by the target', () => {
     const observation = await observe()
     expect(
       observation.window.id,
-      `no window id for ${observation.app.bundleId}, so any cursor for it would be skipped silently`,
+      `no window id for ${observation.app.bundleId}, so the Agent cursor cannot be bound safely`,
     ).toBeDefined()
   }, 30_000)
 

@@ -174,7 +174,7 @@ const actionResultSchema = {
       type: 'object',
       additionalProperties: false,
       properties: {
-        visible: { type: 'boolean', required: true },
+        visible: { type: 'boolean', const: false, required: true },
         reason: { type: 'string' },
       },
     },
@@ -183,7 +183,7 @@ const actionResultSchema = {
       additionalProperties: false,
       required: true,
       properties: {
-        targetChanged: { type: 'boolean', required: true },
+        observedStateChanged: { type: 'boolean', required: true },
         observedForMs: { type: 'integer', required: true },
         note: { type: 'string' },
       },

@@ -134,7 +134,10 @@ async function openOverlay(): Promise<{
 }> {
   const child = spawn(HELPER, ['--cursor-overlay'], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
   const pid = child.pid
-  if (pid === undefined) throw new Error('cursor overlay did not expose its pid')
+  if (pid === undefined) {
+    child.kill('SIGKILL')
+    throw new Error('cursor overlay did not expose its pid')
+  }
   let stdout = ''
   let stderr = ''
   child.stdout.setEncoding('utf8').on('data', value => { stdout += value })
@@ -143,26 +146,43 @@ async function openOverlay(): Promise<{
     child.once('error', reject)
     child.once('close', value => resolve(value ?? -1))
   })
-  await new Promise<void>((resolve, reject) => {
-    const deadline = setTimeout(() => reject(new Error(`cursor overlay never became ready: ${stdout || stderr}`)), 8_000)
-    child.stdout.on('data', () => {
-      if (!stdout.includes('\n')) return
-      const [line] = stdout.split(/\r?\n/u)
-      const ready = JSON.parse(line!) as { ok?: unknown; ready?: unknown }
-      clearTimeout(deadline)
-      if (ready.ok !== true || ready.ready !== true) reject(new Error(`unexpected ready frame: ${line}`))
-      else resolve()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error(`cursor overlay never became ready: ${stdout || stderr}`)), 8_000)
+      child.stdout.on('data', () => {
+        if (!stdout.includes('\n')) return
+        const [line] = stdout.split(/\r?\n/u)
+        let ready: { ok?: unknown; ready?: unknown }
+        try {
+          ready = JSON.parse(line!) as { ok?: unknown; ready?: unknown }
+        } catch (error) {
+          clearTimeout(deadline)
+          reject(error)
+          return
+        }
+        clearTimeout(deadline)
+        if (ready.ok !== true || ready.ready !== true) reject(new Error(`unexpected ready frame: ${line}`))
+        else resolve()
+      })
+      child.once('error', error => { clearTimeout(deadline); reject(error) })
     })
-    child.once('error', error => { clearTimeout(deadline); reject(error) })
-  })
+  } catch (error) {
+    child.kill('SIGKILL')
+    await closed.catch(() => undefined)
+    throw error
+  }
+  let closing: Promise<Array<Record<string, unknown>>> | undefined
   return {
     pid,
     send: command => { child.stdin.write(`${JSON.stringify(command)}\n`) },
-    close: async () => {
-      child.stdin.end(`${JSON.stringify({ op: 'stop' })}\n`)
-      const code = await closed
-      if (code !== 0) throw new Error(`cursor overlay exited ${String(code)}: ${stdout || stderr}`)
-      return stdout.trim().split(/\r?\n/u).map(line => JSON.parse(line) as Record<string, unknown>)
+    close: () => {
+      closing ??= (async () => {
+        if (!child.stdin.destroyed) child.stdin.end(`${JSON.stringify({ op: 'stop' })}\n`)
+        const code = await closed
+        if (code !== 0) throw new Error(`cursor overlay exited ${String(code)}: ${stdout || stderr}`)
+        return stdout.trim().split(/\r?\n/u).map(line => JSON.parse(line) as Record<string, unknown>)
+      })()
+      return closing
     },
   }
 }
@@ -175,16 +195,25 @@ describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
     let responses: Array<Record<string, unknown>>
     let panel: { x: number; y: number } | undefined
     try {
+      // A fresh process has no visible panel, and validation without a stable
+      // binding must also report invisible rather than optimistic success.
+      overlay.send({ op: 'ping' })
+      overlay.send({ op: 'validate' })
       // No window binding: `targetWindowIsCurrent` requires pid, window number
-      // and frame, so it fails and the panel is hidden. The response does not
-      // say so, which is the defect.
+      // and frame, so the move fails closed and leaves the panel hidden.
       overlay.send({ op: 'move', x: 420, y: 420, durationMs: 0, autoHideMs: 0 })
       await delay(400)
       panel = await overlayFrame(overlay.pid)
     } finally {
       responses = await overlay.close()
     }
+    const pings = responses.filter(entry => entry.op === 'ping')
+    const validations = responses.filter(entry => entry.op === 'validate')
     const moves = responses.filter(entry => entry.op === 'move')
+    expect(pings, JSON.stringify(responses)).toHaveLength(1)
+    expect(pings[0]!.visible, JSON.stringify(responses)).toBe(false)
+    expect(validations, JSON.stringify(responses)).toHaveLength(1)
+    expect(validations[0]!.visible, JSON.stringify(responses)).toBe(false)
     expect(moves, JSON.stringify(responses)).toHaveLength(1)
 
     // The command is not an error -- native input is unaffected -- but the
@@ -196,41 +225,58 @@ describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
     expect(String(moves[0]!.reason ?? ''), JSON.stringify(responses)).toContain('hidden')
   }, 40_000)
 
-  it('moves a bound panel with the animated duration a live session uses', async () => {
-    // The production path passes cursorMotionMs (180 by default), which takes
-    // the animator branch in `show`. The direct branch only runs while the
-    // panel is hidden, so every move after the first is animated -- and a live
-    // session shows the panel landing once and never moving again.
-    const binding = await launchBoundFixture()
-    const overlay = await openOverlay()
+  it('moves through intermediate frames and completes at the production duration', async () => {
+    let overlay: Awaited<ReturnType<typeof openOverlay>> | undefined
     const seen: Array<{ x: number; y: number } | undefined> = []
     try {
+      const binding = await launchBoundFixture()
+      overlay = await openOverlay()
       const { x, y, width, height } = binding.targetWindowFrame
-      for (const point of [
-        { x: Math.round(x + width * 0.25), y: Math.round(y + height * 0.3) },
-        { x: Math.round(x + width * 0.75), y: Math.round(y + height * 0.7) },
-        { x: Math.round(x + width * 0.5), y: Math.round(y + height * 0.45) },
-      ]) {
-        overlay.send({ op: 'move', ...point, durationMs: 180, autoHideMs: 0, ...binding })
-        await delay(700)
-        seen.push(await overlayFrame(overlay.pid))
-      }
+      const start = { x: Math.round(x + width * 0.2), y: Math.round(y + height * 0.25) }
+      const longTarget = { x: Math.round(x + width * 0.8), y: Math.round(y + height * 0.75) }
+      const productionTarget = { x: Math.round(x + width * 0.45), y: Math.round(y + height * 0.35) }
+
+      overlay.send({ op: 'move', ...start, durationMs: 0, autoHideMs: 0, ...binding })
+      await delay(200)
+      seen.push(await overlayFrame(overlay.pid))
+
+      // A one-second glide gives a deterministic intermediate sample. A jump
+      // implementation lands at the target immediately and fails this check.
+      overlay.send({ op: 'move', ...longTarget, durationMs: 1_000, autoHideMs: 0, ...binding })
+      await delay(120)
+      seen.push(await overlayFrame(overlay.pid))
+      await delay(1_050)
+      seen.push(await overlayFrame(overlay.pid))
+
+      // The default live-session duration must also reach a distinct final point.
+      overlay.send({ op: 'move', ...productionTarget, durationMs: 180, autoHideMs: 0, ...binding })
+      await delay(350)
+      seen.push(await overlayFrame(overlay.pid))
     } finally {
-      await overlay.close()
-      await terminateFixtures()
+      try {
+        if (overlay !== undefined) await overlay.close()
+      } finally {
+        await terminateFixtures()
+      }
     }
+    const [start, intermediate, longEnd, productionEnd] = seen
     const detail = JSON.stringify(seen)
     for (const panel of seen) expect(panel, detail).toBeDefined()
-    const distinct = new Set(seen.map(panel => `${panel!.x},${panel!.y}`))
-    expect(distinct.size, `an animated move left the panel where it was: ${detail}`).toBe(seen.length)
+    const strictlyBetween = (value: number, first: number, second: number): boolean =>
+      value > Math.min(first, second) && value < Math.max(first, second)
+    expect(strictlyBetween(intermediate!.x, start!.x, longEnd!.x), detail).toBe(true)
+    expect(strictlyBetween(intermediate!.y, start!.y, longEnd!.y), detail).toBe(true)
+    expect(`${productionEnd!.x},${productionEnd!.y}`, detail).not.toBe(`${longEnd!.x},${longEnd!.y}`)
   }, 60_000)
 
   it('moves a bound panel to each point it is told to move to', async () => {
-    const binding = await launchBoundFixture()
-    const overlay = await openOverlay()
+    let binding: WindowBinding | undefined
+    let overlay: Awaited<ReturnType<typeof openOverlay>> | undefined
     const seen: Array<{ requested: { x: number; y: number }; panel: { x: number; y: number } | undefined }> = []
     let responses: Array<Record<string, unknown>> = []
     try {
+      binding = await launchBoundFixture()
+      overlay = await openOverlay()
       // Three separated points inside the bound window: a panel that tracks
       // lands somewhere new each time, a frozen one repeats its frame.
       const { x, y, width, height } = binding.targetWindowFrame
@@ -245,7 +291,11 @@ describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
       }
       responses = await overlay.close()
     } finally {
-      await terminateFixtures()
+      try {
+        if (overlay !== undefined) await overlay.close()
+      } finally {
+        await terminateFixtures()
+      }
     }
 
     // A bound move reports itself visible, matching what the panel does.

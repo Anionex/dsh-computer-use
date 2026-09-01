@@ -54,7 +54,7 @@ describe('model-facing Computer Use tools', () => {
       pointerInput: true,
       pointerRouting: 'target-process',
       agentCursor: { visible: false, reason: 'the bound target window moved' },
-      effect: { targetChanged: false, observedForMs: 420, note: 'verify visually' },
+      effect: { observedStateChanged: false, observedForMs: 420, note: 'verify visually' },
       observation: current,
     }
     const service = {
@@ -82,6 +82,7 @@ describe('model-facing Computer Use tools', () => {
         activation: 'not-requested',
         pointerInput: false,
         pointerRouting: 'none',
+        effect: { observedStateChanged: true, observedForMs: 1 },
         observation: current,
       })),
       confirm: vi.fn(async () => ({
@@ -130,15 +131,16 @@ describe('model-facing Computer Use tools', () => {
     expect(tools[6]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
     expect(tools[7]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
     expect(tools[2]?.output.schema).toMatchObject({
-      // `effect` is required: every action must answer whether the target
-      // changed, since no other field distinguishes a no-op from success.
+      // `effect` is required: every action must report whether its bounded
+      // post-action structural observation changed.
       required: ['action', 'channel', 'activation', 'pointerInput', 'pointerRouting', 'effect', 'observation'],
       properties: {
         activation: { enum: ['not-requested', 'already-frontmost', 'activated'] },
         pointerInput: { type: 'boolean' },
         pointerRouting: { enum: ['none', 'target-process'] },
         resolution: { properties: { mode: { enum: ['exact-locator', 'native-identifier', 'semantic-rebind'] } } },
-        effect: { properties: { targetChanged: { type: 'boolean' } } },
+        agentCursor: { properties: { visible: { const: false } } },
+        effect: { properties: { observedStateChanged: { type: 'boolean' } } },
       },
     })
     const confirmationBranches = (tools[10]?.parameters as {

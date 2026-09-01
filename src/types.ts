@@ -254,31 +254,24 @@ export interface ComputerActionResult {
   resolution?: ComputerTargetResolutionResult
   /** Present only when the agent cursor should be on screen and is not. */
   agentCursor?: { visible: false; reason?: string }
-  /** Whether the target actually changed, which no other field reports. */
+  /** What changed in the bounded post-action structural observation. */
   effect: ComputerActionEffect
   observation: ComputerObservation
 }
 
 /**
- * What the target did, as opposed to what was attempted.
+ * What changed in the bounded structural observation after an action.
  *
- * `pointerRouting` and `pointerInput` describe the request; they stay the same
- * whether the target reacted or ignored it. A drag onto a window title bar
- * reports a perfectly routed pointer stream and moves nothing, because window
- * movement belongs to the window server rather than the process the events
- * were delivered to.
- *
- * The comparison covers the window's title, id and frame alongside the element
- * tree, so it is wider than the accessibility tree alone: a window that moved
- * or resized changes this hash. Verified by moving a window 100px and watching
- * the hash change.
+ * The comparison covers the window title, id and frame plus the Accessibility
+ * element tree. It does not prove that the action caused the change, and it
+ * cannot observe pixel-only, transient, remote, or otherwise external effects.
  */
 export interface ComputerActionEffect {
-  /** True when the accessibility state hash differed after the action settled. */
-  targetChanged: boolean
+  /** True when the post-action structural state hash differed. */
+  observedStateChanged: boolean
   /** How long the settle loop watched, in milliseconds. */
   observedForMs: number
-  /** Guidance for the caller when nothing observable changed. */
+  /** Scope guidance when no structural change was observed. */
   note?: string
 }
 
