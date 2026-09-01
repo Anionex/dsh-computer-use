@@ -102,7 +102,9 @@ export class MacOSBackend implements ComputerUseBackend {
         y: point.y,
         speedPxPerSecond: this.config.interaction.cursorSpeedPxPerSecond,
         accelerationPxPerSecondSquared: this.config.interaction.cursorAccelerationPxPerSecondSquared,
-        autoHideMs,
+        // The after phase arms the configured timeout once native input has
+        // completed. Hiding during travel or dwell would invalidate press.
+        autoHideMs: 0,
         targetPid: action.targetPid,
         targetWindowNumber: action.targetWindowNumber,
         targetWindowFrame: action.targetWindowFrame,
@@ -131,7 +133,7 @@ export class MacOSBackend implements ComputerUseBackend {
     }
     record(await this.client.cursorCommand({
       op: 'press',
-      autoHideMs,
+      autoHideMs: 0,
       targetPid: action.targetPid,
       targetWindowNumber: action.targetWindowNumber,
       targetWindowFrame: action.targetWindowFrame,

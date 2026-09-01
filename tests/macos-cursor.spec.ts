@@ -10,7 +10,7 @@ const target = {
 }
 
 describe('macOS cursor visualization', () => {
-  it('waits for native arrival and the configured dwell before click press feedback', async () => {
+  it('waits for arrival and dwell without arming auto-hide before click input', async () => {
     vi.useFakeTimers()
     try {
       const backend = new MacOSBackend({} as never, resolveConfig({
@@ -19,7 +19,7 @@ describe('macOS cursor visualization', () => {
           cursorSpeedPxPerSecond: 12000,
           cursorAccelerationPxPerSecondSquared: 120000,
           cursorClickDelayMs: 90,
-          cursorAutoHideMs: 250,
+          cursorAutoHideMs: 50,
         },
       }))
       const arrival = Promise.withResolvers<{ visible: boolean }>()
@@ -39,7 +39,7 @@ describe('macOS cursor visualization', () => {
         y: 360,
         speedPxPerSecond: 12000,
         accelerationPxPerSecondSquared: 120000,
-        autoHideMs: 250,
+        autoHideMs: 0,
         ...target,
       }, signal)
 
@@ -50,7 +50,7 @@ describe('macOS cursor visualization', () => {
       await expect(visualization).resolves.toEqual({ visible: true })
       expect(cursorCommand).toHaveBeenNthCalledWith(2, {
         op: 'press',
-        autoHideMs: 250,
+        autoHideMs: 0,
         ...target,
         sustainedPress: false,
       }, signal)
@@ -123,11 +123,11 @@ describe('macOS cursor visualization', () => {
     void visualization.then(() => { settled = true })
 
     await vi.waitFor(() => { expect(cursorCommand).toHaveBeenCalledTimes(1) })
-    expect(cursorCommand.mock.calls[0]?.[0]).toMatchObject({ op: 'move', x: 200, y: 240 })
+    expect(cursorCommand.mock.calls[0]?.[0]).toMatchObject({ op: 'move', x: 200, y: 240, autoHideMs: 0 })
     startArrival.resolve({ visible: true })
     await vi.waitFor(() => { expect(cursorCommand).toHaveBeenCalledTimes(3) })
-    expect(cursorCommand.mock.calls[1]?.[0]).toMatchObject({ op: 'press', sustainedPress: true })
-    expect(cursorCommand.mock.calls[2]?.[0]).toMatchObject({ op: 'move', x: 500, y: 540 })
+    expect(cursorCommand.mock.calls[1]?.[0]).toMatchObject({ op: 'press', sustainedPress: true, autoHideMs: 0 })
+    expect(cursorCommand.mock.calls[2]?.[0]).toMatchObject({ op: 'move', x: 500, y: 540, autoHideMs: 0 })
     expect(settled).toBe(false)
 
     endArrival.resolve({ visible: true })
