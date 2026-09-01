@@ -4,6 +4,12 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-01
+
+### Fixed
+
+- Increased the persistent Agent cursor response deadline from 120 milliseconds to one second so synchronous WindowServer validation can complete under normal system load, while preserving fail-closed process-generation discard after a genuine timeout.
+
 ## [0.2.0] - 2026-09-01
 
 ### Added

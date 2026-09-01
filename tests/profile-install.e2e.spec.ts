@@ -69,12 +69,12 @@ function run(
   })
 }
 
-async function helper<T>(request: Record<string, unknown>): Promise<T> {
+async function helper<T>(request: Record<string, unknown>, timeoutMs = 15000): Promise<T> {
   return await new Promise((resolve, reject) => {
     const child = spawn(HELPER, [], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('helper timeout')) }, 15000)
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`helper timeout after ${timeoutMs} milliseconds`)) }, timeoutMs)
     child.stdout.setEncoding('utf8').on('data', value => { stdout += value })
     child.stderr.setEncoding('utf8').on('data', value => { stderr += value })
     child.once('error', error => { clearTimeout(timer); reject(error) })
@@ -92,8 +92,8 @@ async function helper<T>(request: Record<string, unknown>): Promise<T> {
   })
 }
 
-async function fixtureApps(): Promise<Array<{ bundleId: string; pid: number; name: string }>> {
-  return (await helper<Array<{ bundleId: string; pid: number; name: string }>>({ command: 'list-apps' }))
+async function fixtureApps(timeoutMs = 15000): Promise<Array<{ bundleId: string; pid: number; name: string }>> {
+  return (await helper<Array<{ bundleId: string; pid: number; name: string }>>({ command: 'list-apps' }, timeoutMs))
     .filter(app => app.bundleId === BUNDLE_ID)
 }
 
@@ -117,12 +117,43 @@ async function launchFixture(transcript: string): Promise<{ bundleId: string; pi
   const launched = await run('open', ['-g', '-n', FIXTURE_APP, '--args', '--background', '--transcript', transcript], { timeoutMs: 10000 })
   if (launched.code !== 0) throw new Error(`fixture background launch failed: ${launched.stderr}`)
   const deadline = Date.now() + 10000
+  const readinessScreenshot = join(dirname(transcript), 'fixture-ready.png')
+  let lastObservationFailure: unknown
   while (Date.now() < deadline) {
-    const [app] = await fixtureApps()
-    if (app !== undefined) return app
-    await delay(50)
+    const listTimeoutMs = Math.max(1, Math.min(1000, deadline - Date.now()))
+    let apps: Awaited<ReturnType<typeof fixtureApps>> = []
+    try {
+      apps = await fixtureApps(listTimeoutMs)
+    } catch (error) {
+      lastObservationFailure = error
+    }
+    for (const app of apps) {
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) break
+      try {
+        const observation = await helper<{ window: { frame: { width: number; height: number } }; screenshot?: unknown }>({
+          command: 'observe',
+          app,
+          options: {
+            screenshot: 'required',
+            screenshotPath: readinessScreenshot,
+            maxNodes: 1000,
+            maxDepth: 20,
+            maxTextBytes: 128000,
+          },
+        }, remainingMs)
+        if (observation.window.frame.width > 0 && observation.window.frame.height > 0 && observation.screenshot !== undefined) {
+          await rm(readinessScreenshot, { force: true })
+          return app
+        }
+      } catch (error) {
+        // The process can be visible before AppKit publishes its first window.
+        lastObservationFailure = error
+      }
+    }
+    if (Date.now() < deadline) await delay(Math.min(50, deadline - Date.now()))
   }
-  throw new Error('fixture did not launch')
+  throw new Error('fixture did not expose a capturable window', { cause: lastObservationFailure })
 }
 
 function recursiveObservation(value: unknown): { observationId: string; elements: Array<{ index: number; label?: string; title?: string }> } | undefined {

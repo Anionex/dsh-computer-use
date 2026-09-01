@@ -252,7 +252,7 @@ Settings 更新只有在校验与健康检查通过后才替换当前 provider g
 
 ## 状态与限制
 
-- 状态：早期 `0.2.0`；稳定版本发布前，模型可见和 provider 行为仍可能变化。
+- 状态：早期 `0.2.1`；稳定版本发布前，模型可见和 provider 行为仍可能变化。
 - 当前 provider 只支持 macOS；Windows UI Automation 和 Linux provider 尚未实现。
 - 在非 macOS 主机上插件会优雅降级：DSH profile 正常启动，不会注册 Computer Use 工具与 Skill，Web Settings 会显示 `COMPUTER_UNSUPPORTED_PLATFORM`，而不是让启动失败。
 - 目标进程指针投递使用动态解析的 SkyLight SPI。该路由不可用时，pointer fallback 会 fail closed，不会切换到全局输入。
