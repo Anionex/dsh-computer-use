@@ -4,6 +4,8 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-01
+
 ### Added
 
 - Added host-configurable Agent-cursor maximum speed, acceleration/deceleration, and post-arrival click delay, with natural human-readable defaults and high-throughput ranges in Web Settings.

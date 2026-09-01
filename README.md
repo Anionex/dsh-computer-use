@@ -258,7 +258,7 @@ Settings updates replace the active provider generation only after validation an
 
 ## Status and limitations
 
-- Status: early `0.2.1`; model-facing and provider behavior may change before a stable release.
+- Status: early `0.3.0`; model-facing and provider behavior may change before a stable release.
 - The current provider is macOS-only. Windows UI Automation and Linux providers are not implemented.
 - On non-macOS hosts the plugin degrades gracefully: the DSH profile starts normally, Computer Use Tools and the Skill are not registered, and Web Settings reports `COMPUTER_UNSUPPORTED_PLATFORM` instead of failing startup.
 - Target-process pointer delivery uses dynamically resolved SkyLight SPI. If it is unavailable, pointer fallback fails closed rather than switching to global input.
