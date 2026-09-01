@@ -415,6 +415,32 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     }
   })
 
+  it('keeps the cursor generation when WindowServer validation responds within one second', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-delayed-')
+    vi.useFakeTimers()
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ autoRespond: false })
+      const spawn = vi.fn(() => cursor.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+
+      const result = client.cursorCommand({ op: 'move', x: 1, y: 2 }, new AbortController().signal)
+      await vi.advanceTimersByTimeAsync(500)
+      expect(cursor.terminate).not.toHaveBeenCalled()
+      cursor.respond({ ok: true, op: 'move', visible: true })
+
+      await expect(result).resolves.toEqual({ visible: true })
+      expect(spawn).toHaveBeenCalledOnce()
+      await client.dispose()
+    } finally {
+      vi.useRealTimers()
+      await temporary.cleanup()
+    }
+  })
+
   it('discards a timed-out generation so its late response cannot satisfy the next command', async () => {
     const temporary = await temporaryDirectory('dsh-computer-cursor-timeout-')
     vi.useFakeTimers()
@@ -433,10 +459,10 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
       const timedOut = client.cursorCommand({ op: 'move', x: 1, y: 2 }, signal)
       await vi.advanceTimersByTimeAsync(0)
       expect(firstCursor.stdinLines).toHaveLength(1)
-      await vi.advanceTimersByTimeAsync(121)
+      await vi.advanceTimersByTimeAsync(1_001)
       await expect(timedOut).resolves.toEqual({
         visible: false,
-        reason: 'the native cursor overlay did not respond within 120 milliseconds',
+        reason: 'the native cursor overlay did not respond within 1000 milliseconds',
       })
       expect(firstCursor.terminate).toHaveBeenCalledOnce()
 
