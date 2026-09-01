@@ -95,12 +95,13 @@ export class MacOSBackend implements ComputerUseBackend {
       if (!response.visible && outcome.visible) outcome = response
     }
     const autoHideMs = this.config.interaction.cursorAutoHideMs
-    const move = async (point: { x: number; y: number }, durationMs: number): Promise<void> => {
+    const move = async (point: { x: number; y: number }): Promise<void> => {
       record(await this.client.cursorCommand({
         op: 'move',
         x: point.x,
         y: point.y,
-        durationMs,
+        speedPxPerSecond: this.config.interaction.cursorSpeedPxPerSecond,
+        accelerationPxPerSecondSquared: this.config.interaction.cursorAccelerationPxPerSecondSquared,
         autoHideMs,
         targetPid: action.targetPid,
         targetWindowNumber: action.targetWindowNumber,
@@ -121,11 +122,13 @@ export class MacOSBackend implements ComputerUseBackend {
     }
     const start = action.kind === 'drag' ? action.from : action.to
     if (start === undefined) return { visible: false, reason: 'this action has no cursor position to show' }
-    await move(start, this.config.interaction.cursorMotionMs)
-    if (this.config.interaction.cursorMotionMs > 0) {
-      await delay(this.config.interaction.cursorMotionMs, undefined, { signal })
+    // A move response means the native overlay reached its destination. Keep
+    // the configurable dwell after arrival and before the visual/native press.
+    await move(start)
+    if (!outcome.visible || action.kind === 'scroll') return outcome
+    if (this.config.interaction.cursorClickDelayMs > 0) {
+      await delay(this.config.interaction.cursorClickDelayMs, undefined, { signal })
     }
-    if (action.kind === 'scroll') return outcome
     record(await this.client.cursorCommand({
       op: 'press',
       autoHideMs,
@@ -135,7 +138,7 @@ export class MacOSBackend implements ComputerUseBackend {
       sustainedPress: action.kind === 'drag',
     }, signal))
     if (action.kind === 'drag') {
-      await move(action.to, Math.max(this.config.interaction.cursorMotionMs, 240))
+      await move(action.to)
     }
     return outcome
   }

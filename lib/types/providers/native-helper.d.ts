@@ -17,6 +17,7 @@ export declare class NativeHelperClient {
     private cursor;
     private cursorStart;
     private cursorCommandTail;
+    private disposed;
     constructor(ctx: Context, config: ResolvedComputerUseConfig, managedRoot?: string);
     /** Absolute executable path selected by explicit override or the packaged managed binary. */
     get helperPath(): string;

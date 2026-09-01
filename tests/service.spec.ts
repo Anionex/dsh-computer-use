@@ -202,7 +202,7 @@ describe('Computer Use Service', () => {
     }
   })
 
-  it('reports a lost agent cursor instead of dropping it', async () => {
+  it('fails closed when a foreground cursor cannot complete before input', async () => {
     const workspace = await temporaryDirectory('dsh-computer-cursor-')
     try {
       const { backend, service } = serviceHarness()
@@ -216,8 +216,70 @@ describe('Computer Use Service', () => {
 
       backend.cursorVisibility = { visible: false, reason: 'the bound target window moved' }
       const next = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
-      const hidden = await service.act({ kind: 'click', observationId: next.observationId, elementIndex: 1 }, context)
-      expect(hidden.agentCursor).toEqual({ visible: false, reason: 'the bound target window moved' })
+      await expect(service.act({ kind: 'click', observationId: next.observationId, elementIndex: 1 }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_PROVIDER_FAILURE',
+        message: expect.stringContaining('the bound target window moved'),
+      })
+      expect(backend.actions).toHaveLength(1)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('allows targeted background input when the cursor is hidden for that explicit reason', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-background-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.cursorVisibility = {
+        visible: false,
+        reason: 'the bound target application is not frontmost',
+        reasonCode: 'target-not-frontmost',
+      }
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const result = await service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context)
+      expect(result.agentCursor).toEqual({
+        visible: false,
+        reason: 'the bound target application is not frontmost',
+      })
+      expect(backend.actions).toHaveLength(1)
+      expect(backend.cursorActions).toHaveLength(1)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('does not start native drag input until the complete before-phase cursor sequence resolves', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-drag-order-')
+    try {
+      const { backend, service } = serviceHarness()
+      const beforeCursor = Promise.withResolvers<{ visible: boolean }>()
+      const visualize = vi.spyOn(backend, 'visualizeCursor').mockImplementation((_action, phase) => (
+        phase === 'before' ? beforeCursor.promise : Promise.resolve({ visible: true })
+      ))
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+
+      const action = service.act({
+        kind: 'drag',
+        observationId: before.observationId,
+        fromX: 10,
+        fromY: 20,
+        toX: 200,
+        toY: 240,
+      }, context)
+      await vi.waitFor(() => { expect(visualize).toHaveBeenCalledTimes(1) })
+      expect(backend.actions).toHaveLength(0)
+
+      beforeCursor.resolve({ visible: true })
+      await expect(action).resolves.toMatchObject({ effect: expect.any(Object) })
+      expect(backend.actions).toHaveLength(1)
+      expect(visualize.mock.calls.map(call => call[1])).toEqual(['before', 'after'])
     } finally {
       await workspace.cleanup()
     }

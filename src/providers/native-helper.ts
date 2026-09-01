@@ -46,6 +46,7 @@ type HelperEnvelope<T> = HelperFailure | HelperSuccess<T>
 // Keep the bound finite. A timed-out generation is discarded before the next
 // serialized command, so a late frame cannot satisfy a later command.
 const CURSOR_RESPONSE_TIMEOUT_MS = 1_000
+const CURSOR_MOTION_RESPONSE_TIMEOUT_MS = 4_000
 
 const CURSOR_READY_TIMEOUT_MS = 2_000
 const CURSOR_PROTOCOL_MAX_BYTES = 64 * 1024
@@ -60,7 +61,16 @@ interface CursorProcess {
   terminate: () => void
   waitForExit: SubprocessHandle['waitForExit']
   /** Next response line from this process generation, in command order. */
-  nextResponse: () => Promise<CursorProtocolFrame>
+  nextResponse: (timeoutMs: number, signal: AbortSignal) => Promise<CursorProtocolFrame>
+}
+
+function cursorResponseTimeout(command: Record<string, unknown>): number {
+  if (command.op !== 'move') return CURSOR_RESPONSE_TIMEOUT_MS
+  if (typeof command.speedPxPerSecond === 'number') return CURSOR_MOTION_RESPONSE_TIMEOUT_MS
+  if (typeof command.durationMs === 'number' && Number.isFinite(command.durationMs)) {
+    return Math.max(CURSOR_RESPONSE_TIMEOUT_MS, Math.trunc(command.durationMs) + 2 * CURSOR_RESPONSE_TIMEOUT_MS)
+  }
+  return CURSOR_RESPONSE_TIMEOUT_MS
 }
 
 function collected(reader: SubprocessOutputReader | undefined): string {
@@ -115,9 +125,13 @@ function normalizeCursorResponse(
   }
   if (response.visible === true) return { result: { visible: true }, discardGeneration: false }
   if (response.visible === false) {
+    const reasonCode = response.reasonCode === 'target-not-frontmost' || response.reasonCode === 'target-invalid'
+      ? response.reasonCode
+      : undefined
     return {
       result: {
         visible: false,
+        ...(reasonCode === undefined ? {} : { reasonCode }),
         ...(typeof response.reason === 'string' && response.reason.length > 0
           ? { reason: response.reason.slice(0, 1000) }
           : { reason: 'the native cursor overlay reported that the cursor is not visible' }),
@@ -144,6 +158,7 @@ export class NativeHelperClient {
   private cursor: CursorProcess | undefined
   private cursorStart: { promise: Promise<CursorProcess> } | undefined
   private cursorCommandTail: Promise<void> = Promise.resolve()
+  private disposed = false
 
   constructor(
     private readonly ctx: Context,
@@ -257,7 +272,10 @@ export class NativeHelperClient {
 
   /** Send one serialized command to the persistent, click-through Agent cursor overlay. */
   cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<CursorVisibility> {
-    const run = this.cursorCommandTail.then(async () => await this.executeCursorCommand(command, signal))
+    const run = this.cursorCommandTail.then(async () => {
+      if (this.disposed) throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay client is disposed')
+      return await this.executeCursorCommand(command, signal)
+    })
     this.cursorCommandTail = run.then(() => undefined, () => undefined)
     return run
   }
@@ -266,6 +284,10 @@ export class NativeHelperClient {
     const prepared = this.prepared ?? await this.prepare(signal)
     const cursor = await this.getCursor(prepared, signal)
     signal.throwIfAborted()
+    if (this.disposed) {
+      this.discardCursor(cursor)
+      throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay client is disposed')
+    }
     try {
       await new Promise<void>((resolveWrite, rejectWrite) => {
         cursor.stdin.write(`${JSON.stringify(command)}\n`, error => {
@@ -273,7 +295,7 @@ export class NativeHelperClient {
           else rejectWrite(error)
         })
       })
-      const frame = await cursor.nextResponse()
+      const frame = await cursor.nextResponse(cursorResponseTimeout(command), signal)
       if (frame.kind === 'failure') {
         this.discardCursor(cursor)
         return { visible: false, reason: frame.reason }
@@ -283,6 +305,9 @@ export class NativeHelperClient {
       return normalized.result
     } catch (error) {
       this.discardCursor(cursor)
+      if (signal.aborted) {
+        throw new ComputerUseError('COMPUTER_CANCELLED', 'native cursor overlay command was cancelled', { cause: error })
+      }
       throw computerUseError(error, 'native cursor overlay command failed')
     }
   }
@@ -294,18 +319,24 @@ export class NativeHelperClient {
 
   /** Stop the cursor process before a provider generation is replaced or disposed. */
   async dispose(): Promise<void> {
+    this.disposed = true
     const cursor = this.cursor ?? await this.cursorStart?.promise.catch(() => undefined)
     this.cursorStart = undefined
     this.cursor = undefined
-    if (cursor === undefined) return
+    if (cursor === undefined) {
+      await this.cursorCommandTail.catch(() => undefined)
+      return
+    }
     try {
       cursor.stdin.end(`${JSON.stringify({ op: 'stop' })}\n`)
     } catch {
       // A child that already closed its pipe is handled by the tree-exit wait below.
     }
-    if (await cursor.waitForExit(AbortSignal.timeout(1_000))) return
-    cursor.terminate()
-    await cursor.waitForExit()
+    if (!await cursor.waitForExit(AbortSignal.timeout(1_000))) {
+      cursor.terminate()
+      await cursor.waitForExit()
+    }
+    await this.cursorCommandTail.catch(() => undefined)
   }
 
   /** Prepared integrity facts used by provider health. */
@@ -446,20 +477,37 @@ export class NativeHelperClient {
     return {
       stdin: handle.stdin,
       done: handle.done,
-      nextResponse: async () => {
+      nextResponse: async (timeoutMs, signal) => {
         const ready = buffered.shift()
-        if (ready !== undefined) return ready
-        return await new Promise<CursorProtocolFrame>((resolveResponse) => {
+        if (ready !== undefined) {
+          signal.throwIfAborted()
+          return ready
+        }
+        return await new Promise<CursorProtocolFrame>((resolveResponse, rejectResponse) => {
+          let timer: ReturnType<typeof setTimeout> | undefined
           const settle = (frame: CursorProtocolFrame): void => {
             const index = pending.indexOf(settle)
             if (index >= 0) pending.splice(index, 1)
-            clearTimeout(timer)
+            if (timer !== undefined) clearTimeout(timer)
+            signal.removeEventListener('abort', onAbort)
             resolveResponse(frame)
           }
-          const timer = setTimeout(() => settle({
+          const onAbort = (): void => {
+            const index = pending.indexOf(settle)
+            if (index >= 0) pending.splice(index, 1)
+            if (timer !== undefined) clearTimeout(timer)
+            signal.removeEventListener('abort', onAbort)
+            rejectResponse(signal.reason)
+          }
+          timer = setTimeout(() => settle({
             kind: 'failure',
-            reason: `the native cursor overlay did not respond within ${CURSOR_RESPONSE_TIMEOUT_MS} milliseconds`,
-          }), CURSOR_RESPONSE_TIMEOUT_MS)
+            reason: `the native cursor overlay did not respond within ${timeoutMs} milliseconds`,
+          }), timeoutMs)
+          if (signal.aborted) {
+            onAbort()
+            return
+          }
+          signal.addEventListener('abort', onAbort, { once: true })
           pending.push(settle)
         })
       },

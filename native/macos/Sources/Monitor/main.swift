@@ -54,6 +54,8 @@ private var maximumCursorDistance = 0.0
 private var observedFrontmostPids = Set<Int32>()
 private var maximumMatchingWindowCount = 0
 private var matchingWindowFrames: [[String: Any]] = []
+private var matchingWindowNumbers: [Int] = []
+private var seenWindowFrames = Set<String>()
 private var monitoredSourcePointerEvents = 0
 private var pointerEventSourceCounts: [String: Int] = [:]
 private var samples = 0
@@ -110,7 +112,16 @@ while DispatchTime.now().uptimeNanoseconds < deadline {
     maximumMatchingWindowCount = max(maximumMatchingWindowCount, windows.count)
     if let first = windows.first,
        let bounds = first[kCGWindowBounds as String] as? [String: Any] {
-        matchingWindowFrames = [bounds]
+        let frameKey = ["X", "Y", "Width", "Height"]
+            .map { String(describing: bounds[$0] ?? "") }
+            .joined(separator: ",")
+        if seenWindowFrames.insert(frameKey).inserted {
+            matchingWindowFrames.append(bounds)
+        }
+        if let number = (first[kCGWindowNumber as String] as? NSNumber)?.intValue,
+           !matchingWindowNumbers.contains(number) {
+            matchingWindowNumbers.append(number)
+        }
     }
     samples += 1
     if eventTapSource != nil {
@@ -121,15 +132,18 @@ while DispatchTime.now().uptimeNanoseconds < deadline {
 }
 
 let finalCursor = cursorLocation()
+let finalFrontmostPid = frontmostPid()
 let result: [String: Any] = [
     "baselineCursor": ["x": baselineCursor.x, "y": baselineCursor.y],
     "finalCursor": ["x": finalCursor.x, "y": finalCursor.y],
     "maximumCursorDistance": maximumCursorDistance,
     "baselineFrontmostPid": baselineFrontmostPid.map(Int.init) as Any,
     "observedFrontmostPids": observedFrontmostPids.sorted().map(Int.init),
+    "finalFrontmostPid": finalFrontmostPid.map(Int.init) as Any,
     "samples": samples,
     "maximumMatchingWindowCount": maximumMatchingWindowCount,
     "matchingWindowFrames": matchingWindowFrames,
+    "matchingWindowNumbers": matchingWindowNumbers,
     "eventTapAvailable": eventTap != nil,
     "monitoredSourcePointerEvents": monitoredSourcePointerEvents,
     "pointerEventSourceCounts": pointerEventSourceCounts,

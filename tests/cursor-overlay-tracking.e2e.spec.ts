@@ -18,6 +18,8 @@
  */
 
 import { spawn } from 'node:child_process'
+import { rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -27,8 +29,8 @@ const ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
 const HELPER = join(ROOT, 'native', 'macos', 'bin', 'dsh-computer-use-helper')
 const INPUT_MONITOR = join(ROOT, 'native', 'macos', 'fixture', 'dsh-computer-use-input-monitor')
 const FIXTURE_APP = join(ROOT, 'native', 'macos', 'fixture', 'DSHComputerUseFixture.app')
-const FIXTURE_BUNDLE = 'io.anionex.dsh-computer-use-fixture'
-const LIMITS = { maxNodes: 1000, maxDepth: 20, maxTextBytes: 128000 }
+const ACTIVATION_TRIGGER = join(tmpdir(), `dsh-computer-use-activation-${process.pid}`)
+const ACTIVATION_RELEASE_TRIGGER = join(tmpdir(), `dsh-computer-use-activation-release-${process.pid}`)
 
 const REQUIRE_TCC = process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1'
 
@@ -36,25 +38,6 @@ interface WindowBinding {
   targetPid: number
   targetWindowNumber: number
   targetWindowFrame: { x: number; y: number; width: number; height: number }
-}
-
-/** One request/response round trip with the native helper. */
-async function invokeHelper<T>(request: Record<string, unknown>): Promise<{ ok: boolean; value?: T; error?: { code: string; message: string } }> {
-  return await new Promise((resolve, reject) => {
-    const child = spawn(HELPER, [], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('native helper timed out')) }, 15_000)
-    child.stdout.setEncoding('utf8').on('data', value => { stdout += value })
-    child.stderr.setEncoding('utf8').on('data', value => { stderr += value })
-    child.once('error', error => { clearTimeout(timer); reject(error) })
-    child.once('close', () => {
-      clearTimeout(timer)
-      try { resolve(JSON.parse(stdout)) }
-      catch { reject(new Error(`invalid helper JSON: ${stdout || stderr}`)) }
-    })
-    child.stdin.end(`${JSON.stringify({ protocolVersion: 1, ...request })}\n`)
-  })
 }
 
 /** Running fixture processes, by pid. */
@@ -76,36 +59,85 @@ async function terminateFixtures(): Promise<void> {
   await delay(200)
 }
 
-/** Launch the fixture in the background and return a usable window binding. */
-async function launchBoundFixture(): Promise<WindowBinding> {
+/** Launch the fixture and return a usable window binding in the requested foreground state. */
+async function launchBoundFixture(background = false): Promise<WindowBinding> {
   await terminateFixtures()
+  await rm(ACTIVATION_TRIGGER, { force: true })
+  await rm(ACTIVATION_RELEASE_TRIGGER, { force: true })
+  await writeFile(ACTIVATION_TRIGGER, '')
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('open', ['-g', '-n', FIXTURE_APP, '--args', '--background'], { stdio: ['ignore', 'ignore', 'pipe'] })
+    const args = [
+      '-n', FIXTURE_APP, '--args',
+      '--activation-trigger', ACTIVATION_TRIGGER,
+      '--activation-release-trigger', ACTIVATION_RELEASE_TRIGGER,
+    ]
+    const child = spawn('open', args, { stdio: ['ignore', 'ignore', 'pipe'] })
     child.once('error', reject)
     child.once('close', code => code === 0 ? resolve() : reject(new Error(`fixture launch failed (${String(code)})`)))
   })
   const deadline = Date.now() + 12_000
+  let lastProbe: unknown
   while (Date.now() < deadline) {
-    for (const pid of await fixturePids()) {
-      const observed = await invokeHelper<{ window?: { id?: number; frame: { x: number; y: number; width: number; height: number } } }>({
-        command: 'observe',
-        app: { bundleId: FIXTURE_BUNDLE, pid, name: 'DSHComputerUseFixture' },
-        options: { screenshot: 'none', ...LIMITS },
-      })
-      const window = observed.value?.window
-      if (observed.ok && window?.id !== undefined && window.frame.width > 0) {
-        return { targetPid: pid, targetWindowNumber: window.id, targetWindowFrame: { ...window.frame } }
+    const pids = await fixturePids()
+    if (pids.length === 0) lastProbe = { pids }
+    for (const pid of pids) {
+      const monitored = await monitorWindows(pid, 80)
+      const frame = monitored.matchingWindowFrames.at(-1)
+      const windowNumber = monitored.matchingWindowNumbers.at(-1)
+      lastProbe = { pid, frame, windowNumber }
+      if (frame !== undefined && windowNumber !== undefined && frame.Width > 0) {
+        const binding = {
+          targetPid: pid,
+          targetWindowNumber: windowNumber,
+          targetWindowFrame: { x: frame.X, y: frame.Y, width: frame.Width, height: frame.Height },
+        }
+        if (background) await deactivateFixture(binding)
+        else await activateFixture(binding)
+        return binding
       }
     }
     await delay(100)
   }
-  throw new Error('fixture never exposed an observable window')
+  throw new Error(`fixture never exposed an observable window: ${JSON.stringify(lastProbe)}`)
 }
 
-/** Where the overlay panel is right now, or undefined when it has no window. */
-async function overlayFrame(overlayPid: number): Promise<{ x: number; y: number } | undefined> {
+async function activateFixture(binding: WindowBinding): Promise<void> {
+  await writeFile(ACTIVATION_TRIGGER, '')
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const monitored = await monitorWindows(binding.targetPid, 80)
+    if (monitored.finalFrontmostPid === binding.targetPid) return
+    await delay(50)
+  }
+  throw new Error('fixture did not become frontmost')
+}
+
+async function deactivateFixture(binding: WindowBinding): Promise<void> {
+  await writeFile(ACTIVATION_RELEASE_TRIGGER, '')
+  await delay(100)
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('open', ['-n', FIXTURE_APP, '--args', '--activation-only'], { stdio: ['ignore', 'ignore', 'pipe'] })
+    child.once('error', reject)
+    child.once('close', code => code === 0 ? resolve() : reject(new Error(`foreground fixture launch failed (${String(code)})`)))
+  })
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const monitored = await monitorWindows(binding.targetPid, 80)
+    if (monitored.finalFrontmostPid !== undefined && monitored.finalFrontmostPid !== binding.targetPid) return
+    await delay(50)
+  }
+  throw new Error('fixture did not leave the foreground')
+}
+
+interface WindowMonitorPayload {
+  matchingWindowFrames: Array<{ X: number; Y: number; Width: number; Height: number }>
+  matchingWindowNumbers: number[]
+  finalFrontmostPid?: number
+}
+
+async function monitorWindows(ownerPid: number, durationMs: number): Promise<WindowMonitorPayload> {
   const child = spawn(INPUT_MONITOR, [
-    '--duration-ms', '260', '--interval-micros', '2000', '--window-owner-pid', String(overlayPid),
+    '--duration-ms', String(durationMs), '--interval-micros', '2000', '--window-owner-pid', String(ownerPid),
   ], { stdio: ['ignore', 'pipe', 'pipe'] })
   let stdout = ''
   let stderr = ''
@@ -117,9 +149,18 @@ async function overlayFrame(overlayPid: number): Promise<{ x: number; y: number 
   })
   if (code !== 0) throw new Error(`input monitor failed (${code}): ${stderr}`)
   const lines = stdout.trim().split(/\r?\n/u)
-  const payload = JSON.parse(lines[lines.length - 1]!) as { matchingWindowFrames: Array<Record<string, number>> }
-  const [frame] = payload.matchingWindowFrames
-  return frame === undefined ? undefined : { x: frame.X!, y: frame.Y! }
+  return JSON.parse(lines[lines.length - 1]!) as WindowMonitorPayload
+}
+
+async function overlayFrames(overlayPid: number, durationMs = 80): Promise<Array<{ x: number; y: number }>> {
+  const payload = await monitorWindows(overlayPid, durationMs)
+  return payload.matchingWindowFrames.map(frame => ({ x: frame.X, y: frame.Y }))
+}
+
+/** Where the overlay panel is right now, or undefined when it has no window. */
+async function overlayFrame(overlayPid: number): Promise<{ x: number; y: number } | undefined> {
+  const [frame] = await overlayFrames(overlayPid)
+  return frame
 }
 
 /**
@@ -130,6 +171,7 @@ async function overlayFrame(overlayPid: number): Promise<{ x: number; y: number 
 async function openOverlay(): Promise<{
   pid: number
   send: (command: Record<string, unknown>) => void
+  responses: () => Array<Record<string, unknown>>
   close: () => Promise<Array<Record<string, unknown>>>
 }> {
   const child = spawn(HELPER, ['--cursor-overlay'], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
@@ -175,6 +217,7 @@ async function openOverlay(): Promise<{
   return {
     pid,
     send: command => { child.stdin.write(`${JSON.stringify(command)}\n`) },
+    responses: () => stdout.trim().split(/\r?\n/u).filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>),
     close: () => {
       closing ??= (async () => {
         if (!child.stdin.destroyed) child.stdin.end(`${JSON.stringify({ op: 'stop' })}\n`)
@@ -188,7 +231,11 @@ async function openOverlay(): Promise<{
 }
 
 describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
-  afterAll(async () => { await terminateFixtures() })
+  afterAll(async () => {
+    await terminateFixtures()
+    await rm(ACTIVATION_TRIGGER, { force: true })
+    await rm(ACTIVATION_RELEASE_TRIGGER, { force: true })
+  })
 
   it('does not report success for a move that shows nothing', async () => {
     const overlay = await openOverlay()
@@ -225,9 +272,153 @@ describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
     expect(String(moves[0]!.reason ?? ''), JSON.stringify(responses)).toContain('hidden')
   }, 40_000)
 
+  it('keeps the cursor hidden when the bound application is not frontmost', async () => {
+    const binding = await launchBoundFixture(true)
+    const overlay = await openOverlay()
+    let responses: Array<Record<string, unknown>>
+    let panel: { x: number; y: number } | undefined
+    try {
+      const { x, y, width, height } = binding.targetWindowFrame
+      overlay.send({
+        op: 'move',
+        x: Math.round(x + width * 0.5),
+        y: Math.round(y + height * 0.5),
+        durationMs: 0,
+        autoHideMs: 0,
+        ...binding,
+      })
+      await delay(400)
+      panel = await overlayFrame(overlay.pid)
+    } finally {
+      responses = await overlay.close()
+      await terminateFixtures()
+    }
+    const [move] = responses.filter(entry => entry.op === 'move')
+    expect({ visible: move?.visible, panelExists: panel !== undefined }, JSON.stringify(responses))
+      .toEqual({ visible: false, panelExists: false })
+    expect(String(move?.reason ?? '')).toContain('not frontmost')
+    expect(move?.reasonCode).toBe('target-not-frontmost')
+  }, 40_000)
+
+  it('hides immediately when a visible target leaves the foreground mid-glide', async () => {
+    const binding = await launchBoundFixture()
+    const overlay = await openOverlay()
+    let visibleDuringGlide: { x: number; y: number } | undefined
+    let hiddenAfterFocusLoss: { x: number; y: number } | undefined
+    let responses: Array<Record<string, unknown>> = []
+    try {
+      // Opening the overlay gives the host time to restore its prior app. Reassert
+      // the target immediately before the move so this case starts visibly.
+      await activateFixture(binding)
+      const { x, y, width, height } = binding.targetWindowFrame
+      overlay.send({
+        op: 'move',
+        x: Math.round(x + width * 0.8),
+        y: Math.round(y + height * 0.75),
+        durationMs: 1_000,
+        autoHideMs: 0,
+        ...binding,
+      })
+      await delay(120)
+      visibleDuringGlide = await overlayFrame(overlay.pid)
+      await deactivateFixture(binding)
+      await delay(100)
+      hiddenAfterFocusLoss = await overlayFrame(overlay.pid)
+    } finally {
+      responses = await overlay.close()
+      await terminateFixtures()
+    }
+    expect(visibleDuringGlide, JSON.stringify(responses)).toBeDefined()
+    expect(hiddenAfterFocusLoss, JSON.stringify(responses)).toBeUndefined()
+    expect(responses.filter(entry => entry.op === 'move')).toEqual([
+      expect.objectContaining({ visible: false, reasonCode: 'target-not-frontmost' }),
+    ])
+  }, 40_000)
+
+  it('keeps burst move and press commands FIFO through native arrival', async () => {
+    const binding = await launchBoundFixture()
+    const overlay = await openOverlay()
+    let responses: Array<Record<string, unknown>> = []
+    let panel: { x: number; y: number } | undefined
+    try {
+      await activateFixture(binding)
+      const { x, y, width, height } = binding.targetWindowFrame
+      const first = { x: Math.round(x + width * 0.25), y: Math.round(y + height * 0.3) }
+      const second = { x: Math.round(x + width * 0.75), y: Math.round(y + height * 0.7) }
+      overlay.send({ op: 'move', ...first, durationMs: 300, autoHideMs: 0, ...binding })
+      overlay.send({ op: 'press', autoHideMs: 0, ...binding })
+      overlay.send({ op: 'move', ...second, durationMs: 300, autoHideMs: 0, ...binding })
+      await delay(180)
+      expect(overlay.responses().filter(entry => entry.op !== undefined)).toHaveLength(0)
+      await delay(650)
+      panel = await overlayFrame(overlay.pid)
+      responses = overlay.responses()
+      expect(responses.filter(entry => entry.op !== undefined).map(entry => entry.op)).toEqual(['move', 'press', 'move'])
+      expect(responses.filter(entry => entry.op === 'move'), JSON.stringify(responses)).toEqual([
+        expect.objectContaining({ visible: true }),
+        expect.objectContaining({ visible: true }),
+      ])
+      expect(panel?.x).toBeCloseTo(second.x, 0)
+      expect(panel?.y).toBeCloseTo(second.y, 0)
+    } finally {
+      responses = await overlay.close()
+      await terminateFixtures()
+    }
+    expect(responses.filter(entry => entry.op === 'move')).toEqual([
+      expect.objectContaining({ visible: true }),
+      expect.objectContaining({ visible: true }),
+    ])
+  }, 40_000)
+
+  it('keeps multiple visible frames at maximum efficiency settings', async () => {
+    const binding = await launchBoundFixture()
+    const overlay = await openOverlay()
+    let frames: Array<{ x: number; y: number }> = []
+    let responses: Array<Record<string, unknown>> = []
+    let expectedEnd: { x: number; y: number } | undefined
+    try {
+      await activateFixture(binding)
+      const { x, y, width, height } = binding.targetWindowFrame
+      const start = { x: Math.round(x + width * 0.1), y: Math.round(y + height * 0.2) }
+      const end = { x: Math.round(x + width * 0.9), y: Math.round(y + height * 0.8) }
+      expectedEnd = end
+      overlay.send({ op: 'move', ...start, durationMs: 0, autoHideMs: 0, ...binding })
+      await delay(100)
+
+      const captured = overlayFrames(overlay.pid, 160)
+      await delay(10)
+      overlay.send({
+        op: 'move',
+        ...end,
+        speedPxPerSecond: 50000,
+        accelerationPxPerSecondSquared: 500000,
+        autoHideMs: 0,
+        ...binding,
+      })
+      frames = await captured
+      await delay(100)
+      responses = overlay.responses()
+      expect(responses.filter(entry => entry.op === 'move')).toHaveLength(2)
+    } finally {
+      responses = await overlay.close()
+      await terminateFixtures()
+    }
+    const distinct = [...new Map(frames.map(frame => [`${frame.x},${frame.y}`, frame])).values()]
+    const detail = JSON.stringify({ frames: distinct, responses })
+    expect(distinct.length, detail).toBeGreaterThanOrEqual(3)
+    const first = distinct[0]!
+    const last = distinct[distinct.length - 1]!
+    expect(distinct.slice(1, -1).some(frame => frame.x !== first.x && frame.x !== last.x), detail).toBe(true)
+    expect(last.x, detail).toBeCloseTo(expectedEnd!.x, 0)
+    expect(last.y, detail).toBeCloseTo(expectedEnd!.y, 0)
+    expect(responses.filter(entry => entry.op === 'move').at(-1), detail).toMatchObject({ visible: true })
+  }, 40_000)
+
   it('moves through intermediate frames and completes at the production duration', async () => {
     let overlay: Awaited<ReturnType<typeof openOverlay>> | undefined
     const seen: Array<{ x: number; y: number } | undefined> = []
+    let responses: Array<Record<string, unknown>> = []
+    let expectedProduction: { x: number; y: number } | undefined
     try {
       const binding = await launchBoundFixture()
       overlay = await openOverlay()
@@ -235,38 +426,61 @@ describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
       const start = { x: Math.round(x + width * 0.2), y: Math.round(y + height * 0.25) }
       const longTarget = { x: Math.round(x + width * 0.8), y: Math.round(y + height * 0.75) }
       const productionTarget = { x: Math.round(x + width * 0.45), y: Math.round(y + height * 0.35) }
+      expectedProduction = productionTarget
 
       overlay.send({ op: 'move', ...start, durationMs: 0, autoHideMs: 0, ...binding })
       await delay(200)
       seen.push(await overlayFrame(overlay.pid))
+      expect(overlay.responses().filter(entry => entry.op === 'move')).toHaveLength(1)
 
-      // A one-second glide gives a deterministic intermediate sample. A jump
+      await activateFixture(binding)
+      // A half-second glide gives a deterministic intermediate sample. A jump
       // implementation lands at the target immediately and fails this check.
-      overlay.send({ op: 'move', ...longTarget, durationMs: 1_000, autoHideMs: 0, ...binding })
-      await delay(120)
+      overlay.send({ op: 'move', ...longTarget, durationMs: 500, autoHideMs: 0, ...binding })
+      await delay(200)
+      expect(overlay.responses().filter(entry => entry.op === 'move')).toHaveLength(1)
       seen.push(await overlayFrame(overlay.pid))
-      await delay(1_050)
+      await delay(350)
+      expect(overlay.responses().filter(entry => entry.op === 'move')).toHaveLength(2)
       seen.push(await overlayFrame(overlay.pid))
 
-      // The default live-session duration must also reach a distinct final point.
-      overlay.send({ op: 'move', ...productionTarget, durationMs: 180, autoHideMs: 0, ...binding })
-      await delay(350)
+      // The default physical profile must also reach a distinct final point.
+      await activateFixture(binding)
+      overlay.send({
+        op: 'move',
+        ...productionTarget,
+        speedPxPerSecond: 1600,
+        accelerationPxPerSecondSquared: 6000,
+        autoHideMs: 0,
+        ...binding,
+      })
+      await delay(650)
+      const moveResponses = overlay.responses().filter(entry => entry.op === 'move')
+      expect(moveResponses, JSON.stringify(overlay.responses())).toHaveLength(3)
+      expect(moveResponses.at(-1), JSON.stringify(overlay.responses())).toMatchObject({ visible: true })
       seen.push(await overlayFrame(overlay.pid))
     } finally {
       try {
-        if (overlay !== undefined) await overlay.close()
+        if (overlay !== undefined) responses = await overlay.close()
       } finally {
         await terminateFixtures()
       }
     }
     const [start, intermediate, longEnd, productionEnd] = seen
-    const detail = JSON.stringify(seen)
+    const detail = JSON.stringify({ seen, responses })
     for (const panel of seen) expect(panel, detail).toBeDefined()
     const strictlyBetween = (value: number, first: number, second: number): boolean =>
       value > Math.min(first, second) && value < Math.max(first, second)
     expect(strictlyBetween(intermediate!.x, start!.x, longEnd!.x), detail).toBe(true)
     expect(strictlyBetween(intermediate!.y, start!.y, longEnd!.y), detail).toBe(true)
-    expect(`${productionEnd!.x},${productionEnd!.y}`, detail).not.toBe(`${longEnd!.x},${longEnd!.y}`)
+    const lineCrossProduct = Math.abs(
+      (intermediate!.x - start!.x) * (longEnd!.y - start!.y)
+      - (intermediate!.y - start!.y) * (longEnd!.x - start!.x),
+    )
+    const lineLength = Math.hypot(longEnd!.x - start!.x, longEnd!.y - start!.y)
+    expect(lineCrossProduct / lineLength, `cursor path was visually straight: ${detail}`).toBeGreaterThan(2)
+    expect(productionEnd!.x, detail).toBeCloseTo(expectedProduction!.x, 0)
+    expect(productionEnd!.y, detail).toBeCloseTo(expectedProduction!.y, 0)
   }, 60_000)
 
   it('moves a bound panel to each point it is told to move to', async () => {
@@ -285,6 +499,7 @@ describe.skipIf(!REQUIRE_TCC)('agent cursor overlay tracking', () => {
         { x: Math.round(x + width * 0.75), y: Math.round(y + height * 0.75) },
         { x: Math.round(x + width * 0.5), y: Math.round(y + height * 0.25) },
       ]) {
+        await activateFixture(binding)
         overlay.send({ op: 'move', ...point, durationMs: 0, autoHideMs: 0, ...binding })
         await delay(400)
         seen.push({ requested: point, panel: await overlayFrame(overlay.pid) })

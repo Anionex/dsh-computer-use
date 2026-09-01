@@ -70,6 +70,9 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private var insertedHarmlessSibling = false
     private var keyMonitor: Any?
     private var reorderTimer: Timer?
+    private var activationTimer: Timer?
+    private var activationReleaseTimer: Timer?
+    private var activationHoldUntil: Date?
     private var pointerClickCount = 0
     private var pointerScrollCount = 0
     private var pointerDragCount = 0
@@ -80,6 +83,9 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private var activationCount = 0
     private let transcriptPath: String?
     private let reorderTriggerPath: String?
+    private let activationTriggerPath: String?
+    private let activationReleaseTriggerPath: String?
+    private let activationOnly: Bool
     private let launchInBackground: Bool
 
     override init() {
@@ -94,6 +100,17 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         } else {
             reorderTriggerPath = nil
         }
+        if let index = arguments.firstIndex(of: "--activation-trigger"), arguments.indices.contains(index + 1) {
+            activationTriggerPath = arguments[index + 1]
+        } else {
+            activationTriggerPath = nil
+        }
+        if let index = arguments.firstIndex(of: "--activation-release-trigger"), arguments.indices.contains(index + 1) {
+            activationReleaseTriggerPath = arguments[index + 1]
+        } else {
+            activationReleaseTriggerPath = nil
+        }
+        activationOnly = arguments.contains("--activation-only")
         launchInBackground = arguments.contains("--background")
         super.init()
     }
@@ -113,11 +130,38 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             window.makeKeyAndOrderFront(nil)
         }
         writeTranscript(event: "ready")
+        if activationOnly {
+            activationHoldUntil = Date().addingTimeInterval(5)
+        }
         if let reorderTriggerPath {
             reorderTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
                 guard FileManager.default.fileExists(atPath: reorderTriggerPath) else { return }
                 timer.invalidate()
                 self?.insertHarmlessSibling()
+            }
+        }
+        if activationTriggerPath != nil || activationOnly {
+            activationTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                if let activationTriggerPath,
+                   FileManager.default.fileExists(atPath: activationTriggerPath) {
+                    try? FileManager.default.removeItem(atPath: activationTriggerPath)
+                    self.activationHoldUntil = Date().addingTimeInterval(5)
+                }
+                guard let holdUntil = self.activationHoldUntil else { return }
+                guard Date() < holdUntil else {
+                    self.activationHoldUntil = nil
+                    return
+                }
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                self.window.makeKeyAndOrderFront(nil)
+            }
+        }
+        if let activationReleaseTriggerPath {
+            activationReleaseTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+                guard FileManager.default.fileExists(atPath: activationReleaseTriggerPath) else { return }
+                try? FileManager.default.removeItem(atPath: activationReleaseTriggerPath)
+                self?.activationHoldUntil = nil
             }
         }
     }
@@ -130,6 +174,8 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         reorderTimer?.invalidate()
+        activationTimer?.invalidate()
+        activationReleaseTimer?.invalidate()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

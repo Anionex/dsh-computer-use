@@ -4,6 +4,15 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ## [Unreleased]
 
+### Added
+
+- Added host-configurable Agent-cursor maximum speed, acceleration/deceleration, and post-arrival click delay, with natural human-readable defaults and high-throughput ranges in Web Settings.
+
+### Changed
+
+- The Agent cursor now appears only over the current frontmost target application, follows a slightly curved acceleration-shaped path from its previous point, and completes native movement before click or drag press feedback and input are delivered.
+- Existing 0.2.x `cursorMotionMs` values remain accepted during upgrade but no longer control runtime movement; the physical speed, acceleration, and click-delay defaults replace the fixed duration.
+
 ## [0.2.1] - 2026-09-01
 
 ### Fixed

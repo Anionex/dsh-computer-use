@@ -375,6 +375,9 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(dump.stdout).toContain('keyboardPolicy: activate')
       expect(dump.stdout).toContain('pointerInputPolicy: targeted')
       expect(dump.stdout).toContain('cursorVisualization: visible')
+      expect(dump.stdout).toContain('cursorSpeedPxPerSecond: 1600')
+      expect(dump.stdout).toContain('cursorAccelerationPxPerSecondSquared: 6000')
+      expect(dump.stdout).toContain('cursorClickDelayMs: 90')
     }
 
     await terminateFixtures()
@@ -387,6 +390,8 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       '  config:',
       '    settleMs: 50',
       '    maxSettleMs: 3000',
+      '    interaction:',
+      '      cursorMotionMs: 750',
       '    grants:',
       `      - bundleId: ${BUNDLE_ID}`,
       '        read: true',

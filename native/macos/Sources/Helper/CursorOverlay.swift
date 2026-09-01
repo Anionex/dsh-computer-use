@@ -7,7 +7,9 @@ import QuartzCore
 private struct CursorOverlayCommand {
     let operation: String
     let point: CGPoint?
-    let durationMs: Int
+    let durationMs: Int?
+    let speedPxPerSecond: Double?
+    let accelerationPxPerSecondSquared: Double?
     let autoHideMs: Int
     let targetPid: pid_t?
     let targetWindowNumber: Int64?
@@ -16,6 +18,8 @@ private struct CursorOverlayCommand {
 
     private static let maximumCoordinateMagnitude = 100_000.0
     private static let maximumDurationMs = 2_000
+    private static let maximumSpeedPxPerSecond = 50_000.0
+    private static let maximumAccelerationPxPerSecondSquared = 500_000.0
     private static let maximumAutoHideMs = 30_000
 
     private static func number(_ object: Any?, field: String) throws -> NSNumber? {
@@ -56,14 +60,31 @@ private struct CursorOverlayCommand {
         } else {
             self.point = nil
         }
-        let durationMs = try Self.integer(object["durationMs"], field: "durationMs", fallback: 180)
+        let durationMs = object["durationMs"] == nil
+            ? nil
+            : try Self.integer(object["durationMs"], field: "durationMs", fallback: 180)
         let autoHideMs = try Self.integer(object["autoHideMs"], field: "autoHideMs", fallback: 0)
-        guard durationMs >= 0, durationMs <= Self.maximumDurationMs,
+        guard durationMs == nil || (durationMs! >= 0 && durationMs! <= Self.maximumDurationMs),
               autoHideMs >= 0, autoHideMs <= Self.maximumAutoHideMs else {
             throw CursorOverlayError(message: "cursor overlay timing is outside the supported range")
         }
         self.durationMs = durationMs
         self.autoHideMs = autoHideMs
+        let speed = try Self.number(object["speedPxPerSecond"], field: "speedPxPerSecond")?.doubleValue
+        let acceleration = try Self.number(
+            object["accelerationPxPerSecondSquared"],
+            field: "accelerationPxPerSecondSquared"
+        )?.doubleValue
+        guard (speed == nil) == (acceleration == nil) else {
+            throw CursorOverlayError(message: "cursor overlay speed and acceleration must be provided together")
+        }
+        guard speed == nil || (speed!.isFinite && speed! >= 100 && speed! <= Self.maximumSpeedPxPerSecond),
+              acceleration == nil || (acceleration!.isFinite && acceleration! >= 100
+                && acceleration! <= Self.maximumAccelerationPxPerSecondSquared) else {
+            throw CursorOverlayError(message: "cursor overlay physical motion is outside the supported range")
+        }
+        self.speedPxPerSecond = speed
+        self.accelerationPxPerSecondSquared = acceleration
 
         if let rawPid = try Self.number(object["targetPid"], field: "targetPid") {
             let pidValue = rawPid.doubleValue
@@ -162,6 +183,8 @@ private final class CursorOverlayController: NSObject {
     private var releaseWork: DispatchWorkItem?
     private var targetCheckTimer: Timer?
     private var glideTimer: Timer?
+    private var glideCompletion: ((Bool) -> Void)?
+    private var hasPosition = false
     private var targetPid: pid_t?
     private var targetWindowNumber: Int64?
     private var targetWindowFrame: CGRect?
@@ -187,6 +210,16 @@ private final class CursorOverlayController: NSObject {
         window.collectionBehavior = [.fullScreenAuxiliary, .stationary, .ignoresCycle]
         window.isReleasedWhenClosed = false
         window.sharingType = .readOnly
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(frontmostApplicationChanged(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
     /// Outcome of a placement request, so the caller can distinguish a cursor
@@ -195,22 +228,27 @@ private final class CursorOverlayController: NSObject {
     /// ends up with a frozen agent cursor and no error anywhere.
     enum Placement {
         case shown
+        case targetNotFrontmost
         case targetUnavailable
     }
 
-    @discardableResult
     func show(
         at quartzPoint: CGPoint,
-        durationMs: Int,
+        durationMs: Int?,
+        speedPxPerSecond: Double?,
+        accelerationPxPerSecondSquared: Double?,
         autoHideMs: Int,
         targetPid: pid_t?,
         targetWindowNumber: Int64?,
-        targetWindowFrame: CGRect?
-    ) -> Placement {
+        targetWindowFrame: CGRect?,
+        completion: @escaping (Placement) -> Void
+    ) {
         hideWork?.cancel()
-        guard targetWindowIsCurrent(pid: targetPid, windowNumber: targetWindowNumber, expectedFrame: targetWindowFrame) else {
+        let placement = targetPlacement(pid: targetPid, windowNumber: targetWindowNumber, expectedFrame: targetWindowFrame)
+        guard placement == .shown else {
             hide()
-            return .targetUnavailable
+            completion(placement)
+            return
         }
         self.targetPid = targetPid
         self.targetWindowNumber = targetWindowNumber
@@ -221,9 +259,41 @@ private final class CursorOverlayController: NSObject {
             x: point.x,
             y: point.y - Self.size.height
         )
-        glide(to: targetOrigin, durationMs: durationMs)
-        scheduleHide(after: autoHideMs)
-        return .shown
+        if !hasPosition {
+            let mouse = NSEvent.mouseLocation
+            window.setFrameOrigin(NSPoint(x: mouse.x, y: mouse.y - Self.size.height))
+            hasPosition = true
+        }
+        window.orderFrontRegardless()
+        let shownPlacement = targetPlacement(pid: targetPid, windowNumber: targetWindowNumber, expectedFrame: targetWindowFrame)
+        guard shownPlacement == .shown else {
+            hide()
+            completion(shownPlacement)
+            return
+        }
+        glide(
+            to: targetOrigin,
+            durationMs: durationMs,
+            speedPxPerSecond: speedPxPerSecond,
+            accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
+        ) { [weak self] reached in
+            guard let self else {
+                completion(.targetUnavailable)
+                return
+            }
+            let finalPlacement = self.targetPlacement(
+                pid: targetPid,
+                windowNumber: targetWindowNumber,
+                expectedFrame: targetWindowFrame
+            )
+            guard reached, finalPlacement == .shown else {
+                self.hide()
+                completion(finalPlacement == .shown ? .targetUnavailable : finalPlacement)
+                return
+            }
+            self.scheduleHide(after: autoHideMs)
+            completion(.shown)
+        }
     }
 
     /// Travel to `targetOrigin`, interpolated on the main run loop.
@@ -237,37 +307,159 @@ private final class CursorOverlayController: NSObject {
     ///
     /// Stepping the origin directly is the same call the first placement
     /// already proved works, so the glide is both visible and correct.
-    private func glide(to targetOrigin: NSPoint, durationMs: Int) {
-        glideTimer?.invalidate()
-        glideTimer = nil
+    private func glide(
+        to targetOrigin: NSPoint,
+        durationMs: Int?,
+        speedPxPerSecond: Double?,
+        accelerationPxPerSecondSquared: Double?,
+        completion: @escaping (Bool) -> Void
+    ) {
+        finishGlide(reached: false)
         let origin = window.frame.origin
-        guard window.isVisible, durationMs > 0, origin != targetOrigin else {
+        guard origin != targetOrigin else {
             window.setFrameOrigin(targetOrigin)
             window.orderFrontRegardless()
+            completion(true)
             return
         }
-        let started = Date()
-        let duration = Double(durationMs) / 1000
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+        let distance = hypot(targetOrigin.x - origin.x, targetOrigin.y - origin.y)
+        let duration = motionDuration(
+            distance: distance,
+            explicitDurationMs: durationMs,
+            speedPxPerSecond: speedPxPerSecond,
+            accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
+        )
+        guard duration > 0 else {
+            window.setFrameOrigin(targetOrigin)
+            window.orderFrontRegardless()
+            completion(true)
+            return
+        }
+        let delta = NSPoint(x: targetOrigin.x - origin.x, y: targetOrigin.y - origin.y)
+        let directionSign: CGFloat = Int(abs(origin.x + origin.y + targetOrigin.x + targetOrigin.y)) % 2 == 0 ? 1 : -1
+        let bend = min(18, distance * 0.06) * directionSign
+        let normal = NSPoint(x: -delta.y / distance, y: delta.x / distance)
+        let control1 = NSPoint(
+            x: origin.x + delta.x * 0.32 + normal.x * bend,
+            y: origin.y + delta.y * 0.32 + normal.y * bend
+        )
+        let control2 = NSPoint(
+            x: origin.x + delta.x * 0.72 + normal.x * bend * 0.45,
+            y: origin.y + delta.y * 0.72 + normal.y * bend * 0.45
+        )
+        let started = CACurrentMediaTime()
+        glideCompletion = completion
+        let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
                 guard let self else { timer.invalidate(); return }
-                let elapsed = Date().timeIntervalSince(started)
-                if elapsed >= duration {
-                    timer.invalidate()
-                    self.glideTimer = nil
-                    self.window.setFrameOrigin(targetOrigin)
+                if let targetPid = self.targetPid,
+                   NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPid {
+                    self.hide()
                     return
                 }
-                // Ease out, matching the intent of the animation this replaces.
-                let fraction = 1 - pow(1 - elapsed / duration, 3)
-                self.window.setFrameOrigin(NSPoint(
-                    x: origin.x + (targetOrigin.x - origin.x) * fraction,
-                    y: origin.y + (targetOrigin.y - origin.y) * fraction
-                ))
+                let elapsed = CACurrentMediaTime() - started
+                if elapsed >= duration {
+                    self.window.setFrameOrigin(targetOrigin)
+                    self.hasPosition = true
+                    self.finishGlide(reached: true)
+                    return
+                }
+                let linear = elapsed / duration
+                let fraction: Double
+                if let speedPxPerSecond, let accelerationPxPerSecondSquared {
+                    fraction = self.physicalMotionFraction(
+                        progress: linear,
+                        distance: distance,
+                        speedPxPerSecond: speedPxPerSecond,
+                        accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
+                    )
+                } else {
+                    fraction = linear * linear * (3 - 2 * linear)
+                }
+                let inverse = 1 - fraction
+                let point = NSPoint(
+                    x: inverse * inverse * inverse * origin.x
+                        + 3 * inverse * inverse * fraction * control1.x
+                        + 3 * inverse * fraction * fraction * control2.x
+                        + fraction * fraction * fraction * targetOrigin.x,
+                    y: inverse * inverse * inverse * origin.y
+                        + 3 * inverse * inverse * fraction * control1.y
+                        + 3 * inverse * fraction * fraction * control2.y
+                        + fraction * fraction * fraction * targetOrigin.y
+                )
+                self.window.setFrameOrigin(point)
             }
         }
         glideTimer = timer
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func motionDuration(
+        distance: Double,
+        explicitDurationMs: Int?,
+        speedPxPerSecond: Double?,
+        accelerationPxPerSecondSquared: Double?
+    ) -> Double {
+        if let explicitDurationMs { return Double(explicitDurationMs) / 1000 }
+        guard let speedPxPerSecond, let accelerationPxPerSecondSquared else { return 0.18 }
+        let seconds = rawPhysicalMotionDuration(
+            distance: distance,
+            speedPxPerSecond: speedPxPerSecond,
+            accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
+        )
+        return min(2, max(0.048, seconds))
+    }
+
+    private func rawPhysicalMotionDuration(
+        distance: Double,
+        speedPxPerSecond: Double,
+        accelerationPxPerSecondSquared: Double
+    ) -> Double {
+        let accelerationDistance = speedPxPerSecond * speedPxPerSecond / accelerationPxPerSecondSquared
+        if distance <= accelerationDistance {
+            return 2 * sqrt(distance / accelerationPxPerSecondSquared)
+        }
+        return 2 * speedPxPerSecond / accelerationPxPerSecondSquared
+            + (distance - accelerationDistance) / speedPxPerSecond
+    }
+
+    private func physicalMotionFraction(
+        progress: Double,
+        distance: Double,
+        speedPxPerSecond: Double,
+        accelerationPxPerSecondSquared: Double
+    ) -> Double {
+        let rawDuration = rawPhysicalMotionDuration(
+            distance: distance,
+            speedPxPerSecond: speedPxPerSecond,
+            accelerationPxPerSecondSquared: accelerationPxPerSecondSquared
+        )
+        let elapsed = min(1, max(0, progress)) * rawDuration
+        let accelerationTime = min(
+            speedPxPerSecond / accelerationPxPerSecondSquared,
+            rawDuration / 2
+        )
+        let peakSpeed = accelerationPxPerSecondSquared * accelerationTime
+        let cruiseTime = max(0, rawDuration - 2 * accelerationTime)
+        let accelerationDistance = 0.5 * accelerationPxPerSecondSquared * accelerationTime * accelerationTime
+        let traveled: Double
+        if elapsed <= accelerationTime {
+            traveled = 0.5 * accelerationPxPerSecondSquared * elapsed * elapsed
+        } else if elapsed <= accelerationTime + cruiseTime {
+            traveled = accelerationDistance + peakSpeed * (elapsed - accelerationTime)
+        } else {
+            let remaining = rawDuration - elapsed
+            traveled = distance - 0.5 * accelerationPxPerSecondSquared * remaining * remaining
+        }
+        return min(1, max(0, traveled / distance))
+    }
+
+    private func finishGlide(reached: Bool) {
+        glideTimer?.invalidate()
+        glideTimer = nil
+        let completion = glideCompletion
+        glideCompletion = nil
+        completion?(reached)
     }
 
     func press(autoHideMs: Int, sustained: Bool) {
@@ -297,16 +489,16 @@ private final class CursorOverlayController: NSObject {
     @discardableResult
     func validateTarget(pid: pid_t?, windowNumber: Int64?, expectedFrame: CGRect?) -> Placement {
         guard window.isVisible else { return .targetUnavailable }
-        if !targetWindowIsCurrent(pid: pid, windowNumber: windowNumber, expectedFrame: expectedFrame) {
+        let placement = targetPlacement(pid: pid, windowNumber: windowNumber, expectedFrame: expectedFrame)
+        if placement != .shown {
             hide()
-            return .targetUnavailable
+            return placement
         }
         return .shown
     }
 
     func hide() {
-        glideTimer?.invalidate()
-        glideTimer = nil
+        finishGlide(reached: false)
         hideWork?.cancel()
         hideWork = nil
         releaseWork?.cancel()
@@ -351,14 +543,21 @@ private final class CursorOverlayController: NSObject {
         targetCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.window.isVisible else { return }
-                if !self.targetWindowIsCurrent(
+                if self.targetPlacement(
                     pid: self.targetPid,
                     windowNumber: self.targetWindowNumber,
                     expectedFrame: self.targetWindowFrame
-                ) {
+                ) != .shown {
                     self.hide()
                 }
             }
+        }
+    }
+
+    @objc private func frontmostApplicationChanged(_ notification: Notification) {
+        guard window.isVisible, let targetPid else { return }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPid {
+            hide()
         }
     }
 
@@ -387,15 +586,16 @@ private final class CursorOverlayController: NSObject {
         )
     }
 
-    private func targetWindowIsCurrent(pid: pid_t?, windowNumber: Int64?, expectedFrame: CGRect?) -> Bool {
-        guard let pid, let windowNumber, let expectedFrame else { return false }
+    private func targetPlacement(pid: pid_t?, windowNumber: Int64?, expectedFrame: CGRect?) -> Placement {
+        guard let pid, let windowNumber, let expectedFrame else { return .targetUnavailable }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return .targetNotFrontmost }
         guard let rawWindows = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
         ) as? [[String: Any]] else {
-            return false
+            return .targetUnavailable
         }
-        return rawWindows.contains { window in
+        let matches = rawWindows.contains { window in
             guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
                   (window[kCGWindowNumber as String] as? NSNumber)?.int64Value == windowNumber,
                   let bounds = window[kCGWindowBounds as String] as? [String: Any],
@@ -406,6 +606,7 @@ private final class CursorOverlayController: NSObject {
                 && abs(currentFrame.width - expectedFrame.width) <= tolerance
                 && abs(currentFrame.height - expectedFrame.height) <= tolerance
         }
+        return matches ? .shown : .targetUnavailable
     }
 }
 
@@ -415,23 +616,85 @@ enum CursorOverlayRuntime {
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
         let controller = CursorOverlayController()
+        let dispatcher = CursorCommandDispatcher(controller: controller)
         let input = FileHandle.standardInput
         let parser = CursorCommandParser { object in
             DispatchQueue.main.async {
-                handleCursorCommand(object, controller: controller)
+                dispatcher.enqueue(object)
             }
         } onEnd: {
-            DispatchQueue.main.async { controller.stop() }
+            DispatchQueue.main.async { dispatcher.endInput() }
         } onInvalid: { message in
             DispatchQueue.main.async {
-                emitCursorResponse(["ok": false, "error": message])
-                controller.stop()
+                dispatcher.invalidate(message)
             }
         }
         input.readabilityHandler = { handle in parser.consume(handle.availableData) }
         emitCursorResponse(["ok": true, "ready": true, "pid": ProcessInfo.processInfo.processIdentifier])
         app.run()
         input.readabilityHandler = nil
+    }
+}
+
+@MainActor
+private final class CursorCommandDispatcher {
+    private let controller: CursorOverlayController
+    private var commands: [[String: Any]] = []
+    private var processing = false
+    private var inputEnded = false
+    private var terminated = false
+
+    init(controller: CursorOverlayController) {
+        self.controller = controller
+    }
+
+    func enqueue(_ object: [String: Any]) {
+        guard !inputEnded, !terminated else { return }
+        commands.append(object)
+        if object["op"] as? String == "stop", processing {
+            controller.hide()
+        }
+        drain()
+    }
+
+    func endInput() {
+        guard !inputEnded, !terminated else { return }
+        inputEnded = true
+        if commands.contains(where: { $0["op"] as? String == "stop" }) {
+            if processing { controller.hide() }
+            drain()
+        } else {
+            terminated = true
+            commands.removeAll()
+            controller.stop()
+        }
+    }
+
+    func invalidate(_ message: String) {
+        guard !terminated else { return }
+        inputEnded = true
+        terminated = true
+        commands.removeAll()
+        controller.hide()
+        emitCursorResponse(["ok": false, "error": message])
+        controller.stop()
+    }
+
+    private func drain() {
+        guard !terminated, !processing, !commands.isEmpty else { return }
+        processing = true
+        let command = commands.removeFirst()
+        let stopsRuntime = command["op"] as? String == "stop"
+        handleCursorCommand(command, controller: controller) { [weak self] in
+            guard let self else { return }
+            self.processing = false
+            if stopsRuntime {
+                self.terminated = true
+                self.commands.removeAll()
+                return
+            }
+            DispatchQueue.main.async { [weak self] in self?.drain() }
+        }
     }
 }
 
@@ -490,7 +753,11 @@ private final class CursorCommandParser: @unchecked Sendable {
 }
 
 @MainActor
-private func handleCursorCommand(_ object: [String: Any], controller: CursorOverlayController) {
+private func handleCursorCommand(
+    _ object: [String: Any],
+    controller: CursorOverlayController,
+    completion: @escaping () -> Void
+) {
     do {
         let command = try CursorOverlayCommand(object)
         // Whether the panel is actually on screen after this command. A hidden
@@ -498,39 +765,58 @@ private func handleCursorCommand(_ object: [String: Any], controller: CursorOver
         // error -- but the caller must be able to tell, or the user silently
         // loses sight of where the agent is acting.
         var visible = true
+        var reasonCode: String?
         switch command.operation {
         case "show", "move":
             guard let point = command.point else {
                 throw CursorOverlayError(message: "cursor overlay command needs x and y")
             }
-            visible = controller.show(
+            controller.show(
                 at: point,
                 durationMs: command.durationMs,
+                speedPxPerSecond: command.speedPxPerSecond,
+                accelerationPxPerSecondSquared: command.accelerationPxPerSecondSquared,
                 autoHideMs: command.autoHideMs,
                 targetPid: command.targetPid,
                 targetWindowNumber: command.targetWindowNumber,
                 targetWindowFrame: command.targetWindowFrame
-            ) == .shown
+            ) { placement in
+                let shown = placement == .shown
+                var response: [String: Any] = ["ok": true, "op": command.operation, "visible": shown]
+                if !shown {
+                    response["reasonCode"] = cursorReasonCode(placement)
+                    response["reason"] = cursorReason(placement)
+                }
+                emitCursorResponse(response)
+                completion()
+            }
+            return
         case "press":
-            visible = controller.validateTarget(
+            let placement = controller.validateTarget(
                 pid: command.targetPid,
                 windowNumber: command.targetWindowNumber,
                 expectedFrame: command.targetWindowFrame
-            ) == .shown
+            )
+            visible = placement == .shown
+            reasonCode = cursorReasonCode(placement)
             controller.press(autoHideMs: command.autoHideMs, sustained: command.sustainedPress)
         case "release":
-            visible = controller.validateTarget(
+            let placement = controller.validateTarget(
                 pid: command.targetPid,
                 windowNumber: command.targetWindowNumber,
                 expectedFrame: command.targetWindowFrame
-            ) == .shown
+            )
+            visible = placement == .shown
+            reasonCode = cursorReasonCode(placement)
             controller.release(autoHideMs: command.autoHideMs)
         case "validate":
-            visible = controller.validateTarget(
+            let placement = controller.validateTarget(
                 pid: command.targetPid,
                 windowNumber: command.targetWindowNumber,
                 expectedFrame: command.targetWindowFrame
-            ) == .shown
+            )
+            visible = placement == .shown
+            reasonCode = cursorReasonCode(placement)
         case "hide":
             controller.hide()
             visible = false
@@ -546,13 +832,35 @@ private func handleCursorCommand(_ object: [String: Any], controller: CursorOver
         if !visible && (command.operation == "show" || command.operation == "move"
             || command.operation == "press" || command.operation == "release"
             || command.operation == "validate") {
-            response["reason"] = "the bound target window is no longer at its observed frame; the agent cursor is hidden"
+            response["reasonCode"] = reasonCode
+            response["reason"] = reasonCode == "target-not-frontmost"
+                ? "the bound target application is not frontmost; the agent cursor is hidden"
+                : "the bound target window no longer matches; the agent cursor is hidden"
         }
         emitCursorResponse(response)
+        completion()
     } catch let error as CursorOverlayError {
         emitCursorResponse(["ok": false, "error": error.message])
+        completion()
     } catch {
         emitCursorResponse(["ok": false, "error": String(describing: error)])
+        completion()
+    }
+}
+
+private func cursorReasonCode(_ placement: CursorOverlayController.Placement) -> String? {
+    switch placement {
+    case .shown: return nil
+    case .targetNotFrontmost: return "target-not-frontmost"
+    case .targetUnavailable: return "target-invalid"
+    }
+}
+
+private func cursorReason(_ placement: CursorOverlayController.Placement) -> String? {
+    switch placement {
+    case .shown: return nil
+    case .targetNotFrontmost: return "the bound target application is not frontmost; the agent cursor is hidden"
+    case .targetUnavailable: return "the bound target window no longer matches; the agent cursor is hidden"
     }
 }
 

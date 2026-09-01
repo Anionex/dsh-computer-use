@@ -74,6 +74,7 @@ export interface BackendActionResult {
 export interface CursorVisibility {
   readonly visible: boolean
   readonly reason?: string
+  readonly reasonCode?: 'target-not-frontmost' | 'target-invalid'
 }
 
 export interface BackendCursorAction {
