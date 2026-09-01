@@ -4,6 +4,8 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-01
+
 ### Added
 
 - Added opaque observation-local target handles with deterministic exact-locator, macOS `AXIdentifier`, and unique semantic resolution; successful element actions now report resolution mode, confidence, candidate count, and target-change metadata.
@@ -20,6 +22,9 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ### Fixed
 
+- Made Agent cursor visibility failures explicit from the native overlay through the Tool result, serialized the persistent cursor protocol, and discarded timed-out or malformed process generations so late responses cannot satisfy later commands.
+- Reported bounded structural action evidence as `effect.observedStateChanged`, serialized same-app actions through post-action observation, and stopped treating pixel-only or external effects as proven failures.
+- Reported missing stable window ids instead of silently skipping the Agent cursor, and required exact or decorated-title evidence when owner/frame matching leaves multiple window candidates.
 - Fixed non-macOS profile startup failure: the plugin now degrades gracefully on unsupported platforms, keeps the profile running, leaves Computer Use Tools and the Skill unregistered, and reports `COMPUTER_UNSUPPORTED_PLATFORM` in Web Settings instead of throwing during Bundle construction.
 - Invalidated one-use confirmation when a sensitive target requires rebinding, and added fail-closed ambiguity/low-confidence errors instead of selecting a similar element.
 - Directed screenshot OCR, visual grounding, and pixel inspection to the installed `vision-tools` Skill and native Vision Toolkit tools at both the Computer Use Skill and screenshot Artifact decision points, instead of allowing shell-built OCR substitutes.
