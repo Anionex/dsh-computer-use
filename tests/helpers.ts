@@ -5,6 +5,8 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {
   BackendActionRequest,
   BackendActionResult,
+  BackendCursorActivation,
+  BackendTrackedDragResult,
   BackendCursorAction,
   BackendHealth,
   BackendObservation,
@@ -65,7 +67,9 @@ export class FakeBackend implements ComputerUseBackend {
   readonly actions: BackendActionRequest[] = []
   readonly observations: BackendObserveOptions[] = []
   readonly openedSettings: Array<'accessibility' | 'screen-recording'> = []
-  readonly cursorActions: Array<{ action: BackendCursorAction; phase: 'before' | 'after' }> = []
+  readonly cursorActions: Array<{ action: BackendCursorAction; phase: 'before' | 'during' | 'after' }> = []
+  readonly cursorSignals: AbortSignal[] = []
+  readonly cursorActivations: string[] = []
   disposed = false
   observation = backendObservation()
   healthValue: BackendHealth = {
@@ -112,6 +116,16 @@ export class FakeBackend implements ComputerUseBackend {
     })
   }
 
+  activateForCursor(_app: ComputerAppIdentity, expectedStateHash: string): Promise<BackendCursorActivation> {
+    if (expectedStateHash !== this.observation.stateHash) {
+      throw new ComputerUseError('COMPUTER_STALE_OBSERVATION', 'fake UI changed before activation')
+    }
+    this.cursorActivations.push(expectedStateHash)
+    const activation = this.observation.frontmost ? 'already-frontmost' : 'activated'
+    this.observation = backendObservation({ ...this.observation, frontmost: true })
+    return Promise.resolve({ observation: structuredClone(this.observation), activation })
+  }
+
   /**
    * When true the action is accepted and the observation is left untouched,
    * standing in for a target that received the input and did nothing with it —
@@ -153,11 +167,24 @@ export class FakeBackend implements ComputerUseBackend {
     })
   }
 
+  async actDragWithCursor(
+    request: BackendActionRequest,
+    cursor: BackendCursorAction & { kind: 'drag' },
+    signal: AbortSignal,
+  ): Promise<BackendTrackedDragResult> {
+    const [action, cursorResult] = await Promise.all([
+      this.act(request),
+      this.visualizeCursor(cursor, 'during', signal),
+    ])
+    return { action, cursor: cursorResult }
+  }
+
   /** Overridable so a test can make the agent cursor fail to show. */
   cursorVisibility: CursorVisibility = { visible: true }
 
-  visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after'): Promise<CursorVisibility> {
+  visualizeCursor(action: BackendCursorAction, phase: 'before' | 'during' | 'after', signal: AbortSignal): Promise<CursorVisibility> {
     this.cursorActions.push({ action: structuredClone(action), phase })
+    this.cursorSignals.push(signal)
     return Promise.resolve(this.cursorVisibility)
   }
 

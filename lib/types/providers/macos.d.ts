@@ -1,6 +1,6 @@
 /** macOS Accessibility/CoreGraphics/ScreenCaptureKit provider for `ctx.computerUse`. */
 import { Service, type Context } from '@deepseek-ai/cordis';
-import type { BackendActionRequest, BackendActionResult, BackendCursorAction, BackendHealth, BackendObservation, BackendObserveOptions, ComputerUseBackend, CursorVisibility } from '../backend.ts';
+import type { BackendActionRequest, BackendActionResult, BackendCursorActivation, BackendTrackedDragResult, BackendCursorAction, BackendHealth, BackendObservation, BackendObserveOptions, ComputerUseBackend, CursorVisibility } from '../backend.ts';
 import { type ComputerUseConfig, type ResolvedComputerUseConfig } from '../config.ts';
 import { ComputerUseService } from '../service.ts';
 import type { ComputerAppIdentity, ComputerAppSelector, ComputerAppSummary } from '../types.ts';
@@ -15,8 +15,14 @@ export declare class MacOSBackend implements ComputerUseBackend {
     resolveApp(selector: ComputerAppSelector, signal: AbortSignal): Promise<ComputerAppIdentity>;
     listApps(signal: AbortSignal): Promise<ComputerAppSummary[]>;
     observe(app: ComputerAppIdentity, options: BackendObserveOptions, signal: AbortSignal): Promise<BackendObservation>;
+    activateForCursor(app: ComputerAppIdentity, expectedStateHash: string, options: BackendObserveOptions, signal: AbortSignal): Promise<BackendCursorActivation>;
     act(request: BackendActionRequest, signal: AbortSignal): Promise<BackendActionResult>;
-    visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<CursorVisibility>;
+    actDragWithCursor(request: BackendActionRequest, cursor: BackendCursorAction & {
+        kind: 'drag';
+    }, signal: AbortSignal): Promise<BackendTrackedDragResult>;
+    private prepareNativeDrag;
+    visualizeCursor(action: BackendCursorAction, phase: 'before' | 'during' | 'after', signal: AbortSignal): Promise<CursorVisibility>;
+    private visualizeCursorPhase;
     dispose(): Promise<void>;
     health(signal: AbortSignal): Promise<BackendHealth>;
     openSettings(kind: 'accessibility' | 'screen-recording', signal: AbortSignal): Promise<void>;

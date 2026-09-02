@@ -19,7 +19,9 @@ describe('Computer Use configuration', () => {
         keyboardPolicy: 'preserve',
         pointerInputPolicy: 'targeted',
         cursorVisualization: 'visible',
-        cursorMotionMs: 180,
+        cursorSpeedPxPerSecond: 1600,
+        cursorAccelerationPxPerSecondSquared: 6000,
+        cursorClickDelayMs: 90,
         cursorAutoHideMs: 0,
       },
       grants: [{ bundleId: 'com.example.Editor', read: true, control: true }],
@@ -39,6 +41,9 @@ describe('Computer Use configuration', () => {
         pointerInputPolicy: 'targeted',
         cursorVisualization: 'hidden',
         cursorMotionMs: 0,
+        cursorSpeedPxPerSecond: 50000,
+        cursorAccelerationPxPerSecondSquared: 500000,
+        cursorClickDelayMs: 0,
         cursorAutoHideMs: 30000,
       },
     }).interaction).toEqual({
@@ -46,8 +51,23 @@ describe('Computer Use configuration', () => {
       keyboardPolicy: 'activate',
       pointerInputPolicy: 'targeted',
       cursorVisualization: 'hidden',
-      cursorMotionMs: 0,
+      cursorSpeedPxPerSecond: 50000,
+      cursorAccelerationPxPerSecondSquared: 500000,
+      cursorClickDelayMs: 0,
       cursorAutoHideMs: 30000,
+    })
+  })
+
+  it('loads a 0.2.x interaction document containing only the deprecated motion duration', () => {
+    expect(resolveConfig({ interaction: { cursorMotionMs: 750 } }).interaction).toEqual({
+      focusPolicy: 'preserve',
+      keyboardPolicy: 'preserve',
+      pointerInputPolicy: 'targeted',
+      cursorVisualization: 'visible',
+      cursorSpeedPxPerSecond: 1600,
+      cursorAccelerationPxPerSecondSquared: 6000,
+      cursorClickDelayMs: 90,
+      cursorAutoHideMs: 0,
     })
   })
 
@@ -67,6 +87,11 @@ describe('Computer Use configuration', () => {
     [{ interaction: { pointerInputPolicy: 'invalid' } }, /interaction\.pointerInputPolicy/],
     [{ interaction: { cursorVisualization: 'invalid' } }, /interaction\.cursorVisualization/],
     [{ interaction: { cursorMotionMs: 2001 } }, /interaction\.cursorMotionMs/],
+    [{ interaction: { cursorSpeedPxPerSecond: 99 } }, /interaction\.cursorSpeedPxPerSecond/],
+    [{ interaction: { cursorSpeedPxPerSecond: 50001 } }, /interaction\.cursorSpeedPxPerSecond/],
+    [{ interaction: { cursorAccelerationPxPerSecondSquared: 99 } }, /interaction\.cursorAccelerationPxPerSecondSquared/],
+    [{ interaction: { cursorAccelerationPxPerSecondSquared: 500001 } }, /interaction\.cursorAccelerationPxPerSecondSquared/],
+    [{ interaction: { cursorClickDelayMs: 1001 } }, /interaction\.cursorClickDelayMs/],
     [{ interaction: { cursorAutoHideMs: 30001 } }, /interaction\.cursorAutoHideMs/],
     [{ grants: [{ bundleId: '*' }] }, /non-wildcard/],
     [{ grants: [{ bundleId: 'com.example.App' }, { bundleId: 'com.example.App' }] }, /duplicate/],

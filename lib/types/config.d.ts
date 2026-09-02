@@ -14,7 +14,11 @@ export interface ComputerUseInteractionConfig {
     keyboardPolicy?: 'preserve' | 'activate';
     pointerInputPolicy?: 'deny' | 'targeted';
     cursorVisualization?: 'hidden' | 'visible';
+    /** @deprecated Accepted for 0.2.x settings compatibility; physical motion replaces fixed duration. */
     cursorMotionMs?: number;
+    cursorSpeedPxPerSecond?: number;
+    cursorAccelerationPxPerSecondSquared?: number;
+    cursorClickDelayMs?: number;
     cursorAutoHideMs?: number;
 }
 /** User-facing configuration; schema defaults are repeated by {@link resolveConfig}. `observationTtlMs: 0` disables observation expiry. */
@@ -60,7 +64,9 @@ export interface ResolvedComputerUseConfig {
         keyboardPolicy: 'preserve' | 'activate';
         pointerInputPolicy: 'deny' | 'targeted';
         cursorVisualization: 'hidden' | 'visible';
-        cursorMotionMs: number;
+        cursorSpeedPxPerSecond: number;
+        cursorAccelerationPxPerSecondSquared: number;
+        cursorClickDelayMs: number;
         cursorAutoHideMs: number;
     };
     allowAllApps: boolean;

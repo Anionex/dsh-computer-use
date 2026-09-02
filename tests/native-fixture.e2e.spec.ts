@@ -469,7 +469,7 @@ async function stableObserve(
 }
 
 describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture', () => {
-  it('shows a click-through nonactivating overlay without moving the real cursor', async () => {
+  it('keeps the overlay hidden over a background app without moving the real cursor', async () => {
     const temporary = await temporaryDirectory('dsh-computer-cursor-overlay-')
     const transcriptPath = join(temporary.path, 'transcript.json')
     await terminateFixtures()
@@ -510,8 +510,8 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       const result = await monitor.finish()
       expect(protocol.responses).toEqual(expect.arrayContaining([
         expect.objectContaining({ ok: true, ready: true }),
-        expect.objectContaining({ ok: true, op: 'move' }),
-        expect.objectContaining({ ok: true, op: 'press' }),
+        expect.objectContaining({ ok: true, op: 'move', visible: false, reasonCode: 'target-not-frontmost' }),
+        expect.objectContaining({ ok: true, op: 'press', visible: false, reasonCode: 'target-not-frontmost' }),
         expect.objectContaining({ ok: true, op: 'stop' }),
       ]))
       expect(result.eventTapAvailable).toBe(true)
@@ -528,9 +528,8 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       expect(result.observedFrontmostPids, JSON.stringify(result)).not.toContain(protocol.pid)
       expect(result.baselineFrontmostPid).not.toBe(app.pid)
       expect(result.baselineFrontmostPid).not.toBe(protocol.pid)
-      expect(result.maximumMatchingWindowCount).toBe(1)
-      expect(result.matchingWindowFrames).toHaveLength(1)
-      expect(result.matchingWindowFrames[0]).toMatchObject({ Width: 28, Height: 28 })
+      expect(result.maximumMatchingWindowCount).toBe(0)
+      expect(result.matchingWindowFrames).toHaveLength(0)
     } finally {
       if (app !== undefined) {
         try { process.kill(app.pid, 'SIGKILL') } catch {}

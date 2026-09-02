@@ -3,6 +3,8 @@
 import type {
   BackendActionRequest,
   BackendActionResult,
+  BackendCursorActivation,
+  BackendTrackedDragResult,
   BackendCursorAction,
   BackendHealth,
   BackendObservation,
@@ -51,11 +53,19 @@ export class UnsupportedPlatformBackend implements ComputerUseBackend {
     return Promise.reject(unsupported(this.platform))
   }
 
+  activateForCursor(_app: ComputerAppIdentity, _expectedStateHash: string, _options: BackendObserveOptions): Promise<BackendCursorActivation> {
+    return Promise.reject(unsupported(this.platform))
+  }
+
   act(_request: BackendActionRequest): Promise<BackendActionResult> {
     return Promise.reject(unsupported(this.platform))
   }
 
-  visualizeCursor(_action: BackendCursorAction, _phase: 'before' | 'after'): Promise<CursorVisibility> {
+  actDragWithCursor(_request: BackendActionRequest, _cursor: BackendCursorAction & { kind: 'drag' }): Promise<BackendTrackedDragResult> {
+    return Promise.reject(unsupported(this.platform))
+  }
+
+  visualizeCursor(_action: BackendCursorAction, _phase: 'before' | 'during' | 'after'): Promise<CursorVisibility> {
     return Promise.reject(unsupported(this.platform))
   }
 

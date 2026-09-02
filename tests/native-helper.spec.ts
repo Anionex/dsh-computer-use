@@ -128,6 +128,49 @@ function cursorHandle(options: CursorHandleOptions = {}) {
   return { handle, stdinLines, terminate, exit, respond }
 }
 
+function dragHandle() {
+  const stdinLines: string[] = []
+  const stdout = new PassThrough()
+  const stderr = reader('')
+  const completed = Promise.withResolvers<{ exitCode: number | null; signal: NodeJS.Signals | null }>()
+  let exited = false
+  const exit = (outcome: { exitCode: number | null; signal: NodeJS.Signals | null }): void => {
+    if (exited) return
+    exited = true
+    stdout.end()
+    completed.resolve(outcome)
+  }
+  const stdin = new Writable({
+    write(chunk, _encoding, callback) {
+      const line = chunk.toString().trim()
+      stdinLines.push(line)
+      if (line === 'START') {
+        // The test controls the final action response explicitly.
+      } else {
+        JSON.parse(line)
+        stdout.write('{"event":"drag-ready","ok":true}\n')
+      }
+      callback()
+    },
+  })
+  const terminate = vi.fn(() => { exit({ exitCode: null, signal: 'SIGTERM' }) })
+  const handle: SubprocessHandle = {
+    pid: 8442,
+    stdin,
+    stdout,
+    stderr: undefined,
+    collected: { stderr },
+    done: completed.promise,
+    terminate,
+    waitForExit: vi.fn(async () => { await completed.promise; return true }),
+  }
+  const respond = (value: unknown): void => {
+    stdout.write(`${JSON.stringify({ ok: true, value })}\n`)
+    exit({ exitCode: 0, signal: null })
+  }
+  return { handle, stdinLines, terminate, respond }
+}
+
 describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
   it('contains no global pointer warp or HID-post implementation', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
@@ -163,7 +206,7 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(source).toContain('.nonactivatingPanel')
     expect(source).toContain('window.ignoresMouseEvents = true')
     expect(source).toContain('app.setActivationPolicy(.prohibited)')
-    expect(source).toContain('targetWindowIsCurrent')
+    expect(source).toContain('targetPlacement')
     expect(source).toContain('CGWindowListCopyWindowInfo')
     expect(source).not.toContain('.canJoinAllSpaces')
     expect(source).toContain('window.orderFrontRegardless()')
@@ -266,7 +309,7 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     const managed = new NativeHelperClient({} as never, resolveConfig())
     await expect(managed.prepare(new AbortController().signal)).resolves.toMatchObject({
       path: HELPER,
-      version: '0.2.1',
+      version: '0.3.0',
       sha256: await sha256(HELPER),
     })
 
@@ -297,7 +340,7 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
       const managed = new NativeHelperClient({} as never, resolveConfig(), managedRoot)
       await expect(managed.prepare(new AbortController().signal)).resolves.toMatchObject({
         path: await realpath(packagedHelper),
-        version: '0.2.1',
+        version: '0.3.0',
         sha256: await sha256(HELPER),
       })
       expect((await stat(packagedHelper)).mode & 0o100).toBe(0o100)
@@ -405,10 +448,10 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
       cursor.respond({ ok: true, op: 'move', visible: true })
       await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(2) })
       expect(cursor.stdinLines[1]).toContain('"op":"press"')
-      cursor.respond({ ok: true, op: 'press', visible: false, reason: 'press target moved' })
+      cursor.respond({ ok: true, op: 'press', visible: false, reason: 'press target moved', reasonCode: 'target-invalid' })
 
       await expect(first).resolves.toEqual({ visible: true })
-      await expect(second).resolves.toEqual({ visible: false, reason: 'press target moved' })
+      await expect(second).resolves.toEqual({ visible: false, reason: 'press target moved', reasonCode: 'target-invalid' })
       await client.dispose()
     } finally {
       await temporary.cleanup()
@@ -437,6 +480,195 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
       await client.dispose()
     } finally {
       vi.useRealTimers()
+      await temporary.cleanup()
+    }
+  })
+
+  it('waits for a bounded physical move to finish before timing out its generation', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-motion-')
+    vi.useFakeTimers()
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ autoRespond: false })
+      const spawn = vi.fn(() => cursor.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+
+      const result = client.cursorCommand({
+        op: 'move',
+        x: 1,
+        y: 2,
+        speedPxPerSecond: 100,
+        accelerationPxPerSecondSquared: 100,
+      }, new AbortController().signal)
+      await vi.advanceTimersByTimeAsync(2_500)
+      expect(cursor.terminate).not.toHaveBeenCalled()
+      cursor.respond({ ok: true, op: 'move', visible: true })
+
+      await expect(result).resolves.toEqual({ visible: true })
+      expect(spawn).toHaveBeenCalledOnce()
+      await client.dispose()
+    } finally {
+      vi.useRealTimers()
+      await temporary.cleanup()
+    }
+  })
+
+  it('cancels an in-flight physical move without waiting for its response deadline', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-abort-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ autoRespond: false })
+      const client = new NativeHelperClient({ subprocess: { spawn: () => cursor.handle } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const controller = new AbortController()
+
+      const result = client.cursorCommand({
+        op: 'move',
+        x: 1,
+        y: 2,
+        speedPxPerSecond: 100,
+        accelerationPxPerSecondSquared: 100,
+      }, controller.signal)
+      await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(1) })
+      controller.abort()
+
+      await expect(result).rejects.toMatchObject({ code: 'COMPUTER_CANCELLED' })
+      expect(cursor.terminate).toHaveBeenCalledOnce()
+      await client.dispose()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('rejects a cancelled queued command immediately without breaking FIFO', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-queued-abort-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ autoRespond: false })
+      const client = new NativeHelperClient({ subprocess: { spawn: () => cursor.handle } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const first = client.cursorCommand({ op: 'move', x: 1, y: 2 }, new AbortController().signal)
+      const queuedController = new AbortController()
+      const queued = client.cursorCommand({ op: 'press' }, queuedController.signal)
+      await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(1) })
+
+      queuedController.abort()
+      await expect(queued).rejects.toMatchObject({ code: 'COMPUTER_CANCELLED' })
+      expect(cursor.stdinLines).toHaveLength(1)
+
+      cursor.respond({ ok: true, op: 'move', visible: true })
+      await expect(first).resolves.toEqual({ visible: true })
+      await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(1) })
+      await client.dispose()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('holds a prepared native drag before mouse-down until START is sent', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-drag-barrier-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const drag = dragHandle()
+      const spawn = vi.fn(() => drag.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+
+      const execution = await client.prepareDrag<{ channel: string }>({ command: 'act', request: { action: { kind: 'drag' } } }, new AbortController().signal, 1_000)
+      expect(spawn.mock.calls[0]?.[0].argv).toEqual([await realpath(executable), '--drag-action'])
+      expect(drag.stdinLines).toHaveLength(1)
+      expect(JSON.parse(drag.stdinLines[0]!)).toMatchObject({ protocolVersion: 1, command: 'act' })
+
+      await execution.start()
+      expect(drag.stdinLines).toEqual([expect.any(String), 'START'])
+      drag.respond({ channel: 'coordinates' })
+      await expect(execution.result).resolves.toEqual({ channel: 'coordinates' })
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('finishes a started native drag before reporting caller cancellation', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-drag-safe-cancel-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const drag = dragHandle()
+      const client = new NativeHelperClient({ subprocess: { spawn: () => drag.handle } } as never, resolveConfig({ helper: { path: executable } }))
+      const controller = new AbortController()
+
+      const execution = await client.prepareDrag({ command: 'act', request: { action: { kind: 'drag' } } }, controller.signal, 1_000)
+      await execution.start()
+      controller.abort()
+      expect(drag.terminate).not.toHaveBeenCalled()
+
+      drag.respond({ channel: 'coordinates' })
+      await expect(execution.result).rejects.toMatchObject({
+        code: 'COMPUTER_CANCELLED',
+        message: expect.stringContaining('safe mouse release'),
+      })
+      expect(drag.terminate).not.toHaveBeenCalled()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('does not spawn queued cursor work after disposal starts', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-dispose-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ autoRespond: false })
+      const spawn = vi.fn(() => cursor.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+      await client.prepare(new AbortController().signal)
+      const signal = new AbortController().signal
+
+      const first = client.cursorCommand({ op: 'move', x: 1, y: 2, speedPxPerSecond: 100, accelerationPxPerSecondSquared: 100 }, signal)
+      const queued = client.cursorCommand({ op: 'press' }, signal)
+      await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(1) })
+      const disposed = client.dispose()
+
+      await expect(first).resolves.toMatchObject({ visible: false })
+      await expect(queued).rejects.toMatchObject({ code: 'COMPUTER_PROVIDER_FAILURE', message: expect.stringContaining('disposed') })
+      await disposed
+      expect(spawn).toHaveBeenCalledOnce()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('does not spawn a cursor when disposal begins during helper preparation', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-cursor-prepare-dispose-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const cursor = cursorHandle({ autoRespond: false })
+      const spawn = vi.fn(() => cursor.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+      const preparation = Promise.withResolvers<{ path: string; version: string; sha256: string }>()
+      vi.spyOn(client, 'prepare').mockReturnValue(preparation.promise)
+
+      const command = client.cursorCommand({ op: 'move', x: 1, y: 2 }, new AbortController().signal)
+      await vi.waitFor(() => { expect(client.prepare).toHaveBeenCalledOnce() })
+      const disposed = client.dispose()
+      preparation.resolve({ path: executable, version: '0.3.0', sha256: 'fixture' })
+
+      await expect(command).rejects.toMatchObject({ code: 'COMPUTER_PROVIDER_FAILURE', message: expect.stringContaining('disposed') })
+      await disposed
+      expect(spawn).not.toHaveBeenCalled()
+    } finally {
       await temporary.cleanup()
     }
   })

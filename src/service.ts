@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { BackendCursorAction, BackendHealth, BackendObservation, ComputerUseBackend, CursorVisibility } from './backend.ts'
+import type { BackendActionResult, BackendCursorAction, BackendHealth, BackendObservation, ComputerUseBackend, CursorVisibility } from './backend.ts'
 import { allocateScreenshotPath, describeScreenshot } from './artifacts.ts'
 import type { ResolvedComputerUseConfig } from './config.ts'
 import { ComputerConfirmationManager } from './confirmations.ts'
@@ -124,7 +124,6 @@ function requiresPointerInput(
     case 'click':
       if (action.x !== undefined || action.y !== undefined) return true
       return element !== undefined
-        && !element.actions.includes('AXPress')
         && action.allowCoordinateFallback === true
     case 'scroll':
     case 'drag': return true
@@ -364,75 +363,139 @@ export class ComputerUseService extends Service {
       )
     }
     await this.leases.ensure(context.agent, stored.backend.app, 'control', `computer_${action.kind}`, context.callId, signal)
+    const cursorRequested = this.config.interaction.cursorVisualization === 'visible'
+      && (action.kind === 'click' || action.kind === 'scroll' || action.kind === 'drag')
+    const observationOptions = {
+      screenshot: 'none' as const,
+      maxNodes: this.config.maxNodes,
+      maxDepth: this.config.maxDepth,
+      maxTextBytes: this.config.maxTextBytes,
+    }
     let actionObservation = stored.backend
+    let cursorActivation: 'already-frontmost' | 'activated' | undefined
     let element = selectedOriginalElement
     let resolution: ComputerTargetResolutionResult | undefined = selectedOriginalElement === undefined
       ? undefined
       : { mode: 'exact-locator', confidence: 1, candidateCount: 1, targetChanged: false }
     if (descriptor !== undefined) {
-      const fresh = await this.backend.observe(stored.backend.app, {
-        screenshot: 'none',
-        maxNodes: this.config.maxNodes,
-        maxDepth: this.config.maxDepth,
-        maxTextBytes: this.config.maxTextBytes,
-      }, signal)
+      const fresh = actionObservation === stored.backend
+        ? await this.backend.observe(stored.backend.app, observationOptions, signal)
+        : actionObservation
       const resolved = resolveComputerTarget(stored.backend, fresh, descriptor, allowsTargetRebind(action))
       actionObservation = resolved.observation
       element = resolved.element
       resolution = resolved.resolution
-      if (action.sensitive === true && resolution.targetChanged) {
-        this.confirmations.invalidate(context.agent, action.confirmationToken)
-        throw new ComputerUseError(
-          'COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION',
-          'the sensitive target rebound to a fresh element; observe the current UI and request a new one-use confirmation before acting',
-        )
+    }
+    if (action.sensitive === true && resolution?.targetChanged === true) {
+      this.confirmations.invalidate(context.agent, action.confirmationToken)
+      throw new ComputerUseError(
+        'COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION',
+        'the sensitive target rebound to a fresh element; observe the current UI and request a new one-use confirmation before acting',
+      )
+    }
+    if (cursorRequested
+      && this.config.interaction.focusPolicy === 'activate'
+      && requiresPointerInput(action, selectedOriginalElement)
+      && !actionObservation.frontmost) {
+      const activated = await this.backend.activateForCursor(
+        stored.backend.app,
+        actionObservation.stateHash,
+        observationOptions,
+        signal,
+      )
+      actionObservation = activated.observation
+      cursorActivation = activated.activation
+      if (descriptor !== undefined) {
+        const resolved = resolveComputerTarget(stored.backend, actionObservation, descriptor, allowsTargetRebind(action))
+        actionObservation = resolved.observation
+        element = resolved.element
+        resolution = resolved.resolution
       }
     }
-    this.confirmations.consume(context.agent, stored.backend.app, action)
+    if (action.sensitive === true && resolution?.targetChanged === true) {
+      this.confirmations.invalidate(context.agent, action.confirmationToken)
+      throw new ComputerUseError(
+        'COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION',
+        'the sensitive target rebound to a fresh element; observe the current UI and request a new one-use confirmation before acting',
+      )
+    }
     const visualization = cursorAction(action, element, actionObservation.window, actionObservation.app)
-    const cursorRequested = this.config.interaction.cursorVisualization === 'visible'
-      && (action.kind === 'click' || action.kind === 'scroll' || action.kind === 'drag')
     let cursorStarted = false
-    // The overlay is presentation-only and never blocks native input, but its
-    // least-visible outcome is reported across both phases of the action.
+    // Background targets intentionally hide the overlay. Any other pre-action
+    // failure would violate move-before-input ordering and therefore fails closed.
     let cursorState: CursorVisibility | undefined
     const recordCursor = (next: CursorVisibility): void => {
       if (cursorState === undefined || (cursorState.visible && !next.visible)) cursorState = next
     }
     if (cursorRequested && visualization === undefined) {
-      recordCursor({
+      const unavailable: CursorVisibility = {
         visible: false,
         reason: actionObservation.window?.id === undefined
           ? 'the agent cursor could not be bound because the target window has no stable window id'
           : 'the agent cursor could not be placed because this action has no observable cursor position',
-      })
-    } else if (visualization !== undefined && cursorRequested) {
-      try {
-        recordCursor(await this.backend.visualizeCursor(visualization, 'before', signal))
-        cursorStarted = true
-      } catch (error) {
-        recordCursor({
-          visible: false,
-          reason: `the agent cursor could not be driven before the action: ${error instanceof Error ? error.message : String(error)}`,
-        })
+        ...(!actionObservation.frontmost ? { reasonCode: 'target-not-frontmost' as const } : {}),
       }
+      recordCursor(unavailable)
+      if (actionObservation.frontmost) {
+        throw new ComputerUseError(
+          'COMPUTER_PROVIDER_FAILURE',
+          `the agent cursor could not complete before the action: ${unavailable.reason}`,
+        )
+      }
+    } else if (visualization !== undefined && cursorRequested) {
+      let beforeCursor: CursorVisibility
+      try {
+        beforeCursor = await this.backend.visualizeCursor(visualization, 'before', signal)
+      } catch (error) {
+        throw computerUseError(error, 'the agent cursor could not be driven before the action')
+      }
+      recordCursor(beforeCursor)
+      const intentionalBackground = beforeCursor.reasonCode === 'target-not-frontmost'
+        && (this.config.interaction.focusPolicy === 'preserve'
+          || !requiresPointerInput(action, selectedOriginalElement))
+      if (!beforeCursor.visible && !intentionalBackground) {
+        throw new ComputerUseError(
+          'COMPUTER_PROVIDER_FAILURE',
+          `the agent cursor could not complete before the action: ${beforeCursor.reason ?? 'the overlay is unavailable'}`,
+        )
+      }
+      cursorStarted = beforeCursor.visible
     }
-    let outcome
+    let outcome: BackendActionResult
+    const request = {
+      action,
+      app: actionObservation.app,
+      expectedStateHash: actionObservation.stateHash,
+      interaction: this.config.interaction,
+      ...(element === undefined ? {} : { element }),
+      ...(actionObservation.window === undefined ? {} : { window: actionObservation.window }),
+    }
     try {
-      outcome = await this.backend.act({
-        action,
-        app: actionObservation.app,
-        expectedStateHash: actionObservation.stateHash,
-        interaction: this.config.interaction,
-        ...(element === undefined ? {} : { element }),
-        ...(actionObservation.window === undefined ? {} : { window: actionObservation.window }),
-      }, signal)
+      this.confirmations.consume(context.agent, stored.backend.app, action)
+      if (cursorStarted && visualization?.kind === 'drag') {
+        const tracked = await this.backend.actDragWithCursor(
+          request,
+          visualization as BackendCursorAction & { kind: 'drag' },
+          signal,
+        )
+        recordCursor(tracked.cursor)
+        outcome = tracked.action
+      } else {
+        outcome = await this.backend.act(request, signal)
+      }
+      if (cursorActivation === 'activated' && outcome.activation !== 'activated') {
+        outcome = { ...outcome, activation: 'activated' }
+      }
     } catch (error) {
       throw computerUseError(error, `Computer Use ${action.kind} failed`)
     } finally {
       if (cursorStarted && visualization !== undefined) {
         try {
-          recordCursor(await this.backend.visualizeCursor(visualization, 'after', signal))
+          recordCursor(await this.backend.visualizeCursor(
+            visualization,
+            'after',
+            AbortSignal.timeout(1_500),
+          ))
         } catch (error) {
           recordCursor({
             visible: false,

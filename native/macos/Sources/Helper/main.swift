@@ -6,7 +6,7 @@ import Darwin
 import Foundation
 import ScreenCaptureKit
 
-private let helperVersion = "0.2.1"
+private let helperVersion = "0.3.0"
 
 private struct HelperError: Error {
     let code: String
@@ -860,7 +860,10 @@ private func actionResult(
     ]
 }
 
-private func performAction(_ request: [String: Any]) throws -> [String: Any] {
+private func performAction(
+    _ request: [String: Any],
+    dragStartBarrier: (() throws -> Void)? = nil
+) throws -> [String: Any] {
     let appIdentity = try dictionary(request["app"], "request.app")
     let selector: [String: Any] = [
         "bundleId": try string(appIdentity["bundleId"], "app.bundleId"),
@@ -1023,9 +1026,25 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
         let coordinateSpace = action["coordinateSpace"] as? String ?? "window"
         let from = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "fromX", yKey: "fromY", coordinateSpace: coordinateSpace)
         let to = try windowPoint(action, window: current.snapshot.windowJSON, xKey: "toX", yKey: "toY", coordinateSpace: coordinateSpace)
+        let cursorSpeed = try double(interaction["cursorSpeedPxPerSecond"], "request.interaction.cursorSpeedPxPerSecond")
+        let cursorAcceleration = try double(
+            interaction["cursorAccelerationPxPerSecondSquared"],
+            "request.interaction.cursorAccelerationPxPerSecondSquared"
+        )
+        guard cursorSpeed.isFinite, cursorSpeed >= 100, cursorSpeed <= 50_000,
+              cursorAcceleration.isFinite, cursorAcceleration >= 100, cursorAcceleration <= 500_000 else {
+            throw fail("COMPUTER_PROVIDER_FAILURE", "request.interaction cursor motion is outside the supported range")
+        }
         let target = try pointerTarget(app: app, window: current.snapshot.windowJSON, at: from)
+        try dragStartBarrier?()
         try pointerAction {
-            try targetedDrag(from: from, to: to, target: target)
+            try targetedDrag(
+                from: from,
+                to: to,
+                target: target,
+                speedPxPerSecond: cursorSpeed,
+                accelerationPxPerSecondSquared: cursorAcceleration
+            )
         }
         return actionResult(channel: "coordinates", activation: current.activation, pointerInput: true, pointerRouting: "target-process")
     case "perform-action":
@@ -1060,7 +1079,10 @@ private func performAction(_ request: [String: Any]) throws -> [String: Any] {
     }
 }
 
-private func handle(_ request: [String: Any]) async throws -> Any {
+private func handle(
+    _ request: [String: Any],
+    dragStartBarrier: (() throws -> Void)? = nil
+) async throws -> Any {
     guard (request["protocolVersion"] as? NSNumber)?.intValue == 1 else {
         throw fail("COMPUTER_PROVIDER_FAILURE", "unsupported helper protocol version")
     }
@@ -1112,8 +1134,36 @@ private func handle(_ request: [String: Any]) async throws -> Any {
             screenshot = try await captureWindow(snapshot, path: path, required: mode == "required")
         }
         return observationJSON(snapshot, screenshot: screenshot)
+    case "activate-for-cursor":
+        let appIdentity = try dictionary(request["app"], "app")
+        let app = try resolveApp([
+            "bundleId": try string(appIdentity["bundleId"], "app.bundleId"),
+            "pid": try int(appIdentity["pid"], "app.pid"),
+        ])
+        let options = try dictionary(request["options"], "options")
+        let snapshot = try observeSnapshot(app: app, limits: options)
+        let expected = try string(request["expectedStateHash"], "expectedStateHash")
+        guard snapshot.stateHash == expected else {
+            throw fail("COMPUTER_STALE_OBSERVATION", "the application UI changed before foreground activation")
+        }
+        if app.isActive {
+            return ["observation": observationJSON(snapshot, screenshot: nil), "activation": "already-frontmost"]
+        }
+        let actionTimeoutMs = try int(request["actionTimeoutMs"], "actionTimeoutMs")
+        guard actionTimeoutMs >= 1_000 && actionTimeoutMs <= 120_000 else {
+            throw fail("COMPUTER_PROVIDER_FAILURE", "actionTimeoutMs must be between 1000 and 120000")
+        }
+        try activate(app, timeoutMs: actionTimeoutMs)
+        let refreshed = try observeSnapshot(app: app, limits: options)
+        guard activationStateMatches(snapshot, current: refreshed) else {
+            throw fail("COMPUTER_STALE_OBSERVATION", "the application UI changed while the target application was activated")
+        }
+        return ["observation": observationJSON(refreshed, screenshot: nil), "activation": "activated"]
     case "act":
-        return try performAction(try dictionary(request["request"], "request"))
+        return try performAction(
+            try dictionary(request["request"], "request"),
+            dragStartBarrier: dragStartBarrier
+        )
     default:
         throw fail("COMPUTER_PROVIDER_FAILURE", "unknown helper command")
     }
@@ -1124,6 +1174,13 @@ private func emit(_ payload: [String: Any], exitCode: Int32) -> Never {
     FileHandle.standardOutput.write(data)
     FileHandle.standardOutput.write(Data("\n".utf8))
     Darwin.exit(exitCode)
+}
+
+private func emitFrame(_ payload: [String: Any]) {
+    let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
+        ?? Data("{\"ok\":false,\"error\":{\"code\":\"COMPUTER_PROVIDER_FAILURE\",\"message\":\"response serialization failed\"}}".utf8)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data("\n".utf8))
 }
 
 @main
@@ -1137,6 +1194,24 @@ private struct HelperMain {
             if ProcessInfo.processInfo.arguments.contains("--cursor-overlay") {
                 CursorOverlayRuntime.run()
                 return
+            }
+            if ProcessInfo.processInfo.arguments.contains("--drag-action") {
+                guard let line = readLine(),
+                      let data = line.data(using: .utf8),
+                      let request = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      (request["command"] as? String) == "act",
+                      let actionRequest = request["request"] as? [String: Any],
+                      let action = actionRequest["action"] as? [String: Any],
+                      (action["kind"] as? String) == "drag" else {
+                    throw fail("COMPUTER_PROVIDER_FAILURE", "drag helper stdin must contain one drag action request")
+                }
+                let value = try await handle(request, dragStartBarrier: {
+                    emitFrame(["ok": true, "event": "drag-ready"])
+                    guard readLine() == "START" else {
+                        throw fail("COMPUTER_CANCELLED", "drag action was cancelled before native mouse-down")
+                    }
+                })
+                emit(["ok": true, "value": value], exitCode: 0)
             }
             guard let data = try FileHandle.standardInput.readToEnd(), !data.isEmpty,
                   let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {

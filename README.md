@@ -21,7 +21,7 @@ The default DSH Computer Use route is deliberately non-interfering:
 - **No system-cursor movement:** the helper contains no cursor-warp path.
 - **No global pointer injection:** click, scroll, and drag fallback use a pid/window-targeted SkyLight route, not the global HID event stream.
 - **No pointer-triggered activation:** semantic Accessibility, process-targeted pointer input, and `keyboardPolicy: preserve` run without activation; `keyboardPolicy: activate` (Bundle default) brings the target app forward before keyboard fallback, matching Codex Computer Use.
-- **A separate Agent cursor:** click, scroll, and drag actions animate a click-through, nonactivating software cursor while the macOS system cursor remains untouched. It is visible by default and stays at the action position until the bound window changes or a hide command; `cursorAutoHideMs` can opt into timed auto-hide.
+- **A separate Agent cursor:** click, scroll, and drag actions animate a click-through, nonactivating software cursor while the macOS system cursor remains untouched. It appears only while the exact target application is frontmost and follows a speed/acceleration-shaped curved path. Click and scroll wait for arrival before input; drag reaches and presses at the start point, then tracks the destination while the native drag runs.
 - **No blind replay:** every action is tied to an exact, unexpired observation and returns fresh state.
 
 The result is a native action layer that can operate many background applications while the user continues working in the current foreground application.
@@ -136,13 +136,15 @@ interaction:
   keyboardPolicy: activate
   pointerInputPolicy: targeted
   cursorVisualization: visible
-  cursorMotionMs: 180
+  cursorSpeedPxPerSecond: 1600
+  cursorAccelerationPxPerSecondSquared: 6000
+  cursorClickDelayMs: 90
   cursorAutoHideMs: 0
 ```
 
-`cursorVisualization: visible` displays the Agent's own non-interactive cursor for click, scroll, and drag. It never replaces or moves the macOS system cursor. Set it to `hidden` when visual feedback is unwanted. `pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag. `keyboardPolicy: activate` (Bundle default) makes `type-text` keyboard fallback and `press-key` reliable by activating the target app first; `focusPolicy: activate` is the broader compatibility mode that also activates before pointer input. After activation, the helper re-observes and revalidates the exact target before input.
+`cursorVisualization: visible` displays the Agent's own non-interactive cursor for click, scroll, and drag only while the selected application is frontmost. It never replaces or moves the macOS system cursor. Set it to `hidden` when visual feedback is unwanted. `pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag. `keyboardPolicy: activate` (Bundle default) makes `type-text` keyboard fallback and `press-key` reliable by activating the target app first; `focusPolicy: activate` is the broader compatibility mode that also activates and freshly revalidates before pointer cursor movement and input.
 
-The cursor is a 28x28 transparent whole-image cursor (Cursor arrow plus DeepSeek whale, `assets/cursor.png`) with the hotspot at the image's top-left corner. It is a separate process, click-through, nonactivating, and bound to the exact observed pid, window, and frame so it disappears if the target window closes, moves, resizes, or is minimized.
+The cursor is a 28x28 transparent whole-image cursor (Cursor arrow plus DeepSeek whale, `assets/cursor.png`) with the hotspot at the image's top-left corner. It is a separate process, click-through, nonactivating, and bound to the exact observed pid, window, frame, and current frontmost application. It disappears when that binding stops matching. Travel time is derived from distance, maximum speed, and acceleration; a short curved path plus symmetric acceleration/deceleration keeps the default motion legible, while high values reduce it to a few visible frames. Click input is sent only after native arrival and the configured dwell. For drag, that same sequence reaches the start point before the targeted native drag and endpoint cursor travel begin together.
 
 The helper executable is an internal DSH transport rather than a public authorization API. It requires an isolated process group plus parent-owned standard transports, so ordinary shell redirection fails closed before command parsing. This is defense in depth, not authentication against arbitrary code running as the same macOS user: a deliberately constructed detached parent can reproduce that transport topology. Use the registered Tools so application leases, sensitive-action confirmation, and host policy checks remain in force; `danger-full-access` must not be treated as protection against direct native invocation.
 
@@ -241,18 +243,22 @@ The committed helper is an ad-hoc-signed universal `arm64` + `x86_64` binary tar
 | `interaction.keyboardPolicy` | `preserve` keeps keyboard events routed without activation; `activate` (Bundle default) activates the target app before keyboard fallback |
 | `interaction.pointerInputPolicy` | `targeted` (default) permits pid/window-targeted pointer input; `deny` disables click fallback, scroll, and drag |
 | `interaction.cursorVisualization` | `visible` (default) shows the separate Agent cursor; `hidden` disables only the overlay |
-| `interaction.cursorMotionMs` | Animated Agent-cursor travel duration, default `180` ms |
-| `interaction.cursorAutoHideMs` | Idle time before the Agent cursor hides; default `0` keeps it visible until the bound window changes or a hide command, or set a finite value up to `30000` ms |
+| `interaction.cursorSpeedPxPerSecond` | Requested maximum Agent-cursor speed; default `1600`, range `100` to `50000` pixels per second; the 48 to 2000 ms motion safety bound takes priority at extreme distance/value combinations |
+| `interaction.cursorAccelerationPxPerSecondSquared` | Agent-cursor acceleration and deceleration; default `6000`, range `100` to `500000` pixels per second squared |
+| `interaction.cursorClickDelayMs` | Dwell after arrival and before click/drag press feedback and native input; default `90`, range `0` to `1000` ms |
+| `interaction.cursorAutoHideMs` | Idle time before the Agent cursor hides; default `0` keeps it visible while the target remains frontmost and bound, or set a finite value up to `30000` ms |
 | `allowAllApps` | Grant `read` and `control` to every running app; default `false`. When enabled, exact `grants` are ignored |
 | `grants` | Exact non-wildcard bundle-id read/control policy; `control: true` implies read |
 
 </details>
 
+The deprecated 0.2.x `interaction.cursorMotionMs` field remains accepted so existing Settings documents load, but it is ignored at runtime and removed the next time Web Settings saves the configuration.
+
 Settings updates replace the active provider generation only after validation and health checks pass. Replacement invalidates existing observations and pending confirmations.
 
 ## Status and limitations
 
-- Status: early `0.2.1`; model-facing and provider behavior may change before a stable release.
+- Status: early `0.3.0`; model-facing and provider behavior may change before a stable release.
 - The current provider is macOS-only. Windows UI Automation and Linux providers are not implemented.
 - On non-macOS hosts the plugin degrades gracefully: the DSH profile starts normally, Computer Use Tools and the Skill are not registered, and Web Settings reports `COMPUTER_UNSUPPORTED_PLATFORM` instead of failing startup.
 - Target-process pointer delivery uses dynamically resolved SkyLight SPI. If it is unavailable, pointer fallback fails closed rather than switching to global input.

@@ -60,6 +60,17 @@ export interface BackendActionResult {
 export interface CursorVisibility {
     readonly visible: boolean;
     readonly reason?: string;
+    readonly reasonCode?: 'target-not-frontmost' | 'target-invalid';
+}
+/** Fresh state after a host-authorized foreground activation for cursor sequencing. */
+export interface BackendCursorActivation {
+    readonly observation: BackendObservation;
+    readonly activation: 'already-frontmost' | 'activated';
+}
+/** Native drag input and its Agent-cursor endpoint tracking result. */
+export interface BackendTrackedDragResult {
+    readonly action: BackendActionResult;
+    readonly cursor: CursorVisibility;
 }
 export interface BackendCursorAction {
     kind: 'click' | 'scroll' | 'drag';
@@ -94,14 +105,18 @@ export interface ComputerUseBackend {
     resolveApp(selector: ComputerAppSelector, signal: AbortSignal): Promise<ComputerAppIdentity>;
     listApps(signal: AbortSignal): Promise<ComputerAppSummary[]>;
     observe(app: ComputerAppIdentity, options: BackendObserveOptions, signal: AbortSignal): Promise<BackendObservation>;
+    activateForCursor(app: ComputerAppIdentity, expectedStateHash: string, options: BackendObserveOptions, signal: AbortSignal): Promise<BackendCursorActivation>;
     act(request: BackendActionRequest, signal: AbortSignal): Promise<BackendActionResult>;
+    actDragWithCursor(request: BackendActionRequest, cursor: BackendCursorAction & {
+        kind: 'drag';
+    }, signal: AbortSignal): Promise<BackendTrackedDragResult>;
     /**
      * Drive the agent cursor for one action.
      * @returns whether the cursor is on screen afterwards, plus why not when it
-     * is hidden. A hidden cursor is not an error — native input is unaffected —
-     * but the caller must be able to report that the user cannot see the agent.
+     * is hidden. The Service permits intentional background hiding but fails
+     * closed for foreground placement, transport, and target-validation failures.
      */
-    visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<CursorVisibility>;
+    visualizeCursor(action: BackendCursorAction, phase: 'before' | 'during' | 'after', signal: AbortSignal): Promise<CursorVisibility>;
     dispose(): Promise<void>;
     health(signal: AbortSignal): Promise<BackendHealth>;
     openSettings(kind: 'accessibility' | 'screen-recording', signal: AbortSignal): Promise<void>;

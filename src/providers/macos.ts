@@ -9,6 +9,8 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {
   BackendActionRequest,
   BackendActionResult,
+  BackendCursorActivation,
+  BackendTrackedDragResult,
   BackendCursorAction,
   BackendHealth,
   BackendObservation,
@@ -35,6 +37,11 @@ interface NativeHealth {
 }
 
 interface NativeObservation extends BackendObservation {}
+
+interface NativeCursorActivation {
+  observation: NativeObservation
+  activation: BackendCursorActivation['activation']
+}
 
 function createBackend(ctx: Context, config: ResolvedComputerUseConfig): ComputerUseBackend {
   return process.platform === 'darwin'
@@ -71,7 +78,27 @@ export class MacOSBackend implements ComputerUseBackend {
     }, signal)
   }
 
+  async activateForCursor(
+    app: ComputerAppIdentity,
+    expectedStateHash: string,
+    options: BackendObserveOptions,
+    signal: AbortSignal,
+  ): Promise<BackendCursorActivation> {
+    return await this.client.invoke<NativeCursorActivation>({
+      command: 'activate-for-cursor',
+      app,
+      expectedStateHash,
+      options,
+      actionTimeoutMs: this.config.actionTimeoutMs,
+    }, signal)
+  }
+
   async act(request: BackendActionRequest, signal: AbortSignal): Promise<BackendActionResult> {
+    if (request.action.kind === 'drag') {
+      const execution = await this.prepareNativeDrag(request, signal)
+      await execution.start()
+      return await execution.result
+    }
     return await this.client.invoke<BackendActionResult>({
       command: 'act',
       request: {
@@ -86,7 +113,58 @@ export class MacOSBackend implements ComputerUseBackend {
     }, signal)
   }
 
-  async visualizeCursor(action: BackendCursorAction, phase: 'before' | 'after', signal: AbortSignal): Promise<CursorVisibility> {
+  async actDragWithCursor(
+    request: BackendActionRequest,
+    cursor: BackendCursorAction & { kind: 'drag' },
+    signal: AbortSignal,
+  ): Promise<BackendTrackedDragResult> {
+    const execution = await this.prepareNativeDrag(request, signal)
+    let started = false
+    let cursorResult: CursorVisibility
+    try {
+      cursorResult = await this.visualizeCursorPhase(cursor, 'during', signal, async () => {
+        await execution.start()
+        started = true
+      })
+    } catch (error) {
+      if (!started) {
+        execution.cancel()
+        await execution.result.catch(() => undefined)
+        throw error
+      }
+      cursorResult = {
+        visible: false,
+        reason: `the agent cursor could not track the drag action: ${error instanceof Error ? error.message : String(error)}`,
+      }
+    }
+    return { action: await execution.result, cursor: cursorResult }
+  }
+
+  private async prepareNativeDrag(request: BackendActionRequest, signal: AbortSignal) {
+    return await this.client.prepareDrag<BackendActionResult>({
+      command: 'act',
+      request: {
+        ...request,
+        actionTimeoutMs: this.config.actionTimeoutMs,
+        limits: {
+          maxNodes: this.config.maxNodes,
+          maxDepth: this.config.maxDepth,
+          maxTextBytes: this.config.maxTextBytes,
+        },
+      },
+    }, signal, this.config.actionTimeoutMs + 2_000)
+  }
+
+  async visualizeCursor(action: BackendCursorAction, phase: 'before' | 'during' | 'after', signal: AbortSignal): Promise<CursorVisibility> {
+    return await this.visualizeCursorPhase(action, phase, signal)
+  }
+
+  private async visualizeCursorPhase(
+    action: BackendCursorAction,
+    phase: 'before' | 'during' | 'after',
+    signal: AbortSignal,
+    onMoveWritten?: () => void | Promise<void>,
+  ): Promise<CursorVisibility> {
     if (this.config.interaction.cursorVisualization !== 'visible') return { visible: false, reason: 'the agent cursor is disabled by configuration' }
     // The overlay answers per command; the least visible outcome wins, because
     // a cursor that vanished partway through is a cursor the user cannot follow.
@@ -95,17 +173,23 @@ export class MacOSBackend implements ComputerUseBackend {
       if (!response.visible && outcome.visible) outcome = response
     }
     const autoHideMs = this.config.interaction.cursorAutoHideMs
-    const move = async (point: { x: number; y: number }, durationMs: number): Promise<void> => {
-      record(await this.client.cursorCommand({
+    const move = async (point: { x: number; y: number }, onWritten?: () => void | Promise<void>): Promise<void> => {
+      const command = {
         op: 'move',
         x: point.x,
         y: point.y,
-        durationMs,
-        autoHideMs,
+        speedPxPerSecond: this.config.interaction.cursorSpeedPxPerSecond,
+        accelerationPxPerSecondSquared: this.config.interaction.cursorAccelerationPxPerSecondSquared,
+        // The after phase arms the configured timeout once native input has
+        // completed. Hiding during travel or dwell would invalidate press.
+        autoHideMs: 0,
         targetPid: action.targetPid,
         targetWindowNumber: action.targetWindowNumber,
         targetWindowFrame: action.targetWindowFrame,
-      }, signal))
+      }
+      record(await (onWritten === undefined
+        ? this.client.cursorCommand(command, signal)
+        : this.client.cursorCommand(command, signal, onWritten)))
     }
     if (phase === 'after') {
       // Every action validates the bound target after native input. Only drag
@@ -119,24 +203,28 @@ export class MacOSBackend implements ComputerUseBackend {
       }, signal))
       return outcome
     }
+    if (phase === 'during') {
+      if (action.kind !== 'drag') return { visible: false, reason: 'only drag has a during-action cursor phase' }
+      await move(action.to, onMoveWritten)
+      return outcome
+    }
     const start = action.kind === 'drag' ? action.from : action.to
     if (start === undefined) return { visible: false, reason: 'this action has no cursor position to show' }
-    await move(start, this.config.interaction.cursorMotionMs)
-    if (this.config.interaction.cursorMotionMs > 0) {
-      await delay(this.config.interaction.cursorMotionMs, undefined, { signal })
+    // A move response means the native overlay reached its destination. Keep
+    // the configurable dwell after arrival and before the visual/native press.
+    await move(start)
+    if (!outcome.visible || action.kind === 'scroll') return outcome
+    if (this.config.interaction.cursorClickDelayMs > 0) {
+      await delay(this.config.interaction.cursorClickDelayMs, undefined, { signal })
     }
-    if (action.kind === 'scroll') return outcome
     record(await this.client.cursorCommand({
       op: 'press',
-      autoHideMs,
+      autoHideMs: 0,
       targetPid: action.targetPid,
       targetWindowNumber: action.targetWindowNumber,
       targetWindowFrame: action.targetWindowFrame,
       sustainedPress: action.kind === 'drag',
     }, signal))
-    if (action.kind === 'drag') {
-      await move(action.to, Math.max(this.config.interaction.cursorMotionMs, 240))
-    }
     return outcome
   }
 

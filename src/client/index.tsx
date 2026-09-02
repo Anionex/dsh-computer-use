@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-settings/types'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { integerInRange } from './settings-validation.js'
 
 const NS = 'computer-use'
 const ROUTE = '/_dsh/computer-use/settings'
@@ -22,7 +23,7 @@ const en = {
   accessHint: 'Choose whether Computer Use may work with every app. Exact per-app rules remain available under Advanced settings.',
   advanced: 'Advanced options',
   advancedHint: 'Limits, helper path, cursor timing, and application grants.',
-  cursorTiming: 'Cursor timing',
+  cursorTiming: 'Agent cursor motion',
   helper: 'Native helper',
   helperUnknown: 'Unknown',
   ready: 'Ready',
@@ -62,7 +63,9 @@ const en = {
   cursorVisualization: 'Agent cursor',
   cursorVisible: 'Show a separate click-through Agent cursor',
   cursorHidden: 'Hide the Agent cursor',
-  cursorMotion: 'Cursor travel (ms)',
+  cursorSpeed: 'Requested maximum cursor speed (px/s)',
+  cursorAcceleration: 'Cursor acceleration/deceleration (px/s²)',
+  cursorClickDelay: 'Delay after arrival before click (ms)',
   cursorAutoHide: 'Cursor auto-hide (ms; 0 = stay visible)',
   grants: 'Application grants',
   grantsHint: 'One exact bundle id per line, followed by read or read,control. Wildcards are rejected.',
@@ -74,6 +77,7 @@ const en = {
   readOnly: 'The current Settings provider is read-only.',
   loading: 'Loading Computer Use settings...',
   retry: 'Retry',
+  numberRange: '{field} must be an integer from {min} to {max}.',
 } as const
 
 type LocaleKey = keyof typeof en
@@ -87,7 +91,7 @@ const zh: Record<LocaleKey, string> = {
   accessHint: '日常使用只需决定是否允许操作所有应用；指定应用规则可在高级设置中配置。',
   advanced: '高级设置',
   advancedHint: '操作方式、性能限制、光标效果、指定应用规则和运行组件。一般无需修改。',
-  cursorTiming: '光标效果',
+  cursorTiming: '智能体光标移动',
   helper: '运行组件版本',
   helperUnknown: '未提供',
   ready: '已就绪',
@@ -127,7 +131,9 @@ const zh: Record<LocaleKey, string> = {
   cursorVisualization: '智能体光标',
   cursorVisible: '显示单独的智能体光标',
   cursorHidden: '隐藏智能体光标',
-  cursorMotion: '光标移动时长（毫秒）',
+  cursorSpeed: '光标期望最大速度（像素/秒）',
+  cursorAcceleration: '光标加/减速度（像素/秒²）',
+  cursorClickDelay: '到达后点击延迟（毫秒）',
   cursorAutoHide: '光标自动隐藏（毫秒；0 = 保持显示）',
   grants: '指定应用规则',
   grantsHint: '每行填写一个应用标识，后接 read 或 read,control。应用标识必须完整，不能使用通配符。',
@@ -139,6 +145,7 @@ const zh: Record<LocaleKey, string> = {
   readOnly: '当前配置为只读，无法在这里修改。',
   loading: '正在加载电脑操作设置...',
   retry: '重试',
+  numberRange: '{field}必须是 {min} 到 {max} 之间的整数。',
 }
 
 type Translate = (key: LocaleKey, params?: Record<string, string | number>) => string
@@ -161,6 +168,9 @@ interface ConfigValue {
     pointerInputPolicy?: 'deny' | 'targeted'
     cursorVisualization?: 'hidden' | 'visible'
     cursorMotionMs?: number
+    cursorSpeedPxPerSecond?: number
+    cursorAccelerationPxPerSecondSquared?: number
+    cursorClickDelayMs?: number
     cursorAutoHideMs?: number
   }
   allowAllApps?: boolean
@@ -284,7 +294,9 @@ interface Draft {
   keyboardPolicy: 'preserve' | 'activate'
   pointerInputPolicy: 'deny' | 'targeted'
   cursorVisualization: 'hidden' | 'visible'
-  cursorMotionMs: string
+  cursorSpeedPxPerSecond: string
+  cursorAccelerationPxPerSecondSquared: string
+  cursorClickDelayMs: string
   cursorAutoHideMs: string
   allowAllApps: boolean
   grants: string
@@ -308,7 +320,9 @@ function draftOf(value: ConfigValue): Draft {
     keyboardPolicy: value.interaction?.keyboardPolicy ?? 'preserve',
     pointerInputPolicy: value.interaction?.pointerInputPolicy ?? 'targeted',
     cursorVisualization: value.interaction?.cursorVisualization ?? 'visible',
-    cursorMotionMs: String(value.interaction?.cursorMotionMs ?? 180),
+    cursorSpeedPxPerSecond: String(value.interaction?.cursorSpeedPxPerSecond ?? 1600),
+    cursorAccelerationPxPerSecondSquared: String(value.interaction?.cursorAccelerationPxPerSecondSquared ?? 6000),
+    cursorClickDelayMs: String(value.interaction?.cursorClickDelayMs ?? 90),
     cursorAutoHideMs: String(value.interaction?.cursorAutoHideMs ?? 0),
     allowAllApps: value.allowAllApps ?? false,
     grants: (value.grants ?? []).map(grant => `${grant.bundleId} ${grant.control === true ? 'read,control' : 'read'}`).join('\n'),
@@ -321,7 +335,8 @@ function integer(value: string, name: string): number {
   return parsed
 }
 
-function configOf(draft: Draft): ConfigValue {
+function configOf(draft: Draft, t: Translate): ConfigValue {
+  const rangeError = (field: string, min: number, max: number): string => t('numberRange', { field, min, max })
   const grants = draft.grants.split(/\r?\n/u).map(line => line.trim()).filter(Boolean).map((line) => {
     const [bundleId, rawScopes, ...extra] = line.split(/\s+/u)
     if (bundleId === undefined || rawScopes === undefined || extra.length > 0) throw new Error(`invalid grant line: ${line}`)
@@ -349,8 +364,10 @@ function configOf(draft: Draft): ConfigValue {
       keyboardPolicy: draft.keyboardPolicy,
       pointerInputPolicy: draft.pointerInputPolicy,
       cursorVisualization: draft.cursorVisualization,
-      cursorMotionMs: integer(draft.cursorMotionMs, 'interaction.cursorMotionMs'),
-      cursorAutoHideMs: integer(draft.cursorAutoHideMs, 'interaction.cursorAutoHideMs'),
+      cursorSpeedPxPerSecond: integerInRange(draft.cursorSpeedPxPerSecond, t('cursorSpeed'), 100, 50000, rangeError),
+      cursorAccelerationPxPerSecondSquared: integerInRange(draft.cursorAccelerationPxPerSecondSquared, t('cursorAcceleration'), 100, 500000, rangeError),
+      cursorClickDelayMs: integerInRange(draft.cursorClickDelayMs, t('cursorClickDelay'), 0, 1000, rangeError),
+      cursorAutoHideMs: integerInRange(draft.cursorAutoHideMs, t('cursorAutoHide'), 0, 30000, rangeError),
     },
     allowAllApps: draft.allowAllApps,
     grants,
@@ -396,12 +413,16 @@ function LoadedSettings({ controller, t }: { controller: ComputerUseSettingsCont
   const save = (): void => {
     try {
       setDraftError(undefined)
-      void controller.action('save', { expectedRevision: snapshot.settings.revision, value: configOf(draft) }, 'save')
+      void controller.action('save', { expectedRevision: snapshot.settings.revision, value: configOf(draft, t) }, 'save')
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : String(error))
     }
   }
-  const numberField = (key: keyof Draft, label: string) => <Field label={label}><Input value={String(draft[key])} onChange={event => update(key, event.target.value as never)} /></Field>
+  const numberField = (key: keyof Draft, label: string, bounds: { min?: number; max?: number } = {}) => (
+    <Field label={label}>
+      <Input type="number" min={bounds.min ?? 0} max={bounds.max} step={1} value={String(draft[key])} onChange={event => update(key, event.target.value as never)} />
+    </Field>
+  )
   return <div className="dcu-settings">
     {snapshot.provider.lastError === undefined ? null : <div className="dcu-alert error">{snapshot.provider.lastError}</div>}
     {!snapshot.writable ? <div className="dcu-alert warning">{t('readOnly')}</div> : null}
@@ -469,8 +490,10 @@ function LoadedSettings({ controller, t }: { controller: ComputerUseSettingsCont
         <section className="dcu-panel">
           <div className="dcu-panel-title"><h3>{t('cursorTiming')}</h3></div>
           <div className="dcu-grid">
-            {numberField('cursorMotionMs', t('cursorMotion'))}
-            {numberField('cursorAutoHideMs', t('cursorAutoHide'))}
+            {numberField('cursorSpeedPxPerSecond', t('cursorSpeed'), { min: 100, max: 50000 })}
+            {numberField('cursorAccelerationPxPerSecondSquared', t('cursorAcceleration'), { min: 100, max: 500000 })}
+            {numberField('cursorClickDelayMs', t('cursorClickDelay'), { max: 1000 })}
+            {numberField('cursorAutoHideMs', t('cursorAutoHide'), { max: 30000 })}
           </div>
         </section>
         <section className="dcu-panel">

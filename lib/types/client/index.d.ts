@@ -10,7 +10,7 @@ declare const en: {
     readonly accessHint: "Choose whether Computer Use may work with every app. Exact per-app rules remain available under Advanced settings.";
     readonly advanced: "Advanced options";
     readonly advancedHint: "Limits, helper path, cursor timing, and application grants.";
-    readonly cursorTiming: "Cursor timing";
+    readonly cursorTiming: "Agent cursor motion";
     readonly helper: "Native helper";
     readonly helperUnknown: "Unknown";
     readonly ready: "Ready";
@@ -50,7 +50,9 @@ declare const en: {
     readonly cursorVisualization: "Agent cursor";
     readonly cursorVisible: "Show a separate click-through Agent cursor";
     readonly cursorHidden: "Hide the Agent cursor";
-    readonly cursorMotion: "Cursor travel (ms)";
+    readonly cursorSpeed: "Requested maximum cursor speed (px/s)";
+    readonly cursorAcceleration: "Cursor acceleration/deceleration (px/s²)";
+    readonly cursorClickDelay: "Delay after arrival before click (ms)";
     readonly cursorAutoHide: "Cursor auto-hide (ms; 0 = stay visible)";
     readonly grants: "Application grants";
     readonly grantsHint: "One exact bundle id per line, followed by read or read,control. Wildcards are rejected.";
@@ -62,6 +64,7 @@ declare const en: {
     readonly readOnly: "The current Settings provider is read-only.";
     readonly loading: "Loading Computer Use settings...";
     readonly retry: "Retry";
+    readonly numberRange: "{field} must be an integer from {min} to {max}.";
 };
 type LocaleKey = keyof typeof en;
 declare module '@deepseek-ai/dsh-client-ui-slots' {

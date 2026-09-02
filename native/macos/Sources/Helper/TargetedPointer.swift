@@ -246,7 +246,9 @@ func targetedScroll(
 func targetedDrag(
     from: CGPoint,
     to: CGPoint,
-    target: TargetedPointerTarget
+    target: TargetedPointerTarget,
+    speedPxPerSecond: Double,
+    accelerationPxPerSecondSquared: Double
 ) throws {
     let source = try targetedPointerSource()
     let group = clickGroup()
@@ -261,7 +263,7 @@ func targetedDrag(
         gesturePhase: 2,
         clickGroup: group
     )
-    usleep(12_000)
+    usleep(2_000)
 
     let down = try pointerEvent(source: source, type: .leftMouseDown, button: .left)
     down.setDoubleValueField(.mouseEventPressure, value: 1)
@@ -275,14 +277,25 @@ func targetedDrag(
         gesturePhase: 3,
         clickGroup: group
     )
-    usleep(16_000)
+    usleep(2_000)
 
-    for step in 1...12 {
-        let fraction = CGFloat(step) / 12
-        let point = CGPoint(
-            x: from.x + (to.x - from.x) * fraction,
-            y: from.y + (to.y - from.y) * fraction
+    let distance = hypot(to.x - from.x, to.y - from.y)
+    let duration = distance == 0 ? 0 : cursorMotionDuration(
+        distance: distance,
+        speed: speedPxPerSecond,
+        acceleration: accelerationPxPerSecondSquared
+    )
+    let started = ProcessInfo.processInfo.systemUptime
+    while true {
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+        let progress = duration == 0 ? 1 : min(1, elapsed / duration)
+        let fraction = cursorMotionFraction(
+            progress: progress,
+            distance: distance,
+            speed: speedPxPerSecond,
+            acceleration: accelerationPxPerSecondSquared
         )
+        let point = cursorMotionPoint(from: from, to: to, fraction: fraction)
         let dragged = try pointerEvent(source: source, type: .leftMouseDragged, button: .left)
         dragged.setDoubleValueField(.mouseEventPressure, value: 1)
         try postPointerEvent(
@@ -295,9 +308,9 @@ func targetedDrag(
             gesturePhase: 3,
             clickGroup: group
         )
-        usleep(12_000)
+        if progress >= 1 { break }
+        usleep(8_333)
     }
-    usleep(50_000)
 
     let up = try pointerEvent(source: source, type: .leftMouseUp, button: .left)
     up.setDoubleValueField(.mouseEventPressure, value: 0)

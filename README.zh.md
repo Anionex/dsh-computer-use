@@ -21,7 +21,7 @@ DSH Computer Use 的默认路由有意避免干扰：
 - **不移动系统光标：** helper 中没有 cursor warp 路径。
 - **不做全局指针注入：** click、scroll 与 drag fallback 使用 pid/window 定向的 SkyLight 路由，不进入全局 HID 事件流。
 - **指针动作不激活应用：** 语义化 Accessibility、目标进程指针输入与 `keyboardPolicy: preserve` 都不激活；`keyboardPolicy: activate`（Bundle 默认）在键盘 fallback 前把目标应用带到前台，与 Codex Computer Use 对齐。
-- **独立 Agent 光标：** click、scroll 与 drag 动作会移动一个点击穿透、不会激活应用的软件光标，同时保持系统真实光标不变。默认显示，并停留在动作落点，直到绑定窗口变化或收到 hide 命令；`cursorAutoHideMs` 可开启定时自动隐藏。
+- **独立 Agent 光标：** click、scroll 与 drag 动作会移动一个点击穿透、不会激活应用的软件光标，同时保持系统真实光标不变。它只在准确目标应用位于前台时显示，并沿速度/加速度塑造的轻微弧线移动。点击与滚动会等待到达后再输入；拖拽会先到达起点并显示按下，再让目标进程拖拽与光标向终点移动同步开始。
 - **不盲目重放：** 每个动作都绑定准确、未过期的 observation，并返回新鲜状态。
 
 因此，这个原生动作层可以在用户继续使用当前前台应用时，操作许多后台应用。
@@ -136,13 +136,15 @@ interaction:
   keyboardPolicy: activate
   pointerInputPolicy: targeted
   cursorVisualization: visible
-  cursorMotionMs: 180
+  cursorSpeedPxPerSecond: 1600
+  cursorAccelerationPxPerSecondSquared: 6000
+  cursorClickDelayMs: 90
   cursorAutoHideMs: 0
 ```
 
-`cursorVisualization: visible` 会在 click、scroll 与 drag 时显示 Agent 自己的非交互光标；它不会替代或移动 macOS 系统光标。不需要视觉反馈时可设为 `hidden`。`pointerInputPolicy: deny` 会禁用坐标点击/fallback、滚动与拖拽。`keyboardPolicy: activate`（Bundle 默认）会先激活目标应用，让 `type-text` 键盘 fallback 与 `press-key` 可靠工作；`focusPolicy: activate` 是更宽的兼容模式，还会在指针输入前激活。激活后 helper 会重新观察并校验准确目标，之后才发出输入。
+`cursorVisualization: visible` 会在选定应用位于前台时，为 click、scroll 与 drag 显示 Agent 自己的非交互光标；它不会替代或移动 macOS 系统光标。不需要视觉反馈时可设为 `hidden`。`pointerInputPolicy: deny` 会禁用坐标点击/fallback、滚动与拖拽。`keyboardPolicy: activate`（Bundle 默认）会先激活目标应用，让 `type-text` 键盘 fallback 与 `press-key` 可靠工作；`focusPolicy: activate` 是更宽的兼容模式，还会在指针光标移动和输入前激活目标应用，并重新观察、校验准确目标。
 
-Agent 光标是 28x28 的透明整图光标（Cursor 箭头加 DeepSeek 鲸鱼，`assets/cursor.png`），热点位于图片左上角。它由独立进程运行，点击穿透、不激活应用，并绑定准确已观察的 pid、窗口与 frame；目标窗口关闭、移动、缩放或最小化时会自动隐藏。
+Agent 光标是 28x28 的透明整图光标（Cursor 箭头加 DeepSeek 鲸鱼，`assets/cursor.png`），热点位于图片左上角。它由独立进程运行，点击穿透、不激活应用，并绑定准确已观察的 pid、窗口、frame 与当前前台应用；任一条件不再匹配时就会隐藏。移动时间由距离、最大速度与加速度计算，默认采用带对称加减速的轻微弧线；把速度和加速度调高后仍保留少量可见动画帧。Native 到达目标并经过配置的停顿后，才会发出点击输入。拖拽则先按同一顺序到达起点，再让目标进程拖拽与 Agent 光标向终点移动同时开始。
 
 Helper executable 是 DSH 内部传输实现，不是公共授权 API。它要求独立进程组和父进程持有的标准传输，因此普通 shell 重定向会在解析命令前 fail closed。这个检查只属于纵深防御，不会认证同一 macOS 用户下运行的任意代码：专门构造的 detached 父进程仍能复现这类传输拓扑。应通过已注册 Tool 使用该能力，以保留应用 lease、敏感动作 confirmation 与宿主策略检查；不能把 `danger-full-access` 当作阻止直接 native 调用的保护。
 
@@ -241,18 +243,22 @@ Accessibility 与 Screen Recording 是 UI 权限，不是文件系统权限。�
 | `interaction.keyboardPolicy` | `preserve` 不激活地把键盘事件定向投递；`activate`（Bundle 默认）在键盘 fallback 前激活目标应用 |
 | `interaction.pointerInputPolicy` | `targeted`（默认）允许 pid/window 定向指针输入；`deny` 禁用 click fallback、scroll 和 drag |
 | `interaction.cursorVisualization` | `visible`（默认）显示独立 Agent 光标；`hidden` 只关闭 overlay，不影响输入 |
-| `interaction.cursorMotionMs` | Agent 光标移动动画时长，默认 `180` 毫秒 |
-| `interaction.cursorAutoHideMs` | Agent 光标空闲后隐藏时间；默认 `0` 表示保持显示，直到绑定窗口变化或收到 hide 命令，也可设为最大 `30000` ms 内的有限值 |
+| `interaction.cursorSpeedPxPerSecond` | Agent 光标期望最大速度；默认 `1600`，范围为每秒 `100` 至 `50000` 像素；极端距离/参数组合下优先遵守 48 至 2000 毫秒的移动安全边界 |
+| `interaction.cursorAccelerationPxPerSecondSquared` | Agent 光标加速度与减速度；默认 `6000`，范围为每秒平方 `100` 至 `500000` 像素 |
+| `interaction.cursorClickDelayMs` | 到达后、点击/拖拽按下反馈与原生输入前的停顿；默认 `90`，范围 `0` 至 `1000` 毫秒 |
+| `interaction.cursorAutoHideMs` | Agent 光标空闲后隐藏时间；默认 `0` 表示在目标保持前台且绑定有效时持续显示，也可设为最大 `30000` ms 内的有限值 |
 | `allowAllApps` | 向所有运行中的应用授予 `read` 与 `control`；默认 `false`。开启后忽略精确 `grants` |
 | `grants` | 准确、无通配符的 bundle-id read/control policy；`control: true` 隐含 read |
 
 </details>
 
+已弃用的 0.2.x `interaction.cursorMotionMs` 仍会被接受，确保旧 Settings 文档能够加载，但运行时会忽略它；下次通过 Web Settings 保存时会移除该字段。
+
 Settings 更新只有在校验与健康检查通过后才替换当前 provider generation；替换会使已有 observation 与待用 confirmation 失效。
 
 ## 状态与限制
 
-- 状态：早期 `0.2.1`；稳定版本发布前，模型可见和 provider 行为仍可能变化。
+- 状态：早期 `0.3.0`；稳定版本发布前，模型可见和 provider 行为仍可能变化。
 - 当前 provider 只支持 macOS；Windows UI Automation 和 Linux provider 尚未实现。
 - 在非 macOS 主机上插件会优雅降级：DSH profile 正常启动，不会注册 Computer Use 工具与 Skill，Web Settings 会显示 `COMPUTER_UNSUPPORTED_PLATFORM`，而不是让启动失败。
 - 目标进程指针投递使用动态解析的 SkyLight SPI。该路由不可用时，pointer fallback 会 fail closed，不会切换到全局输入。

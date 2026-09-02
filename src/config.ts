@@ -21,7 +21,11 @@ export interface ComputerUseInteractionConfig {
   keyboardPolicy?: 'preserve' | 'activate'
   pointerInputPolicy?: 'deny' | 'targeted'
   cursorVisualization?: 'hidden' | 'visible'
+  /** @deprecated Accepted for 0.2.x settings compatibility; physical motion replaces fixed duration. */
   cursorMotionMs?: number
+  cursorSpeedPxPerSecond?: number
+  cursorAccelerationPxPerSecondSquared?: number
+  cursorClickDelayMs?: number
   cursorAutoHideMs?: number
 }
 
@@ -67,7 +71,10 @@ export const Config: Schema<ComputerUseConfig> = z.object({
     keyboardPolicy: z.union(['preserve', 'activate']).default('preserve'),
     pointerInputPolicy: z.union(['deny', 'targeted']).default('targeted'),
     cursorVisualization: z.union(['hidden', 'visible']).default('visible'),
-    cursorMotionMs: z.number().default(180),
+    cursorMotionMs: z.number(),
+    cursorSpeedPxPerSecond: z.number().default(1600),
+    cursorAccelerationPxPerSecondSquared: z.number().default(6000),
+    cursorClickDelayMs: z.number().default(90),
     cursorAutoHideMs: z.number().default(0),
   }),
   allowAllApps: z.boolean().default(false),
@@ -99,7 +106,9 @@ export interface ResolvedComputerUseConfig {
     keyboardPolicy: 'preserve' | 'activate'
     pointerInputPolicy: 'deny' | 'targeted'
     cursorVisualization: 'hidden' | 'visible'
-    cursorMotionMs: number
+    cursorSpeedPxPerSecond: number
+    cursorAccelerationPxPerSecondSquared: number
+    cursorClickDelayMs: number
     cursorAutoHideMs: number
   }
   allowAllApps: boolean
@@ -151,7 +160,12 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
   const keyboardPolicy = option('interaction.keyboardPolicy', config.interaction?.keyboardPolicy ?? 'preserve', ['preserve', 'activate'] as const)
   const pointerInputPolicy = option('interaction.pointerInputPolicy', config.interaction?.pointerInputPolicy ?? 'targeted', ['deny', 'targeted'] as const)
   const cursorVisualization = option('interaction.cursorVisualization', config.interaction?.cursorVisualization ?? 'visible', ['hidden', 'visible'] as const)
-  const cursorMotionMs = integer('interaction.cursorMotionMs', config.interaction?.cursorMotionMs ?? 180, 0, 2000)
+  if (config.interaction?.cursorMotionMs !== undefined) {
+    integer('interaction.cursorMotionMs', config.interaction.cursorMotionMs, 0, 2000)
+  }
+  const cursorSpeedPxPerSecond = integer('interaction.cursorSpeedPxPerSecond', config.interaction?.cursorSpeedPxPerSecond ?? 1600, 100, 50000)
+  const cursorAccelerationPxPerSecondSquared = integer('interaction.cursorAccelerationPxPerSecondSquared', config.interaction?.cursorAccelerationPxPerSecondSquared ?? 6000, 100, 500000)
+  const cursorClickDelayMs = integer('interaction.cursorClickDelayMs', config.interaction?.cursorClickDelayMs ?? 90, 0, 1000)
   const cursorAutoHideMs = integer('interaction.cursorAutoHideMs', config.interaction?.cursorAutoHideMs ?? 0, 0, 30000)
   const allowAllApps = config.allowAllApps ?? false
   const seen = new Set<string>()
@@ -187,7 +201,9 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
       keyboardPolicy,
       pointerInputPolicy,
       cursorVisualization,
-      cursorMotionMs,
+      cursorSpeedPxPerSecond,
+      cursorAccelerationPxPerSecondSquared,
+      cursorClickDelayMs,
       cursorAutoHideMs,
     },
     allowAllApps,

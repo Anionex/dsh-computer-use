@@ -10,4 +10,7 @@
           keyboardPolicy: activate
           pointerInputPolicy: targeted
           cursorVisualization: visible
+          cursorSpeedPxPerSecond: 1600
+          cursorAccelerationPxPerSecondSquared: 6000
+          cursorClickDelayMs: 90
           cursorAutoHideMs: 0
