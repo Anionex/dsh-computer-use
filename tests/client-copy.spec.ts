@@ -2,12 +2,23 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { integerInRange } from '../src/client/settings-validation.ts'
 
 const ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
 
 describe('Computer Use settings copy and hierarchy', () => {
-  it('rejects cursor values outside host bounds with localized copy', () => {
+  it('rejects cursor values outside host bounds with localized copy', async () => {
+    const source = await readFile(join(ROOT, 'src/client/index.tsx'), 'utf8')
+    expect(source).toContain('export function integerInRange')
+    const match = source.match(/export function integerInRange[\s\S]*?\{([\s\S]*?)\n\}/u)
+    expect(match).not.toBeNull()
+    const integerInRange = new Function('value', 'field', 'min', 'max', 'formatError', match![1]!) as (
+      value: string,
+      field: string,
+      min: number,
+      max: number,
+      formatError: (field: string, min: number, max: number) => string,
+    ) => number
+
     const zh = (field: string, min: number, max: number): string => `${field}必须是 ${min} 到 ${max} 之间的整数。`
     expect(integerInRange('100', '光标速度', 100, 50000, zh)).toBe(100)
     expect(() => integerInRange('50001', '光标速度', 100, 50000, zh))

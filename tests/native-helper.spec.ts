@@ -307,9 +307,12 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
 
   it('prepares the managed helper and rejects an external symlink', async () => {
     const managed = new NativeHelperClient({} as never, resolveConfig())
+    const manifest = JSON.parse(await readFile(join(NATIVE, 'manifest.json'), 'utf8'))
+    const version = manifest.helperVersion as string
+
     await expect(managed.prepare(new AbortController().signal)).resolves.toMatchObject({
       path: HELPER,
-      version: '0.3.0',
+      version,
       sha256: await sha256(HELPER),
     })
 
@@ -337,20 +340,23 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
       await copyFile(join(NATIVE, 'manifest.json'), join(managedRoot, 'manifest.json'))
       await chmod(packagedHelper, 0o644)
 
+      const manifest = JSON.parse(await readFile(join(NATIVE, 'manifest.json'), 'utf8'))
+      const version = manifest.helperVersion as string
+
       const managed = new NativeHelperClient({} as never, resolveConfig(), managedRoot)
       await expect(managed.prepare(new AbortController().signal)).resolves.toMatchObject({
         path: await realpath(packagedHelper),
-        version: '0.3.0',
+        version,
         sha256: await sha256(HELPER),
       })
       expect((await stat(packagedHelper)).mode & 0o100).toBe(0o100)
 
       await chmod(packagedHelper, 0o644)
-      const manifest = JSON.parse(await readFile(join(NATIVE, 'manifest.json'), 'utf8')) as {
+      const tamperedManifest = JSON.parse(await readFile(join(NATIVE, 'manifest.json'), 'utf8')) as {
         binary: { sha256: string }
       }
-      manifest.binary.sha256 = '0'.repeat(64)
-      await writeFile(join(managedRoot, 'manifest.json'), `${JSON.stringify(manifest)}\n`)
+      tamperedManifest.binary.sha256 = '0'.repeat(64)
+      await writeFile(join(managedRoot, 'manifest.json'), `${JSON.stringify(tamperedManifest)}\n`)
       const tampered = new NativeHelperClient({} as never, resolveConfig(), managedRoot)
       await expect(tampered.prepare(new AbortController().signal)).rejects.toThrow(/hash does not match/)
       expect((await stat(packagedHelper)).mode & 0o100).toBe(0)

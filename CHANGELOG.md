@@ -4,6 +4,12 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-02
+
+### Fixed
+
+- Inlined client settings range validation into `src/client/index.tsx` so the single-file browser bundle loads directly without unbundled relative `require()` calls in the web module loader.
+
 ## [0.3.0] - 2026-09-01
 
 ### Added

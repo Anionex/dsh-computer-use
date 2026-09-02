@@ -8,7 +8,21 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-settings/types'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { integerInRange } from './settings-validation.js'
+
+/** Parse one bounded integer using caller-owned localized error copy. */
+export function integerInRange(
+  value: string,
+  field: string,
+  min: number,
+  max: number,
+  formatError: (field: string, min: number, max: number) => string,
+): number {
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(formatError(field, min, max))
+  }
+  return parsed
+}
 
 const NS = 'computer-use'
 const ROUTE = '/_dsh/computer-use/settings'
