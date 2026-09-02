@@ -6,6 +6,7 @@ import type {
   BackendActionRequest,
   BackendActionResult,
   BackendCursorActivation,
+  BackendTrackedDragResult,
   BackendCursorAction,
   BackendHealth,
   BackendObservation,
@@ -164,6 +165,18 @@ export class FakeBackend implements ComputerUseBackend {
       pointerInput: this.actionPointerInput,
       pointerRouting: this.actionPointerRouting,
     })
+  }
+
+  async actDragWithCursor(
+    request: BackendActionRequest,
+    cursor: BackendCursorAction & { kind: 'drag' },
+    signal: AbortSignal,
+  ): Promise<BackendTrackedDragResult> {
+    const [action, cursorResult] = await Promise.all([
+      this.act(request),
+      this.visualizeCursor(cursor, 'during', signal),
+    ])
+    return { action, cursor: cursorResult }
   }
 
   /** Overridable so a test can make the agent cursor fail to show. */

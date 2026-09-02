@@ -34,7 +34,7 @@ interaction:
 
 指针投递在点位于已观察窗口内时直接使用该窗口；否则解析选定应用在该屏幕点下最上层的屏幕内窗口，再通过 `SLEventPostToPid` 投递并附带 pid/window 字段与窗口本地坐标。这与 Codex Computer Use 的 target-process 形态一致（`SynthesizedEvent.send(to: pid)` 配合 `CGWindow.window(at:)`），因此 `coordinateSpace: screen` 无需全局 HID 事件流即可支持任意坐标点击。SkyLight symbol 不可用，或该点不在选定应用的任何屏幕内窗口中时都会 fail closed。
 
-视觉反馈由专用、常驻的光标进程创建 28x28 `NSPanel`。该 panel 无边框、不激活应用、点击穿透，并且不会进入普通窗口切换列表；它不会显示在全部 Space，也不会覆盖后台目标应用。第一次可见移动从系统鼠标当前点开始，但不会移动系统鼠标；后续移动从 Agent 光标上一个落点开始。移动距离、期望最大速度与加速度共同决定 48 至 2000 毫秒的有界时长；极端组合下安全边界优先于精确物理单位。对称加减速与轻微确定性 Bezier 弧线形成清晰轨迹。Native move 只有在到达后才回包，provider 随后等待 `cursorClickDelayMs` 再显示按下反馈。点击输入随后发出；拖拽则先到达起点并按下，再让 Agent 光标向终点移动与目标进程原生拖拽同时进行，两者结束后才执行释放校验。这个 overlay 本身不发出输入，也不会改变系统光标位置。
+视觉反馈由专用、常驻的光标进程创建 28x28 `NSPanel`。该 panel 无边框、不激活应用、点击穿透，并且不会进入普通窗口切换列表；它不会显示在全部 Space，也不会覆盖后台目标应用。第一次可见移动从系统鼠标当前点开始，但不会移动系统鼠标；后续移动从 Agent 光标上一个落点开始。移动距离、期望最大速度与加速度共同决定 48 至 2000 毫秒的有界时长；极端组合下安全边界优先于精确物理单位。对称加减速与轻微确定性 Bezier 弧线形成清晰轨迹。Native move 只有在到达后才回包，provider 随后等待 `cursorClickDelayMs` 再显示按下反馈。点击输入随后发出。拖拽会先到达起点并按下；native helper 校验目标后停在启动门闩，直到终点光标命令已经写入，随后 Agent 光标与目标进程拖拽沿同一条有界 Quartz 轨迹运行。一旦可能已经发出 native mouse-down，调用取消也会等待有界 mouse-up 完成，不会在手势中途终止 helper。两者结束后才执行释放校验。这个 overlay 本身不发出输入，也不会改变系统光标位置。
 
 受支持的 DSH Tool 路径会执行两层策略检查。Service 会在申请 control lease 或消费敏感动作 confirmation 之前拒绝已知需要指针或前台权限的动作；helper 会在真正发出输入前再次校验同一份已解析策略，包括只能在运行时确定的 fallback。Helper 还要求独立进程组，以及三条标准 pipe 或 Unix socket 传输的对端都属于它的直接父进程；普通 shell 重定向会在解析命令前 fail closed。这个传输检查只属于纵深防御，不会认证同一 macOS 用户下运行的任意代码：专门构造的 detached 父进程仍能复现这类拓扑，尤其是在 `danger-full-access` 下。注册 Tool 路径仍是唯一受支持的调用方式，因为它会在调用 helper 前执行 lease、confirmation 与宿主策略。
 

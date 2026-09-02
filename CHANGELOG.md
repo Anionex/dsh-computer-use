@@ -19,6 +19,7 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 - Background pointer targets using `focusPolicy: activate` are now activated and freshly revalidated before cursor movement, so activation mode cannot bypass visible movement and dwell.
 - Foreground cursor setup failures now block input consistently, queued cursor commands cancel promptly, and disposal cannot launch a late overlay process.
+- Native drag now waits at a validated start barrier until endpoint cursor tracking is armed, and cancellation after mouse-down waits for the bounded native mouse-up instead of terminating mid-gesture.
 - Web Settings now rejects cursor values outside the host-supported ranges with localized validation messages.
 
 ## [0.2.1] - 2026-09-01

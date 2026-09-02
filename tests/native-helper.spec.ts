@@ -128,6 +128,49 @@ function cursorHandle(options: CursorHandleOptions = {}) {
   return { handle, stdinLines, terminate, exit, respond }
 }
 
+function dragHandle() {
+  const stdinLines: string[] = []
+  const stdout = new PassThrough()
+  const stderr = reader('')
+  const completed = Promise.withResolvers<{ exitCode: number | null; signal: NodeJS.Signals | null }>()
+  let exited = false
+  const exit = (outcome: { exitCode: number | null; signal: NodeJS.Signals | null }): void => {
+    if (exited) return
+    exited = true
+    stdout.end()
+    completed.resolve(outcome)
+  }
+  const stdin = new Writable({
+    write(chunk, _encoding, callback) {
+      const line = chunk.toString().trim()
+      stdinLines.push(line)
+      if (line === 'START') {
+        // The test controls the final action response explicitly.
+      } else {
+        JSON.parse(line)
+        stdout.write('{"event":"drag-ready","ok":true}\n')
+      }
+      callback()
+    },
+  })
+  const terminate = vi.fn(() => { exit({ exitCode: null, signal: 'SIGTERM' }) })
+  const handle: SubprocessHandle = {
+    pid: 8442,
+    stdin,
+    stdout,
+    stderr: undefined,
+    collected: { stderr },
+    done: completed.promise,
+    terminate,
+    waitForExit: vi.fn(async () => { await completed.promise; return true }),
+  }
+  const respond = (value: unknown): void => {
+    stdout.write(`${JSON.stringify({ ok: true, value })}\n`)
+    exit({ exitCode: 0, signal: null })
+  }
+  return { handle, stdinLines, terminate, respond }
+}
+
 describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
   it('contains no global pointer warp or HID-post implementation', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
@@ -524,6 +567,56 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
       await expect(first).resolves.toEqual({ visible: true })
       await vi.waitFor(() => { expect(cursor.stdinLines).toHaveLength(1) })
       await client.dispose()
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('holds a prepared native drag before mouse-down until START is sent', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-drag-barrier-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const drag = dragHandle()
+      const spawn = vi.fn(() => drag.handle)
+      const client = new NativeHelperClient({ subprocess: { spawn } } as never, resolveConfig({ helper: { path: executable } }))
+
+      const execution = await client.prepareDrag<{ channel: string }>({ command: 'act', request: { action: { kind: 'drag' } } }, new AbortController().signal, 1_000)
+      expect(spawn.mock.calls[0]?.[0].argv).toEqual([await realpath(executable), '--drag-action'])
+      expect(drag.stdinLines).toHaveLength(1)
+      expect(JSON.parse(drag.stdinLines[0]!)).toMatchObject({ protocolVersion: 1, command: 'act' })
+
+      await execution.start()
+      expect(drag.stdinLines).toEqual([expect.any(String), 'START'])
+      drag.respond({ channel: 'coordinates' })
+      await expect(execution.result).resolves.toEqual({ channel: 'coordinates' })
+    } finally {
+      await temporary.cleanup()
+    }
+  })
+
+  it('finishes a started native drag before reporting caller cancellation', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-drag-safe-cancel-')
+    try {
+      const executable = join(temporary.path, 'helper')
+      await writeFile(executable, '#!/bin/sh\nexit 0\n')
+      await chmod(executable, 0o755)
+      const drag = dragHandle()
+      const client = new NativeHelperClient({ subprocess: { spawn: () => drag.handle } } as never, resolveConfig({ helper: { path: executable } }))
+      const controller = new AbortController()
+
+      const execution = await client.prepareDrag({ command: 'act', request: { action: { kind: 'drag' } } }, controller.signal, 1_000)
+      await execution.start()
+      controller.abort()
+      expect(drag.terminate).not.toHaveBeenCalled()
+
+      drag.respond({ channel: 'coordinates' })
+      await expect(execution.result).rejects.toMatchObject({
+        code: 'COMPUTER_CANCELLED',
+        message: expect.stringContaining('safe mouse release'),
+      })
+      expect(drag.terminate).not.toHaveBeenCalled()
     } finally {
       await temporary.cleanup()
     }

@@ -5,6 +5,7 @@ import { access, chmod, lstat, readFile, realpath, stat } from 'node:fs/promises
 import { constants, type Stats } from 'node:fs'
 import type { Writable } from 'node:stream'
 import { dirname, resolve } from 'node:path'
+import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputReader } from '@deepseek-ai/dsh-subprocess'
@@ -38,6 +39,12 @@ interface HelperSuccess<T> {
 }
 
 type HelperEnvelope<T> = HelperFailure | HelperSuccess<T>
+
+export interface PreparedNativeDrag<T> {
+  readonly result: Promise<T>
+  start(): Promise<void>
+  cancel(): void
+}
 
 /**
  * The response includes synchronous WindowServer validation, which can exceed
@@ -270,12 +277,152 @@ export class NativeHelperClient {
     return envelope.value
   }
 
+  /** Prepare and validate a drag, then wait for an explicit pre-mouse-down start barrier. */
+  async prepareDrag<T>(
+    request: Record<string, unknown>,
+    signal: AbortSignal,
+    readinessTimeoutMs: number,
+  ): Promise<PreparedNativeDrag<T>> {
+    const prepared = this.prepared ?? await this.prepare(signal)
+    if (signal.aborted) throw new ComputerUseError('COMPUTER_CANCELLED', 'native drag preparation was cancelled')
+    const processAbort = new AbortController()
+    const handle = this.ctx.subprocess.spawn({
+      argv: [prepared.path, '--drag-action'],
+      cwd: dirname(prepared.path),
+      stdio: {
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: { maxBytes: 64 * 1024 },
+      },
+      graceMs: 1000,
+      signal: processAbort.signal,
+      env: {
+        LANG: process.env.LANG ?? 'en_US.UTF-8',
+        LC_ALL: process.env.LC_ALL ?? 'en_US.UTF-8',
+      },
+    })
+    if (handle.stdin === undefined || handle.stdout === undefined) {
+      handle.terminate()
+      await handle.waitForExit()
+      throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native drag barrier protocol pipes are unavailable')
+    }
+    const stdin = handle.stdin
+    stdin.on('error', () => {
+      // Write callbacks and process completion own protocol error reporting.
+    })
+    const lines = createInterface({ input: handle.stdout, crlfDelay: Infinity })
+    const iterator = lines[Symbol.asyncIterator]()
+    const readLine = async (readSignal: AbortSignal): Promise<string> => await new Promise((resolveLine, rejectLine) => {
+      const onAbort = (): void => { rejectLine(readSignal.reason) }
+      if (readSignal.aborted) {
+        onAbort()
+        return
+      }
+      readSignal.addEventListener('abort', onAbort, { once: true })
+      void iterator.next().then(next => {
+        readSignal.removeEventListener('abort', onAbort)
+        if (next.done === true) rejectLine(new Error('native drag helper closed before replying'))
+        else if (Buffer.byteLength(next.value) > 4 * 1024 * 1024) rejectLine(new Error('native drag helper response exceeded its protocol limit'))
+        else resolveLine(next.value)
+      }, error => {
+        readSignal.removeEventListener('abort', onAbort)
+        rejectLine(error)
+      })
+    })
+    const writeLine = async (line: string): Promise<void> => await new Promise((resolveWrite, rejectWrite) => {
+      stdin.write(`${line}\n`, error => {
+        if (error === undefined || error === null) resolveWrite()
+        else rejectWrite(error)
+      })
+    })
+    let started = false
+    const onCallerAbort = (): void => {
+      if (!started) processAbort.abort()
+    }
+    signal.addEventListener('abort', onCallerAbort)
+    const readinessTimeout = AbortSignal.timeout(readinessTimeoutMs)
+    try {
+      await writeLine(JSON.stringify({ protocolVersion: 1, ...request }))
+      const readySignal = AbortSignal.any([signal, readinessTimeout, processAbort.signal])
+      const ready = JSON.parse(await readLine(readySignal)) as Record<string, unknown>
+      if (ready.ok !== true || ready.event !== 'drag-ready') {
+        throw new Error('native drag helper returned an invalid ready frame')
+      }
+    } catch (error) {
+      processAbort.abort()
+      await handle.done.catch(() => undefined)
+      signal.removeEventListener('abort', onCallerAbort)
+      lines.close()
+      if (signal.aborted) throw new ComputerUseError('COMPUTER_CANCELLED', 'native drag preparation was cancelled', { cause: error })
+      if (readinessTimeout.aborted) {
+        throw new ComputerUseError('COMPUTER_TIMEOUT', `native drag preparation exceeded ${readinessTimeoutMs} milliseconds`, { cause: error })
+      }
+      throw computerUseError(error, 'native drag preparation failed')
+    }
+
+    const result = (async (): Promise<T> => {
+      try {
+        const raw = await readLine(processAbort.signal)
+        const outcome = await handle.done
+        let envelope: HelperEnvelope<T>
+        try {
+          envelope = JSON.parse(raw) as HelperEnvelope<T>
+        } catch (error) {
+          throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native drag helper returned invalid JSON', { cause: error })
+        }
+        if (envelope.ok !== true) throw new ComputerUseError(envelope.error.code, envelope.error.message.slice(0, 1000))
+        if (outcome.exitCode !== 0) {
+          throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', `native drag helper exited ${String(outcome.exitCode)}`)
+        }
+        if (signal.aborted) throw new ComputerUseError('COMPUTER_CANCELLED', 'native drag action was cancelled after safe mouse release')
+        return envelope.value
+      } catch (error) {
+        if (error instanceof ComputerUseError && error.code === 'COMPUTER_CANCELLED') throw error
+        if (signal.aborted) {
+          throw new ComputerUseError('COMPUTER_CANCELLED', 'native drag action was cancelled', { cause: error })
+        }
+        throw computerUseError(error, 'native drag action failed')
+      } finally {
+        signal.removeEventListener('abort', onCallerAbort)
+        lines.close()
+      }
+    })()
+    void result.catch(() => undefined)
+    return {
+      result,
+      start: async () => {
+        if (started) return
+        if (signal.aborted) {
+          processAbort.abort()
+          throw new ComputerUseError('COMPUTER_CANCELLED', 'native drag action was cancelled before mouse-down')
+        }
+        started = true
+        signal.removeEventListener('abort', onCallerAbort)
+        // Once native mouse-down is possible, caller cancellation no longer
+        // owns this process. The bounded native motion must reach mouse-up.
+        try {
+          await writeLine('START')
+        } catch (error) {
+          processAbort.abort()
+          throw computerUseError(error, 'native drag start barrier failed')
+        }
+      },
+      cancel: () => {
+        if (!started) processAbort.abort()
+      },
+    }
+  }
+
   /** Send one serialized command to the persistent, click-through Agent cursor overlay. */
-  cursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<CursorVisibility> {
+  cursorCommand(
+    command: Record<string, unknown>,
+    signal: AbortSignal,
+    onWritten?: () => void | Promise<void>,
+  ): Promise<CursorVisibility> {
     const run = this.cursorCommandTail.then(async () => {
       if (signal.aborted) throw new ComputerUseError('COMPUTER_CANCELLED', 'native cursor overlay command was cancelled')
       if (this.disposed) throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay client is disposed')
-      return await this.executeCursorCommand(command, signal)
+      return await this.executeCursorCommand(command, signal, onWritten)
     })
     this.cursorCommandTail = run.then(() => undefined, () => undefined)
     return new Promise<CursorVisibility>((resolveCommand, rejectCommand) => {
@@ -290,7 +437,11 @@ export class NativeHelperClient {
     })
   }
 
-  private async executeCursorCommand(command: Record<string, unknown>, signal: AbortSignal): Promise<CursorVisibility> {
+  private async executeCursorCommand(
+    command: Record<string, unknown>,
+    signal: AbortSignal,
+    onWritten?: () => void | Promise<void>,
+  ): Promise<CursorVisibility> {
     const prepared = this.prepared ?? await this.prepare(signal)
     if (this.disposed) throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'native cursor overlay client is disposed')
     const cursor = await this.getCursor(prepared, signal)
@@ -306,6 +457,7 @@ export class NativeHelperClient {
           else rejectWrite(error)
         })
       })
+      await onWritten?.()
       const frame = await cursor.nextResponse(cursorResponseTimeout(command), signal)
       if (frame.kind === 'failure') {
         this.discardCursor(cursor)

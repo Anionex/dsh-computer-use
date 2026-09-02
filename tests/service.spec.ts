@@ -310,10 +310,38 @@ describe('Computer Use Service', () => {
     }
   })
 
+  it('activates before an AXPress click that permits pointer fallback', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-cursor-fallback-activate-')
+    try {
+      const { backend, service } = serviceHarness({ interaction: { focusPolicy: 'activate' } })
+      backend.observation = backendObservation({ frontmost: false })
+      const activate = vi.spyOn(backend, 'activateForCursor')
+      const visualize = vi.spyOn(backend, 'visualizeCursor')
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      await service.act({
+        kind: 'click',
+        observationId: before.observationId,
+        elementIndex: 1,
+        allowCoordinateFallback: true,
+      }, context)
+
+      expect(activate).toHaveBeenCalledOnce()
+      expect(activate.mock.invocationCallOrder[0]).toBeLessThan(visualize.mock.invocationCallOrder[0]!)
+      expect(backend.cursorActions.map(entry => entry.phase)).toEqual(['before', 'after'])
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
   it('starts native drag input with the separate live cursor-tracking phase', async () => {
     const workspace = await temporaryDirectory('dsh-computer-cursor-drag-order-')
     try {
-      const { backend, service } = serviceHarness()
+      const { backend, service } = serviceHarness({ interaction: { focusPolicy: 'activate' } })
+      backend.observation = backendObservation({ frontmost: false })
       const beforeCursor = Promise.withResolvers<{ visible: boolean }>()
       const duringCursor = Promise.withResolvers<{ visible: boolean }>()
       const visualize = vi.spyOn(backend, 'visualizeCursor').mockImplementation((_action, phase) => (
@@ -501,6 +529,7 @@ describe('Computer Use Service', () => {
         elementIndex: target.index,
         targetHandle: target.targetHandle,
         allowRebind: true,
+        allowCoordinateFallback: true,
       }, context)).resolves.toMatchObject({
         resolution: {
           mode: 'semantic-rebind',
@@ -1121,7 +1150,8 @@ describe('Computer Use Service', () => {
   it('invalidates one-use confirmation when a sensitive target rebinds', async () => {
     const workspace = await temporaryDirectory('dsh-computer-confirm-rebind-')
     try {
-      const { backend, service } = serviceHarness()
+      const { backend, service } = serviceHarness({ interaction: { focusPolicy: 'activate' } })
+      backend.observation = backendObservation({ frontmost: false })
       await service.initializeForTest()
       const agent = fakeAgent(workspace.path)
       const context = callContext(agent, workspace.path)
@@ -1132,6 +1162,7 @@ describe('Computer Use Service', () => {
         observationId: observation.observationId,
         targetHandle: target.targetHandle,
         allowRebind: true,
+        allowCoordinateFallback: true,
         sensitive: true,
       }
       const confirmation = await service.confirm({ action: proposed, reason: 'Publish a fixture state', target: 'fixture' }, context)
@@ -1149,6 +1180,7 @@ describe('Computer Use Service', () => {
         code: 'COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION',
       })
       expect(backend.actions).toHaveLength(0)
+      expect(backend.cursorActivations).toHaveLength(0)
 
       backend.observation = original
       await expect(service.act({ ...proposed, confirmationToken: confirmation.token }, context)).rejects.toMatchObject({

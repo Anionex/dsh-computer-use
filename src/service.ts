@@ -124,7 +124,6 @@ function requiresPointerInput(
     case 'click':
       if (action.x !== undefined || action.y !== undefined) return true
       return element !== undefined
-        && !element.actions.includes('AXPress')
         && action.allowCoordinateFallback === true
     case 'scroll':
     case 'drag': return true
@@ -387,6 +386,13 @@ export class ComputerUseService extends Service {
       element = resolved.element
       resolution = resolved.resolution
     }
+    if (action.sensitive === true && resolution?.targetChanged === true) {
+      this.confirmations.invalidate(context.agent, action.confirmationToken)
+      throw new ComputerUseError(
+        'COMPUTER_TARGET_REBIND_REQUIRES_CONFIRMATION',
+        'the sensitive target rebound to a fresh element; observe the current UI and request a new one-use confirmation before acting',
+      )
+    }
     if (cursorRequested
       && this.config.interaction.focusPolicy === 'activate'
       && requiresPointerInput(action, selectedOriginalElement)
@@ -467,17 +473,13 @@ export class ComputerUseService extends Service {
     try {
       this.confirmations.consume(context.agent, stored.backend.app, action)
       if (cursorStarted && visualization?.kind === 'drag') {
-        const [acted] = await Promise.allSettled([
-          this.backend.act(request, signal),
-          this.backend.visualizeCursor(visualization, 'during', signal).then(recordCursor, (error: unknown) => {
-            recordCursor({
-              visible: false,
-              reason: `the agent cursor could not track the drag action: ${error instanceof Error ? error.message : String(error)}`,
-            })
-          }),
-        ])
-        if (acted.status === 'rejected') throw acted.reason
-        outcome = acted.value
+        const tracked = await this.backend.actDragWithCursor(
+          request,
+          visualization as BackendCursorAction & { kind: 'drag' },
+          signal,
+        )
+        recordCursor(tracked.cursor)
+        outcome = tracked.action
       } else {
         outcome = await this.backend.act(request, signal)
       }

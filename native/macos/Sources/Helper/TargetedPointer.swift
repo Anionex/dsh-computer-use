@@ -263,7 +263,7 @@ func targetedDrag(
         gesturePhase: 2,
         clickGroup: group
     )
-    usleep(12_000)
+    usleep(2_000)
 
     let down = try pointerEvent(source: source, type: .leftMouseDown, button: .left)
     down.setDoubleValueField(.mouseEventPressure, value: 1)
@@ -277,7 +277,7 @@ func targetedDrag(
         gesturePhase: 3,
         clickGroup: group
     )
-    usleep(16_000)
+    usleep(2_000)
 
     let distance = hypot(to.x - from.x, to.y - from.y)
     let duration = distance == 0 ? 0 : cursorMotionDuration(

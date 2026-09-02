@@ -83,6 +83,12 @@ export interface BackendCursorActivation {
   readonly activation: 'already-frontmost' | 'activated'
 }
 
+/** Native drag input and its Agent-cursor endpoint tracking result. */
+export interface BackendTrackedDragResult {
+  readonly action: BackendActionResult
+  readonly cursor: CursorVisibility
+}
+
 export interface BackendCursorAction {
   kind: 'click' | 'scroll' | 'drag'
   from?: { x: number; y: number }
@@ -114,6 +120,7 @@ export interface ComputerUseBackend {
   observe(app: ComputerAppIdentity, options: BackendObserveOptions, signal: AbortSignal): Promise<BackendObservation>
   activateForCursor(app: ComputerAppIdentity, expectedStateHash: string, options: BackendObserveOptions, signal: AbortSignal): Promise<BackendCursorActivation>
   act(request: BackendActionRequest, signal: AbortSignal): Promise<BackendActionResult>
+  actDragWithCursor(request: BackendActionRequest, cursor: BackendCursorAction & { kind: 'drag' }, signal: AbortSignal): Promise<BackendTrackedDragResult>
   /**
    * Drive the agent cursor for one action.
    * @returns whether the cursor is on screen afterwards, plus why not when it

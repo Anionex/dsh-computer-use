@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { BackendCursorAction } from '../src/backend.ts'
+import type { BackendActionRequest, BackendActionResult, BackendCursorAction } from '../src/backend.ts'
 import { resolveConfig } from '../src/config.ts'
 import { MacOSBackend } from '../src/providers/macos.ts'
 
@@ -137,6 +137,49 @@ describe('macOS cursor visualization', () => {
 
     endArrival.resolve({ visible: true })
     await expect(tracking).resolves.toEqual({ visible: true })
+  })
+
+  it('releases a prepared native drag only after the endpoint cursor command is written', async () => {
+    const config = resolveConfig({ interaction: { cursorVisualization: 'visible' } })
+    const backend = new MacOSBackend({} as never, config)
+    const order: string[] = []
+    const nativeResult: BackendActionResult = {
+      channel: 'coordinates',
+      activation: 'not-requested',
+      pointerInput: true,
+      pointerRouting: 'target-process',
+    }
+    const start = vi.fn(async () => { order.push('native-start') })
+    const prepareDrag = vi.spyOn(backend.client, 'prepareDrag').mockResolvedValue({
+      start,
+      cancel: vi.fn(),
+      result: Promise.resolve(nativeResult),
+    })
+    vi.spyOn(backend.client, 'cursorCommand').mockImplementation(async (_command, _signal, onWritten) => {
+      order.push('cursor-written')
+      await onWritten?.()
+      return { visible: true }
+    })
+    const cursor: BackendCursorAction & { kind: 'drag' } = {
+      kind: 'drag',
+      from: { x: 200, y: 240 },
+      to: { x: 500, y: 540 },
+      ...target,
+    }
+    const request = {
+      action: { kind: 'drag', observationId: 'observation', fromX: 100, fromY: 40, toX: 400, toY: 340 },
+      app: { bundleId: 'io.anionex.fixture', pid: target.targetPid, name: 'Fixture' },
+      expectedStateHash: 'state-before-drag',
+      interaction: config.interaction,
+    } as unknown as BackendActionRequest
+
+    await expect(backend.actDragWithCursor(request, cursor, new AbortController().signal)).resolves.toEqual({
+      action: nativeResult,
+      cursor: { visible: true },
+    })
+    expect(order).toEqual(['cursor-written', 'native-start'])
+    expect(start).toHaveBeenCalledOnce()
+    expect(prepareDrag).toHaveBeenCalledWith(expect.objectContaining({ command: 'act' }), expect.any(AbortSignal), config.actionTimeoutMs + 2_000)
   })
 
   for (const [kind, operation] of [

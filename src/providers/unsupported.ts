@@ -4,6 +4,7 @@ import type {
   BackendActionRequest,
   BackendActionResult,
   BackendCursorActivation,
+  BackendTrackedDragResult,
   BackendCursorAction,
   BackendHealth,
   BackendObservation,
@@ -57,6 +58,10 @@ export class UnsupportedPlatformBackend implements ComputerUseBackend {
   }
 
   act(_request: BackendActionRequest): Promise<BackendActionResult> {
+    return Promise.reject(unsupported(this.platform))
+  }
+
+  actDragWithCursor(_request: BackendActionRequest, _cursor: BackendCursorAction & { kind: 'drag' }): Promise<BackendTrackedDragResult> {
     return Promise.reject(unsupported(this.platform))
   }
 

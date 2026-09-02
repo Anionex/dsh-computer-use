@@ -10,6 +10,7 @@ import type {
   BackendActionRequest,
   BackendActionResult,
   BackendCursorActivation,
+  BackendTrackedDragResult,
   BackendCursorAction,
   BackendHealth,
   BackendObservation,
@@ -93,6 +94,11 @@ export class MacOSBackend implements ComputerUseBackend {
   }
 
   async act(request: BackendActionRequest, signal: AbortSignal): Promise<BackendActionResult> {
+    if (request.action.kind === 'drag') {
+      const execution = await this.prepareNativeDrag(request, signal)
+      await execution.start()
+      return await execution.result
+    }
     return await this.client.invoke<BackendActionResult>({
       command: 'act',
       request: {
@@ -107,7 +113,58 @@ export class MacOSBackend implements ComputerUseBackend {
     }, signal)
   }
 
+  async actDragWithCursor(
+    request: BackendActionRequest,
+    cursor: BackendCursorAction & { kind: 'drag' },
+    signal: AbortSignal,
+  ): Promise<BackendTrackedDragResult> {
+    const execution = await this.prepareNativeDrag(request, signal)
+    let started = false
+    let cursorResult: CursorVisibility
+    try {
+      cursorResult = await this.visualizeCursorPhase(cursor, 'during', signal, async () => {
+        await execution.start()
+        started = true
+      })
+    } catch (error) {
+      if (!started) {
+        execution.cancel()
+        await execution.result.catch(() => undefined)
+        throw error
+      }
+      cursorResult = {
+        visible: false,
+        reason: `the agent cursor could not track the drag action: ${error instanceof Error ? error.message : String(error)}`,
+      }
+    }
+    return { action: await execution.result, cursor: cursorResult }
+  }
+
+  private async prepareNativeDrag(request: BackendActionRequest, signal: AbortSignal) {
+    return await this.client.prepareDrag<BackendActionResult>({
+      command: 'act',
+      request: {
+        ...request,
+        actionTimeoutMs: this.config.actionTimeoutMs,
+        limits: {
+          maxNodes: this.config.maxNodes,
+          maxDepth: this.config.maxDepth,
+          maxTextBytes: this.config.maxTextBytes,
+        },
+      },
+    }, signal, this.config.actionTimeoutMs + 2_000)
+  }
+
   async visualizeCursor(action: BackendCursorAction, phase: 'before' | 'during' | 'after', signal: AbortSignal): Promise<CursorVisibility> {
+    return await this.visualizeCursorPhase(action, phase, signal)
+  }
+
+  private async visualizeCursorPhase(
+    action: BackendCursorAction,
+    phase: 'before' | 'during' | 'after',
+    signal: AbortSignal,
+    onMoveWritten?: () => void | Promise<void>,
+  ): Promise<CursorVisibility> {
     if (this.config.interaction.cursorVisualization !== 'visible') return { visible: false, reason: 'the agent cursor is disabled by configuration' }
     // The overlay answers per command; the least visible outcome wins, because
     // a cursor that vanished partway through is a cursor the user cannot follow.
@@ -116,8 +173,8 @@ export class MacOSBackend implements ComputerUseBackend {
       if (!response.visible && outcome.visible) outcome = response
     }
     const autoHideMs = this.config.interaction.cursorAutoHideMs
-    const move = async (point: { x: number; y: number }): Promise<void> => {
-      record(await this.client.cursorCommand({
+    const move = async (point: { x: number; y: number }, onWritten?: () => void | Promise<void>): Promise<void> => {
+      const command = {
         op: 'move',
         x: point.x,
         y: point.y,
@@ -129,7 +186,10 @@ export class MacOSBackend implements ComputerUseBackend {
         targetPid: action.targetPid,
         targetWindowNumber: action.targetWindowNumber,
         targetWindowFrame: action.targetWindowFrame,
-      }, signal))
+      }
+      record(await (onWritten === undefined
+        ? this.client.cursorCommand(command, signal)
+        : this.client.cursorCommand(command, signal, onWritten)))
     }
     if (phase === 'after') {
       // Every action validates the bound target after native input. Only drag
@@ -145,7 +205,7 @@ export class MacOSBackend implements ComputerUseBackend {
     }
     if (phase === 'during') {
       if (action.kind !== 'drag') return { visible: false, reason: 'only drag has a during-action cursor phase' }
-      await move(action.to)
+      await move(action.to, onMoveWritten)
       return outcome
     }
     const start = action.kind === 'drag' ? action.from : action.to
