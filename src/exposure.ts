@@ -83,7 +83,10 @@ function isSkillResult(value: unknown): boolean {
 /** Whether durable Session history proves that the bundled Skill was loaded. */
 export function hasLoadedComputerUseSkill(session: Session): boolean {
   const nativeCalls = new Set<string>()
-  for (const event of session.events) {
+  const events = typeof (session as any).snapshotEvents === 'function'
+    ? (session as any).snapshotEvents()
+    : session.events ?? []
+  for (const event of events) {
     if (event.type === 'user/message') {
       const source = event.data.source
       if (source.kind === 'skill-invocation'
