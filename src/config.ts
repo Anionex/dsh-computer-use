@@ -2,11 +2,21 @@
 
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { ComputerUseError } from './errors.ts'
 
-/** Settings document namespace owned by this package. */
-export const COMPUTER_USE_SETTINGS_NAMESPACE = settingsNamespace('computer-use')
+/**
+ * Settings document namespace owned by this package.
+ *
+ * DSH 0.1.5 removed the `settingsNamespace()` runtime brander: the namespace is
+ * a compile-time-only brand and the official convention is a plain string
+ * literal (0.1.5's own `ui-chat` client does `const CHAT_SETTINGS_NAMESPACE =
+ * "ui-chat"`). The literal below satisfies the 0.1.5 grammar
+ * `/^[a-z][a-z0-9-]*$/` and, because `SettingsNamespace` is a type-only export
+ * in every supported release, the cast is erased at build time — the value that
+ * reaches the host is exactly `'computer-use'`.
+ */
+export const COMPUTER_USE_SETTINGS_NAMESPACE: SettingsNamespace = 'computer-use' as SettingsNamespace
 
 /** One persisted application grant. Wildcards are intentionally unsupported. */
 export interface ComputerUseAppGrant {
