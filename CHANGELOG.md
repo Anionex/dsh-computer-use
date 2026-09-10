@@ -4,7 +4,11 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-10
+
 ### Fixed
+
+- Adapted the durable-history probes to `Session.snapshotEvents()`, the accessor DSH 0.1.2 introduced in place of the `Session.events` getter. Both are still probed at runtime, so resume and replay keep working on every release line this package declares.
 
 - Computer Use no longer aborts the whole Web profile on DSH 0.1.5 release candidates: the settings namespace is now the plain `'computer-use'` literal, because 0.1.5 removed the `settingsNamespace()` runtime brander and made the namespace brand compile-time only.
 - Restored Skill-load detection for sessions replayed on a DSH 0.1.5 host. The PTC `run_code` sub-dispatch event was renamed from `tool/code-dispatch` to `tool/ptc-dispatch`; both names are now accepted, so `computer_use_activate` and post-resume tool re-exposure work again.
