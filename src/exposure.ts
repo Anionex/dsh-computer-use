@@ -80,6 +80,17 @@ function isSkillResult(value: unknown): boolean {
     && value.content === COMPUTER_USE_SKILL_CONTENT
 }
 
+/**
+ * Session event types carrying one PTC (`run_code`) sub-dispatch.
+ *
+ * DSH 0.1.5 renamed the append site from `tool/code-dispatch` to
+ * `tool/ptc-dispatch` (`dsh-tools`) with an identical payload, and its session
+ * format migration renames replayed legacy events to the new name, so a log
+ * can legitimately carry either. Both are accepted: a pre-0.1.5 host only ever
+ * appends the old name, a 0.1.5 host only the new one.
+ */
+const PTC_DISPATCH_EVENT_TYPES: ReadonlySet<string> = new Set(['tool/ptc-dispatch', 'tool/code-dispatch'])
+
 /** Whether durable Session history proves that the bundled Skill was loaded. */
 export function hasLoadedComputerUseSkill(session: Session): boolean {
   const nativeCalls = new Set<string>()
@@ -106,7 +117,7 @@ export function hasLoadedComputerUseSkill(session: Session): boolean {
         && containsSkillContent(block.content)) return true
       continue
     }
-    if (event.type === 'tool/code-dispatch'
+    if (PTC_DISPATCH_EVENT_TYPES.has(event.type)
       && event.data.name === 'skill'
       && event.data.isError === false
       && isSkillArguments(event.data.arguments)

@@ -19,6 +19,28 @@ function loadedSession(): { events: unknown[] } {
   }
 }
 
+/** A session exposing only the 0.1.5 read face (`snapshotEvents()`). */
+function replaySession(events: unknown[]): { snapshotEvents: () => unknown[] } {
+  return { snapshotEvents: () => events }
+}
+
+/** One PTC sub-dispatch record under the given session event name. */
+function dispatchEvent(type: string, overrides: Record<string, unknown> = {}): unknown {
+  return {
+    type,
+    data: {
+      rootCallId: 'call-root',
+      parentCallId: 'call-root',
+      subCallId: 'call-sub',
+      name: 'skill',
+      arguments: { name: COMPUTER_USE_SKILL_NAME },
+      isError: false,
+      content: [{ type: 'text', text: COMPUTER_USE_SKILL_CONTENT }],
+      ...overrides,
+    },
+  }
+}
+
 describe('progressive Computer Use exposure', () => {
   it('recognizes only durable evidence containing the bundled Skill', () => {
     expect(COMPUTER_USE_SKILL_CONTENT).toContain('does not require danger-full-access')
@@ -52,6 +74,21 @@ describe('progressive Computer Use exposure', () => {
         },
       }],
     } as never)).toBe(true)
+  })
+
+  it('recognizes a Skill loaded through a PTC dispatch under both event names', () => {
+    expect(hasLoadedComputerUseSkill(replaySession([dispatchEvent('tool/ptc-dispatch')]) as never)).toBe(true)
+    expect(hasLoadedComputerUseSkill(replaySession([dispatchEvent('tool/code-dispatch')]) as never)).toBe(true)
+    expect(hasLoadedComputerUseSkill(replaySession([dispatchEvent('tool/ptc-dispatch-start')]) as never)).toBe(false)
+    expect(hasLoadedComputerUseSkill(replaySession([
+      dispatchEvent('tool/ptc-dispatch', { isError: true }),
+    ]) as never)).toBe(false)
+    expect(hasLoadedComputerUseSkill(replaySession([
+      dispatchEvent('tool/ptc-dispatch', { arguments: { name: 'other-skill' } }),
+    ]) as never)).toBe(false)
+    expect(hasLoadedComputerUseSkill(replaySession([
+      dispatchEvent('tool/ptc-dispatch', { content: [{ type: 'text', text: '# Different' }] }),
+    ]) as never)).toBe(false)
   })
 
   it('activates tools only for an Agent that loaded the Skill and disposes its scope', async () => {

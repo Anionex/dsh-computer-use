@@ -4,6 +4,17 @@ All notable changes to DSH Computer Use are recorded here. The project follows s
 
 ## [Unreleased]
 
+### Fixed
+
+- Computer Use no longer aborts the whole Web profile on DSH 0.1.5 release candidates: the settings namespace is now the plain `'computer-use'` literal, because 0.1.5 removed the `settingsNamespace()` runtime brander and made the namespace brand compile-time only.
+- Restored Skill-load detection for sessions replayed on a DSH 0.1.5 host. The PTC `run_code` sub-dispatch event was renamed from `tool/code-dispatch` to `tool/ptc-dispatch`; both names are now accepted, so `computer_use_activate` and post-resume tool re-exposure work again.
+
+### Changed
+
+- Web Settings maps an optimistic-concurrency conflict to HTTP 409 by the settings provider's stable `SETTINGS_CONFLICT` code instead of `instanceof` alone, so a second copy of the error class cannot downgrade it to a 400.
+- Client prefetch metadata (`dsh.client.inject`) now names the packages that actually serve this plugin's client — the slot renderer, the settings General section that declares `settings.section`, the locale registry, the Remote API, and the connection event source — and the removed `@deepseek-ai/dsh-client-runtime` package is gone from both `dsh.client.inject` and `peerDependencies`.
+- `dsh.compatibility` records `0.1.5-rc.1` as verified, and its `dsh` range now matches the prerelease versions it lists as compatible (a plain `>=0.1.0-rc.8 <0.2.0` matches none of them under strict semver prerelease rules).
+
 ## [0.3.1] - 2026-09-02
 
 ### Fixed

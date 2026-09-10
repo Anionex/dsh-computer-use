@@ -120,6 +120,23 @@ describe('Computer Use Web Settings backend', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ ok: false, error: { code: 'settings-conflict' } })
 
+    // The provider throws from another module copy, so the stable machine code must decide alone.
+    const foreignConflict = harness({
+      replace: () => Promise.reject(Object.assign(new Error('stale revision'), { code: 'SETTINGS_CONFLICT' })),
+    })
+    const foreignServer = await start(foreignConflict.backend)
+    const foreignResponse = await post(foreignServer.baseUrl, { action: 'save', expectedRevision: 4, value: {} })
+    expect(foreignResponse.status).toBe(409)
+    expect(await foreignResponse.json()).toMatchObject({ ok: false, error: { code: 'settings-conflict' } })
+
+    const otherFailure = harness({
+      replace: () => Promise.reject(Object.assign(new Error('provider is unavailable'), { code: 'SETTINGS_UNAVAILABLE' })),
+    })
+    const otherServer = await start(otherFailure.backend)
+    const otherResponse = await post(otherServer.baseUrl, { action: 'save', expectedRevision: 4, value: {} })
+    expect(otherResponse.status).toBe(400)
+    expect(await otherResponse.json()).toMatchObject({ ok: false, error: { code: 'action-failed' } })
+
     const oversized = 'x'.repeat(129 * 1024)
     expect((await post(conflictServer.baseUrl, oversized)).status).toBe(413)
   })
