@@ -21,6 +21,7 @@ import type {
 import {
   Config,
   COMPUTER_USE_SETTINGS_NAMESPACE,
+  readComputerUseConfig,
   resolveConfig,
   type ComputerUseConfig,
   type ResolvedComputerUseConfig,
@@ -253,21 +254,26 @@ export class MacOSComputerUseProvider extends ComputerUseService {
   static inject = ['subprocess', 'approval', 'settings', 'sessions', 'agents']
   static Config = Config
 
-  private readonly settings
-
   constructor(ctx: Context, config: ComputerUseConfig = {}) {
-    const settings = ctx.settings.register(COMPUTER_USE_SETTINGS_NAMESPACE, Config, {
-      base: config,
-      applies: 'live',
-      validate: (value) => { resolveConfig(value) },
-    })
-    const resolved = resolveConfig(settings.get())
+    const legacySettings = ctx.settings as typeof ctx.settings & {
+      register?: (ns: typeof COMPUTER_USE_SETTINGS_NAMESPACE, schema: typeof Config, options: object) => {
+        get(): ComputerUseConfig
+        watch(listener: (value: ComputerUseConfig) => Promise<void>): () => void
+      }
+    }
+    const settings = typeof legacySettings.register === 'function'
+      ? legacySettings.register(COMPUTER_USE_SETTINGS_NAMESPACE, Config, {
+          base: config,
+          applies: 'live',
+          validate: (value: ComputerUseConfig) => { resolveConfig(value) },
+        })
+      : undefined
+    const resolved = resolveConfig(settings?.get() ?? readComputerUseConfig(config))
     super(ctx, createBackend(ctx, resolved), resolved)
-    this.settings = settings
     if (process.platform !== 'darwin') {
       ctx.logger.warn('dsh-computer-use: supports macOS only; Computer Use Tools are disabled on %s', process.platform)
     }
-    ctx.effect(() => this.settings.watch(async (next) => {
+    const reconfigure = async (next: ComputerUseConfig): Promise<void> => {
       const candidate = resolveConfig(next)
       const backend = createBackend(ctx, candidate)
       try {
@@ -276,7 +282,21 @@ export class MacOSComputerUseProvider extends ComputerUseService {
         await backend.dispose()
         throw error
       }
-    }), 'dsh-computer-use: Settings watch')
+    }
+    if (settings) {
+      ctx.effect(() => settings.watch(reconfigure), 'dsh-computer-use: Settings watch')
+    } else {
+      // DSH 0.1.7 projects Settings from Config and commits volatile fields in
+      // place. The Loader emits this event after its references have changed.
+      ctx.effect(() => {
+        const onVolatileUpdate = ctx.on as unknown as (name: string, listener: () => void) => () => void
+        return onVolatileUpdate.call(ctx, 'loader/volatile-update', () => {
+          void reconfigure(readComputerUseConfig(config)).catch(error => {
+            ctx.logger.warn('dsh-computer-use: live config update failed: %s', error)
+          })
+        })
+      }, 'dsh-computer-use: Loader volatile update')
+    }
     ctx.effect(() => ctx.on('agent/disposed', ({ agent }) => { this.releaseAgent(agent) }), 'dsh-computer-use: Agent cleanup')
   }
 

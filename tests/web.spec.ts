@@ -112,6 +112,13 @@ describe('Computer Use Web Settings backend', () => {
     expect((await post(readOnlyServer.baseUrl, { action: 'save', expectedRevision: 4, value: {} })).status).toBe(400)
     expect((await fetch(readOnlyServer.baseUrl, { method: 'PUT' })).status).toBe(405)
 
+    const invalid = harness()
+    const invalidServer = await start(invalid.backend)
+    expect((await post(invalidServer.baseUrl, {
+      action: 'save', expectedRevision: 4, value: { maxNodes: 1 },
+    })).status).toBe(400)
+    expect(invalid.replace).not.toHaveBeenCalled()
+
     const conflict = harness({
       replace: () => Promise.reject(new SettingsConflictError(COMPUTER_USE_SETTINGS_NAMESPACE, 4, 5)),
     })

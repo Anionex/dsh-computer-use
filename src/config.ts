@@ -2,6 +2,7 @@
 
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
+import * as SettingsModule from '@deepseek-ai/dsh-settings'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { ComputerUseError } from './errors.ts'
 
@@ -60,23 +61,44 @@ export interface ComputerUseConfig {
   grants?: ComputerUseAppGrant[]
 }
 
+/** DSH 0.1.7 derives editable Settings fields from volatile Config fields.
+ * Legacy Settings can coexist with a newer Schemastery installation. Only
+ * enable references when the host Settings service uses Config-derived forms.
+ */
+function live<T>(field: Schema<T>): Schema<T> {
+  const candidate = field as Schema<T> & { volatile?: () => Schema<T> }
+  return 'SettingsForms' in SettingsModule && typeof candidate.volatile === 'function'
+    ? candidate.volatile()
+    : field
+}
+
+/** Read the newer Loader's stable references without changing the legacy shape. */
+export function readComputerUseConfig(config: ComputerUseConfig): ComputerUseConfig {
+  return Object.fromEntries(Object.entries(config).map(([key, value]) => [
+    key,
+    value !== null && typeof value === 'object' && 'get' in value && typeof value.get === 'function'
+      ? value.get()
+      : value,
+  ])) as ComputerUseConfig
+}
+
 /** Configuration schema used by Cordis and the Settings provider. */
 export const Config: Schema<ComputerUseConfig> = z.object({
-  observationTtlMs: z.number().default(0),
-  confirmationTtlMs: z.number().default(300000),
-  actionTimeoutMs: z.number().default(15000),
-  settleMs: z.number().default(250),
-  maxSettleMs: z.number().default(5000),
-  maxNodes: z.number().default(500),
-  maxDepth: z.number().default(14),
-  maxTextBytes: z.number().default(64000),
-  maxScreenshotBytes: z.number().default(33554432),
-  artifactRoot: z.string().default('.dsh-computer-use/artifacts'),
-  helper: z.object({
+  observationTtlMs: live(z.number().default(0)),
+  confirmationTtlMs: live(z.number().default(300000)),
+  actionTimeoutMs: live(z.number().default(15000)),
+  settleMs: live(z.number().default(250)),
+  maxSettleMs: live(z.number().default(5000)),
+  maxNodes: live(z.number().default(500)),
+  maxDepth: live(z.number().default(14)),
+  maxTextBytes: live(z.number().default(64000)),
+  maxScreenshotBytes: live(z.number().default(33554432)),
+  artifactRoot: live(z.string().default('.dsh-computer-use/artifacts')),
+  helper: live(z.object({
     path: z.string(),
     allowSourceBuild: z.boolean().default(false),
-  }),
-  interaction: z.object({
+  })),
+  interaction: live(z.object({
     focusPolicy: z.union(['preserve', 'activate']).default('preserve'),
     keyboardPolicy: z.union(['preserve', 'activate']).default('preserve'),
     pointerInputPolicy: z.union(['deny', 'targeted']).default('targeted'),
@@ -86,14 +108,14 @@ export const Config: Schema<ComputerUseConfig> = z.object({
     cursorAccelerationPxPerSecondSquared: z.number().default(6000),
     cursorClickDelayMs: z.number().default(90),
     cursorAutoHideMs: z.number().default(0),
-  }),
-  allowAllApps: z.boolean().default(false),
-  grants: z.array(z.object({
+  })),
+  allowAllApps: live(z.boolean().default(false)),
+  grants: live(z.array(z.object({
     bundleId: z.string(),
     read: z.boolean().default(false),
     control: z.boolean().default(false),
-  })).default([]),
-})
+  })).default([])),
+}) as unknown as Schema<ComputerUseConfig>
 
 /** Fully defaulted configuration consumed at runtime. */
 export interface ResolvedComputerUseConfig {

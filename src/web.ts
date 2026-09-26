@@ -6,6 +6,7 @@ import { SettingsConflictError, type SettingsDescriptor } from '@deepseek-ai/dsh
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import {
   COMPUTER_USE_SETTINGS_NAMESPACE,
+  resolveConfig,
   type ComputerUseConfig,
 } from './config.ts'
 import type { ComputerUseStatus } from './types.ts'
@@ -167,6 +168,7 @@ export class ComputerUseWebBackend {
     try {
       if (parsed.action === 'save') {
         if (!this.ctx.settings.writable) throw new Error('settings provider is read-only')
+        resolveConfig(parsed.value)
         await this.ctx.settings.replace(COMPUTER_USE_SETTINGS_NAMESPACE, parsed.value as object, parsed.expectedRevision)
       } else if (parsed.action === 'health') {
         await this.ctx.computerUse.health(AbortSignal.timeout(30000))
