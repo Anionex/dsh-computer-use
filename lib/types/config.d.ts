@@ -52,6 +52,8 @@ export interface ComputerUseConfig {
     allowAllApps?: boolean;
     grants?: ComputerUseAppGrant[];
 }
+/** Read the newer Loader's stable references without changing the legacy shape. */
+export declare function readComputerUseConfig(config: ComputerUseConfig): ComputerUseConfig;
 /** Configuration schema used by Cordis and the Settings provider. */
 export declare const Config: Schema<ComputerUseConfig>;
 /** Fully defaulted configuration consumed at runtime. */
