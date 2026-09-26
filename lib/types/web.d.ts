@@ -21,7 +21,8 @@ export interface ComputerUseSettingsSnapshot {
 /** Same-origin backend used by the optional client Settings section. */
 export declare class ComputerUseWebBackend {
     private readonly ctx;
-    constructor(ctx: Context);
+    private readonly authorizeUnmarkedPost?;
+    constructor(ctx: Context, authorizeUnmarkedPost?: ((req: IncomingMessage) => boolean) | undefined);
     /** Current browser-safe Settings and health state. */
     snapshot(): ComputerUseSettingsSnapshot;
     /** Handle one Settings request. */

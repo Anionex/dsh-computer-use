@@ -60,11 +60,17 @@ function requestError(res: ServerResponse, status: number, code: string, message
   responseJson(res, status, { ok: false, error: { code, message } })
 }
 
-function sameOriginPost(req: IncomingMessage): boolean {
+function sameOriginPost(req: IncomingMessage, authorizeUnmarkedPost?: (req: IncomingMessage) => boolean): boolean {
   const fetchSite = req.headers['sec-fetch-site']
   if (fetchSite === 'cross-site') return false
   const origin = req.headers.origin
-  if (origin === undefined) return fetchSite === 'same-origin' || fetchSite === 'same-site' || fetchSite === 'none'
+  if (origin === undefined) {
+    if (fetchSite === 'same-origin' || fetchSite === 'same-site' || fetchSite === 'none') return true
+    // Desktop strips browser origin metadata before forwarding, but injects a
+    // Host-issued signed cookie. Verify it through Connection's own fence;
+    // mere Cookie header presence is not authentication.
+    return fetchSite === undefined && authorizeUnmarkedPost?.(req) === true
+  }
   const host = req.headers.host
   if (host === undefined) return false
   try {
@@ -124,7 +130,10 @@ function isSettingsConflict(error: unknown): boolean {
 
 /** Same-origin backend used by the optional client Settings section. */
 export class ComputerUseWebBackend {
-  constructor(private readonly ctx: Context) {}
+  constructor(
+    private readonly ctx: Context,
+    private readonly authorizeUnmarkedPost?: (req: IncomingMessage) => boolean,
+  ) {}
 
   /** Current browser-safe Settings and health state. */
   snapshot(): ComputerUseSettingsSnapshot {
@@ -155,7 +164,7 @@ export class ComputerUseWebBackend {
       requestError(res, 405, 'method-not-allowed', 'Use GET or POST')
       return
     }
-    if (!sameOriginPost(req)) {
+    if (!sameOriginPost(req, this.authorizeUnmarkedPost)) {
       requestError(res, 403, 'origin-rejected', 'The request must originate from this DSH Web application')
       return
     }
@@ -186,8 +195,12 @@ export class ComputerUseWebBackend {
 
 /** Attach the optional route when a Web host is present. */
 export function installComputerUseWeb(ctx: Context): void {
-  const backend = new ComputerUseWebBackend(ctx)
   ctx.inject(['webServer'], (webCtx) => {
+    const connection = (webCtx as Context & {
+      connection?: { requestRejection?: (req: IncomingMessage) => 401 | 403 | undefined }
+    }).connection
+    const backend = new ComputerUseWebBackend(webCtx, (req) =>
+      typeof connection?.requestRejection === 'function' && connection.requestRejection(req) === undefined)
     webCtx.effect(() => webCtx.webServer.register({
       kind: 'exact',
       path: COMPUTER_USE_SETTINGS_ROUTE,
