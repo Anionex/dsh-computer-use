@@ -8,7 +8,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { Config, type ComputerUseConfig } from './config.ts'
 import { ComputerUseExposure } from './exposure.ts'
 import { MacOSComputerUseProvider } from './providers/macos.ts'
-import { COMPUTER_USE_SKILL } from './skill.ts'
+import { COMPUTER_USE_SKILL, LEGACY_COMPUTER_USE_SKILL } from './skill.ts'
 import { createComputerUseTools } from './tools.ts'
 import { installComputerUseWeb } from './web.ts'
 
@@ -22,14 +22,17 @@ export function installComputerUseConsumer(ctx: Context): () => void {
   const exposure = new ComputerUseExposure(ctx, () => createComputerUseTools(ctx.computerUse))
   let activation: (() => void) | undefined
   let skill: (() => void) | undefined
+  let legacySkill: (() => void) | undefined
   let exposureDispose: (() => void) | undefined
   try {
     activation = ctx.tools.register(exposure.activationTool)
     skill = ctx.skills.register(COMPUTER_USE_SKILL)
+    legacySkill = ctx.skills.register(LEGACY_COMPUTER_USE_SKILL)
     exposureDispose = exposure.install()
     installComputerUseWeb(ctx)
   } catch (error) {
     exposureDispose?.()
+    legacySkill?.()
     skill?.()
     activation?.()
     throw error
@@ -37,6 +40,7 @@ export function installComputerUseConsumer(ctx: Context): () => void {
   return () => {
     exposureDispose?.()
     activation?.()
+    legacySkill?.()
     skill?.()
   }
 }
