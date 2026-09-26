@@ -2,8 +2,14 @@
 
 import type { SkillRegistration } from '@deepseek-ai/dsh-skill'
 
-/** Stable Skill name used by progressive exposure and durable restore. */
-export const COMPUTER_USE_SKILL_NAME = 'computer-use'
+/** Namespaced entry avoids collisions with filesystem Skills in Agent presets. */
+export const COMPUTER_USE_SKILL_NAME = 'dsh-computer-use'
+/** Existing sessions and slash-command workflows continue to recognize this entry. */
+export const LEGACY_COMPUTER_USE_SKILL_NAME = 'computer-use'
+export const COMPUTER_USE_SKILL_NAMES: ReadonlySet<string> = new Set([
+  COMPUTER_USE_SKILL_NAME,
+  LEGACY_COMPUTER_USE_SKILL_NAME,
+])
 
 /** Complete model-visible operating and confirmation workflow. */
 export const COMPUTER_USE_SKILL_CONTENT = `# DSH Computer Use
@@ -126,4 +132,10 @@ export const COMPUTER_USE_SKILL: SkillRegistration = {
   whenToUse: 'Use when a task requires reading or operating a local macOS app UI and no purpose-built connector, API, CLI, or browser automation capability can complete it.',
   source: 'runtime',
   content: COMPUTER_USE_SKILL_CONTENT,
+}
+
+/** Compatibility alias for existing Sessions; preset Skills may shadow it. */
+export const LEGACY_COMPUTER_USE_SKILL: SkillRegistration = {
+  ...COMPUTER_USE_SKILL,
+  name: LEGACY_COMPUTER_USE_SKILL_NAME,
 }

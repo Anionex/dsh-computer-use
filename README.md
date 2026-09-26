@@ -98,8 +98,11 @@ Restart a running `dsh web` host after changing the installed plugin, then start
 Load the Skill in that Session:
 
 ```text
-/computer-use
+/dsh-computer-use
 ```
+
+The existing `/computer-use` Skill remains available for older sessions. If another
+installed Skill uses that name, load `/dsh-computer-use` to activate this plugin.
 
 Then try:
 
