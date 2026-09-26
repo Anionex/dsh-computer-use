@@ -501,22 +501,27 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
         return nil
     }
     let expectedId = (snapshot.windowJSON?["id"] as? NSNumber)?.uint32Value
-    let expectedTitle = snapshot.windowJSON?["title"] as? String
+    let expectedFrame = (snapshot.windowJSON?["frame"] as? [String: Any]).flatMap { try? cgRect($0) }
     let windows = content.windows.filter { $0.owningApplication?.processID == snapshot.app.processIdentifier }
     let selected = windows.first { window in
-        if let expectedId, window.windowID == expectedId { return true }
-        if let expectedTitle, !expectedTitle.isEmpty, window.title == expectedTitle { return true }
-        return false
-    } ?? windows.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+        if let expectedId { return window.windowID == expectedId }
+        guard let expectedFrame else { return false }
+        let tolerance: CGFloat = 2
+        return abs(window.frame.minX - expectedFrame.minX) <= tolerance
+            && abs(window.frame.minY - expectedFrame.minY) <= tolerance
+            && abs(window.frame.width - expectedFrame.width) <= tolerance
+            && abs(window.frame.height - expectedFrame.height) <= tolerance
+    }
     guard let selected else {
-        if required { throw fail("COMPUTER_TARGET_UNAVAILABLE", "no capturable window belongs to the selected application") }
+        if required { throw fail("COMPUTER_TARGET_UNAVAILABLE", "the observed window is not available for capture") }
         return nil
     }
-    let configuration = SCStreamConfiguration()
-    configuration.width = max(1, Int(selected.frame.width.rounded()))
-    configuration.height = max(1, Int(selected.frame.height.rounded()))
-    configuration.showsCursor = false
     let filter = SCContentFilter(desktopIndependentWindow: selected)
+    let configuration = SCStreamConfiguration()
+    let pixelScale = CGFloat(filter.pointPixelScale)
+    configuration.width = max(1, Int((selected.frame.width * pixelScale).rounded()))
+    configuration.height = max(1, Int((selected.frame.height * pixelScale).rounded()))
+    configuration.showsCursor = false
     let image: CGImage
     do {
         image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
@@ -583,25 +588,36 @@ private func cgRect(_ frame: [String: Any]) throws -> CGRect {
 
 private func windowAtPoint(app: NSRunningApplication, point: CGPoint) throws -> (windowNumber: Int64, frame: CGRect) {
     guard let windows = CGWindowListCopyWindowInfo(
-        [.optionOnScreenOnly, .excludeDesktopElements],
+        [.optionAll, .excludeDesktopElements],
         kCGNullWindowID
     ) as? [[String: Any]] else {
         throw fail("COMPUTER_TARGET_UNAVAILABLE", "CoreGraphics window list is unavailable")
     }
-    // CGWindowListCopyWindowInfo orders on-screen windows front to back, so the
-    // first match is the topmost window of the selected app at the point.
-    guard let window = windows.first(where: { candidate in
+    let appWindows = windows.filter { candidate in
         guard (candidate[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier,
-              (candidate[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
-              let bounds = candidate[kCGWindowBounds as String] as? [String: Any],
-              let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
-              frame.contains(point) else { return false }
+              (candidate[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 else { return false }
         return true
+    }
+    let containing = appWindows.filter { candidate in
+        guard let bounds = candidate[kCGWindowBounds as String] as? [String: Any],
+              let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+        return frame.contains(point)
+    }
+    // optionAll can recover windows omitted by optionOnScreenOnly on some
+    // multi-display layouts. Never route pointer input to a hidden window.
+    guard let window = containing.first(where: {
+        ($0[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true
     }),
     let windowNumber = (window[kCGWindowNumber as String] as? NSNumber)?.int64Value,
     let bounds = window[kCGWindowBounds as String] as? [String: Any],
     let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else {
-        throw fail("COMPUTER_TARGET_UNAVAILABLE", "no on-screen window of the selected app contains the requested coordinate")
+        if !containing.isEmpty {
+            throw fail("COMPUTER_TARGET_UNAVAILABLE", "the selected app window contains the coordinate but CoreGraphics does not mark it on-screen")
+        }
+        if appWindows.isEmpty {
+            throw fail("COMPUTER_TARGET_UNAVAILABLE", "the selected app has no enumerable layer-zero window in CoreGraphics")
+        }
+        throw fail("COMPUTER_TARGET_UNAVAILABLE", "coordinate is outside the selected app's enumerable windows")
     }
     return (windowNumber, frame)
 }

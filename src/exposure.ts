@@ -5,7 +5,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
-import { COMPUTER_USE_SKILL_CONTENT, COMPUTER_USE_SKILL_NAME } from './skill.ts'
+import { COMPUTER_USE_SKILL_CONTENT, COMPUTER_USE_SKILL_NAME, COMPUTER_USE_SKILL_NAMES } from './skill.ts'
 
 /** One global bootstrap retained until the current Agent loads the Skill. */
 export const COMPUTER_USE_ACTIVATE = 'computer_use_activate'
@@ -60,7 +60,7 @@ function adHocOcrCommand(value: unknown): boolean {
 }
 
 function isSkillArguments(value: unknown): boolean {
-  return isRecord(value) && value.name === COMPUTER_USE_SKILL_NAME
+  return isRecord(value) && COMPUTER_USE_SKILL_NAMES.has(value.name as string)
 }
 
 function nativeSkillCall(raw: string): boolean {
@@ -76,7 +76,7 @@ function containsSkillContent(blocks: readonly unknown[]): boolean {
 
 function isSkillResult(value: unknown): boolean {
   return isRecord(value)
-    && value.name === COMPUTER_USE_SKILL_NAME
+    && COMPUTER_USE_SKILL_NAMES.has(value.name as string)
     && value.content === COMPUTER_USE_SKILL_CONTENT
 }
 
@@ -101,7 +101,7 @@ export function hasLoadedComputerUseSkill(session: Session): boolean {
     if (event.type === 'user/message') {
       const source = event.data.source
       if (source.kind === 'skill-invocation'
-        && source.name === COMPUTER_USE_SKILL_NAME
+        && COMPUTER_USE_SKILL_NAMES.has(source.name)
         && containsSkillContent(event.data.content)) return true
       continue
     }

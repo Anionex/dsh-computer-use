@@ -98,8 +98,11 @@ dsh --profile headless --dump-config | grep computer-use
 在新 Session 中加载 Skill：
 
 ```text
-/computer-use
+/dsh-computer-use
 ```
+
+旧的 `/computer-use` Skill 仍供现有会话使用。如果已安装其他同名 Skill，
+请加载 `/dsh-computer-use` 来激活本插件。
 
 然后可以尝试：
 

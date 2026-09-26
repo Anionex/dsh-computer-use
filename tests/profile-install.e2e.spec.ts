@@ -402,7 +402,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     ].join('\n'))
 
     const server = await startScriptedServer([
-      { kind: 'tool', name: 'skill', arguments: JSON.stringify({ name: 'computer-use' }) },
+      { kind: 'tool', name: 'skill', arguments: JSON.stringify({ name: 'dsh-computer-use' }) },
       {
         kind: 'tool',
         name: 'computer_observe',
@@ -435,7 +435,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     try {
       const result = await run('dsh', [
         '--profile', 'headless', '--patch', patch,
-        '/computer-use enable the deterministic fixture option using fresh Accessibility state',
+        '/dsh-computer-use enable the deterministic fixture option using fresh Accessibility state',
       ], {
         cwd: workspace,
         env: {

@@ -5,7 +5,7 @@ import {
   ComputerUseExposure,
   hasLoadedComputerUseSkill,
 } from '../src/exposure.ts'
-import { COMPUTER_USE_SKILL_CONTENT, COMPUTER_USE_SKILL_NAME } from '../src/skill.ts'
+import { COMPUTER_USE_SKILL_CONTENT, COMPUTER_USE_SKILL_NAME, LEGACY_COMPUTER_USE_SKILL_NAME } from '../src/skill.ts'
 
 function loadedSession(): { events: unknown[] } {
   return {
@@ -49,6 +49,20 @@ describe('progressive Computer Use exposure', () => {
     expect(COMPUTER_USE_SKILL_CONTENT).toContain('Do not check for OCR executables, invoke tesseract')
     expect(COMPUTER_USE_SKILL_CONTENT).toContain('do not build a temporary OCR stack')
     expect(hasLoadedComputerUseSkill(loadedSession() as never)).toBe(true)
+    expect(hasLoadedComputerUseSkill({ events: [{
+      type: 'user/message',
+      data: {
+        source: { kind: 'skill-invocation', name: LEGACY_COMPUTER_USE_SKILL_NAME },
+        content: [{ type: 'text', text: COMPUTER_USE_SKILL_CONTENT }],
+      },
+    }] } as never)).toBe(true)
+    expect(hasLoadedComputerUseSkill({ events: [{
+      type: 'user/message',
+      data: {
+        source: { kind: 'skill-invocation', name: LEGACY_COMPUTER_USE_SKILL_NAME },
+        content: [{ type: 'text', text: '# Shadowing filesystem Skill' }],
+      },
+    }] } as never)).toBe(false)
     expect(hasLoadedComputerUseSkill({ events: [] } as never)).toBe(false)
     expect(hasLoadedComputerUseSkill({
       events: [{
@@ -154,7 +168,7 @@ describe('progressive Computer Use exposure', () => {
     }
     const exposure = new ComputerUseExposure(ctx as never, () => [{ name: 'computer_observe' }] as ToolDefinition[])
     exposure.install()
-    await expect(exposure.activationTool.execute({}, { agent } as never)).rejects.toThrow(/load the computer-use Skill first/)
+    await expect(exposure.activationTool.execute({}, { agent } as never)).rejects.toThrow(/load the dsh-computer-use Skill first/)
     const listener = listeners.get('tools/result')
     expect(listener).toBeDefined()
     listener?.(

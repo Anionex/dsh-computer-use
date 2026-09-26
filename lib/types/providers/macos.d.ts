@@ -31,7 +31,6 @@ export declare class MacOSBackend implements ComputerUseBackend {
 export declare class MacOSComputerUseProvider extends ComputerUseService {
     static inject: string[];
     static Config: import("@deepseek-ai/schemastery").default<ComputerUseConfig>;
-    private readonly settings;
     constructor(ctx: Context, config?: ComputerUseConfig);
     /** Verify helper integrity and permissions before the service is injectable. */
     protected [Service.init](): Promise<void>;

@@ -37,10 +37,11 @@ describe('Cordis registration contracts', () => {
     }
     const dispose = installComputerUseConsumer(ctx as never)
     expect(registeredTools).toEqual([COMPUTER_USE_ACTIVATE])
-    expect(registeredSkills).toEqual(['computer-use'])
+    expect(registeredSkills).toEqual(['dsh-computer-use', 'computer-use'])
     dispose()
     expect(disposed).toEqual(expect.arrayContaining([
       'skill:computer-use',
+      'skill:dsh-computer-use',
       `tool:${COMPUTER_USE_ACTIVATE}`,
       'listener',
     ]))
