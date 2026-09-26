@@ -501,22 +501,27 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
         return nil
     }
     let expectedId = (snapshot.windowJSON?["id"] as? NSNumber)?.uint32Value
-    let expectedTitle = snapshot.windowJSON?["title"] as? String
+    let expectedFrame = (snapshot.windowJSON?["frame"] as? [String: Any]).flatMap { try? cgRect($0) }
     let windows = content.windows.filter { $0.owningApplication?.processID == snapshot.app.processIdentifier }
     let selected = windows.first { window in
-        if let expectedId, window.windowID == expectedId { return true }
-        if let expectedTitle, !expectedTitle.isEmpty, window.title == expectedTitle { return true }
-        return false
-    } ?? windows.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+        if let expectedId { return window.windowID == expectedId }
+        guard let expectedFrame else { return false }
+        let tolerance: CGFloat = 2
+        return abs(window.frame.minX - expectedFrame.minX) <= tolerance
+            && abs(window.frame.minY - expectedFrame.minY) <= tolerance
+            && abs(window.frame.width - expectedFrame.width) <= tolerance
+            && abs(window.frame.height - expectedFrame.height) <= tolerance
+    }
     guard let selected else {
-        if required { throw fail("COMPUTER_TARGET_UNAVAILABLE", "no capturable window belongs to the selected application") }
+        if required { throw fail("COMPUTER_TARGET_UNAVAILABLE", "the observed window is not available for capture") }
         return nil
     }
-    let configuration = SCStreamConfiguration()
-    configuration.width = max(1, Int(selected.frame.width.rounded()))
-    configuration.height = max(1, Int(selected.frame.height.rounded()))
-    configuration.showsCursor = false
     let filter = SCContentFilter(desktopIndependentWindow: selected)
+    let configuration = SCStreamConfiguration()
+    let pixelScale = CGFloat(filter.pointPixelScale)
+    configuration.width = max(1, Int((selected.frame.width * pixelScale).rounded()))
+    configuration.height = max(1, Int((selected.frame.height * pixelScale).rounded()))
+    configuration.showsCursor = false
     let image: CGImage
     do {
         image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
