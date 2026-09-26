@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { COMPUTER_USE_SETTINGS_NAMESPACE } from '../src/config.ts'
-import { ComputerUseWebBackend } from '../src/web.ts'
+import { ComputerUseWebBackend, installComputerUseWeb } from '../src/web.ts'
 
 interface RunningServer {
   baseUrl: string
@@ -12,7 +12,7 @@ interface RunningServer {
 
 const running: RunningServer[] = []
 
-async function start(backend: ComputerUseWebBackend): Promise<RunningServer> {
+async function start(backend: Pick<ComputerUseWebBackend, 'handle'>): Promise<RunningServer> {
   const server = createServer((req, res) => { void backend.handle(req, res) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
@@ -33,7 +33,11 @@ afterEach(async () => {
   while (running.length > 0) await running.pop()?.close()
 })
 
-function harness(options: { writable?: boolean; replace?: () => Promise<void> } = {}) {
+function harness(options: {
+  writable?: boolean
+  replace?: () => Promise<void>
+  authorizeUnmarkedPost?: (req: import('node:http').IncomingMessage) => boolean
+} = {}) {
   const descriptor = {
     ns: COMPUTER_USE_SETTINGS_NAMESPACE,
     schema: {},
@@ -64,7 +68,11 @@ function harness(options: { writable?: boolean; replace?: () => Promise<void> } 
     computerUse: { health, openPermissionSettings, status },
     logger: { warn: vi.fn() },
   }
-  return { backend: new ComputerUseWebBackend(ctx as never), replace, health, openPermissionSettings, status }
+  return {
+    ctx,
+    backend: new ComputerUseWebBackend(ctx as never, options.authorizeUnmarkedPost),
+    replace, health, openPermissionSettings, status,
+  }
 }
 
 async function post(baseUrl: string, body: unknown, options: { origin?: string; contentType?: string } = {}): Promise<Response> {
@@ -139,5 +147,63 @@ describe('Computer Use Web Settings backend', () => {
 
     const oversized = 'x'.repeat(129 * 1024)
     expect((await post(conflictServer.baseUrl, oversized)).status).toBe(413)
+  })
+
+  it('accepts unmarked Desktop requests only after Host Connection authenticates them', async () => {
+    const authorizeUnmarkedPost = vi.fn((req: import('node:http').IncomingMessage) =>
+      req.headers.cookie === 'signed-session=valid')
+    const value = harness({ authorizeUnmarkedPost })
+    const server = await start(value.backend)
+    const request = (headers: Record<string, string>) => fetch(server.baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ action: 'health' }),
+    })
+
+    expect((await request({})).status).toBe(403)
+    expect((await request({ cookie: 'signed-session=forged' })).status).toBe(403)
+    expect((await request({ cookie: 'signed-session=valid' })).status).toBe(200)
+    expect(value.health).toHaveBeenCalledOnce()
+    expect(authorizeUnmarkedPost).toHaveBeenCalledTimes(3)
+
+    expect((await request({ cookie: 'signed-session=valid', origin: 'https://evil.example' })).status).toBe(403)
+    expect((await request({ cookie: 'signed-session=valid', 'sec-fetch-site': 'cross-site' })).status).toBe(403)
+    expect(authorizeUnmarkedPost).toHaveBeenCalledTimes(3)
+
+    const oldHost = harness()
+    const oldServer = await start(oldHost.backend)
+    const oldResponse = await fetch(oldServer.baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: 'signed-session=valid' },
+      body: JSON.stringify({ action: 'health' }),
+    })
+    expect(oldResponse.status).toBe(403)
+  })
+
+  it('uses the Host Connection rejection result for unmarked forwarded requests', async () => {
+    const value = harness()
+    const requestRejection = vi.fn((req: import('node:http').IncomingMessage): 401 | 403 | undefined =>
+      req.headers.cookie === 'signed-session=valid' ? undefined : 401)
+    const register = vi.fn()
+    const ctx = {
+      ...value.ctx,
+      connection: { requestRejection },
+      webServer: { register },
+      effect: (registerRoute: () => unknown) => registerRoute(),
+      inject: (_services: string[], callback: (webCtx: unknown) => void) => callback(ctx),
+    }
+    installComputerUseWeb(ctx as never)
+    expect(register).toHaveBeenCalledOnce()
+    const route = register.mock.calls[0]?.[0] as { handler: ComputerUseWebBackend['handle'] }
+    const server = await start({ handle: route.handler })
+    const request = (headers: Record<string, string>) => fetch(server.baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ action: 'health' }),
+    })
+    expect((await request({ cookie: 'signed-session=valid' })).status).toBe(200)
+    expect((await request({ cookie: 'signed-session=forged' })).status).toBe(403)
+    expect((await request({ cookie: 'signed-session=valid', origin: 'https://evil.example' })).status).toBe(403)
+    expect(requestRejection).toHaveBeenCalledTimes(2)
   })
 })
