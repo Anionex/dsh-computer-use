@@ -10,7 +10,7 @@ export declare class ComputerConfirmationManager {
     private readonly records;
     constructor(ctx: Context, config: () => ResolvedComputerUseConfig);
     /** Request user approval and mint one token bound to the exact action. */
-    confirm(agent: Agent, app: ComputerAppIdentity, request: ComputerConfirmRequest, callId: import('@deepseek-ai/dsh-llm').CallId | undefined, signal: AbortSignal): Promise<ComputerConfirmation>;
+    confirm(agent: Agent, app: ComputerAppIdentity, request: ComputerConfirmRequest, callId: import('@deepseek-ai/dsh-tools').ToolRunContext['callId'] | undefined, signal: AbortSignal): Promise<ComputerConfirmation>;
     /** Require and consume the one matching token when an action is marked sensitive. */
     consume(agent: Agent, app: ComputerAppIdentity, action: ComputerActionRequest): void;
     /** Invalidate one pending token after target identity changes before input. */

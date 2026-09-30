@@ -96,7 +96,7 @@ export function hasLoadedComputerUseSkill(session: Session): boolean {
   const nativeCalls = new Set<string>()
   const events = typeof (session as any).snapshotEvents === 'function'
     ? (session as any).snapshotEvents()
-    : session.events ?? []
+    : (session as unknown as { events?: readonly import('@deepseek-ai/dsh-session').SessionEvent[] }).events ?? []
   for (const event of events) {
     if (event.type === 'user/message') {
       const source = event.data.source

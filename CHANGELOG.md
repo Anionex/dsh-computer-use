@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 — Unreleased / 待发布
+
+- Adapt to DSH `0.2.0-rc.2` types, tool-message provenance, and explicit Connection injection for the Web Settings route. Rebuild the universal macOS helper as 0.3.3.
+- 适配新版类型、工具消息来源和 Web Settings 路由的显式 Connection 依赖；同步重建 0.3.3 通用 macOS helper。
+- Build, unit tests, clean tarball installation, host startup, and Web Settings passed. Native fixture and full model interaction acceptance still require an unlocked macOS session; `0.2.0-rc.2` compatibility remains `unknown` until those gates pass. This candidate has not been published.
+- 构建、单元测试、干净压缩包安装、宿主启动及 Web 设置已通过。原生 fixture 和完整模型交互仍需解锁 macOS 后验收；在通过前，新版兼容结论保持 `unknown`。候选包尚未发布。
+
 All notable changes to DSH Computer Use are recorded here. The project follows semantic versioning after `1.0.0`; before then, minor releases may change model-facing and provider behavior.
 
 ## [Unreleased]

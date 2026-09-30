@@ -197,7 +197,12 @@ describe('Computer Use Web Settings backend', () => {
       connection: { requestRejection },
       webServer: { register },
       effect: (registerRoute: () => unknown) => registerRoute(),
-      inject: (_services: string[], callback: (webCtx: unknown) => void) => callback(ctx),
+      inject: (services: string[], callback: (webCtx: unknown) => void) => callback(new Proxy(ctx, {
+        get(target, key) {
+          if (key === 'connection' && !services.includes('connection')) throw new Error('connection must be injected')
+          return Reflect.get(target, key)
+        },
+      })),
     }
     installComputerUseWeb(ctx as never)
     expect(register).toHaveBeenCalledOnce()

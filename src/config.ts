@@ -68,7 +68,7 @@ export interface ComputerUseConfig {
 function live<T>(field: Schema<T>): Schema<T> {
   const candidate = field as Schema<T> & { volatile?: () => Schema<T> }
   return 'SettingsForms' in SettingsModule && typeof candidate.volatile === 'function'
-    ? candidate.volatile()
+    ? candidate.volatile() as unknown as Schema<T>
     : field
 }
 

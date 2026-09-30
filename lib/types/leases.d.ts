@@ -1,7 +1,8 @@
 /** Session-sidecar read leases, durable denials, and per-turn control leases. */
 import { z } from 'zod';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import type { CallId } from '@deepseek-ai/dsh-llm';
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
+type CallId = ToolRunContext['callId'];
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ResolvedComputerUseConfig } from './config.ts';

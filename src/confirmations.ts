@@ -48,7 +48,7 @@ export class ComputerConfirmationManager {
     agent: Agent,
     app: ComputerAppIdentity,
     request: ComputerConfirmRequest,
-    callId: import('@deepseek-ai/dsh-llm').CallId | undefined,
+    callId: import('@deepseek-ai/dsh-tools').ToolRunContext['callId'] | undefined,
     signal: AbortSignal,
   ): Promise<ComputerConfirmation> {
     if (approvalPolicy(this.ctx, agent) === 'never') {

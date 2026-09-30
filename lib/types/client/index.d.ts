@@ -1,5 +1,5 @@
 /** DSH Computer Use browser plugin: provider health, permissions, limits, and app policy. */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+import type { Context as ClientContext } from '@deepseek-ai/cordis';
 /** Parse one bounded integer using caller-owned localized error copy. */
 export declare function integerInRange(value: string, field: string, min: number, max: number, formatError: (field: string, min: number, max: number) => string): number;
 declare const en: {
