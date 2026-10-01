@@ -24,7 +24,7 @@ const HELPER = join(ROOT, 'native', 'macos', 'bin', 'dsh-computer-use-helper')
 const FIXTURE_APP = join(ROOT, 'native', 'macos', 'fixture', 'DSHComputerUseFixture.app')
 const FIXTURE_BUNDLE = 'io.anionex.dsh-computer-use-fixture'
 const LIMITS = { maxNodes: 1000, maxDepth: 20, maxTextBytes: 128000 }
-const TARGETED = { focusPolicy: 'preserve', keyboardPolicy: 'preserve', pointerInputPolicy: 'targeted' } as const
+const TARGETED = { focusPolicy: 'preserve', keyboardPolicy: 'preserve', pointerInputPolicy: 'targeted', cursorSpeedPxPerSecond: 1600, cursorAccelerationPxPerSecondSquared: 6000 } as const
 
 const REQUIRE_TCC = process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1'
 

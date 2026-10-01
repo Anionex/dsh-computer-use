@@ -45,8 +45,8 @@ function externalCommand(command, args) {
   // A long-running Node harness can leave DSH without its internal ESM loader.
   // A login shell matches the real CLI entry and keeps profile package resolution isolated.
   return command === 'dsh' && process.platform === 'darwin'
-    ? { command: '/bin/bash', args: ['-lc', 'exec dsh "$@"', 'dsh', ...args] }
-    : { command, args }
+    ? { command: '/bin/bash', args: ['-lc', 'exec "$@"', 'dsh', process.env.DSH_TEST_CLI ?? 'dsh', ...args] }
+    : { command: command === 'dsh' ? process.env.DSH_TEST_CLI ?? command : command, args }
 }
 
 async function runCommand(name, command, args, options = {}) {
@@ -180,6 +180,8 @@ async function realModelWorkflow() {
   }
 
   const tarball = await findTarball(packing)
+  await mkdir(join(home, 'profiles', 'headless'), { recursive: true })
+  await writeFile(join(home, 'profiles', 'headless', 'pnpm-workspace.yaml'), 'nodeLinker: hoisted\nautoInstallPeers: false\n')
   await runCommand(
     'install dsh-computer-use tarball',
     'dsh',
@@ -215,6 +217,8 @@ async function realModelWorkflow() {
   ].join('\n'))
 
   const prompt = `/computer-use\n\nUse the dsh-computer-use capability to operate the running deterministic macOS fixture whose bundle id is ${BUNDLE_ID}. Load the Skill, list running applications, select the exact fixture process, observe it with a required screenshot and full Accessibility state, locate the element labelled "Targeted pointer probe", and click that current element using its observation id and element index with allowCoordinateFallback=true. Confirm from the fresh post-action observation that the status reads "Status: pointer click". Use only the focused computer-use Tools for UI observation and input; do not use shell, AppleScript, JXA, direct file edits, or coordinate guessing. Finish immediately after confirming the pointer-click state.`
+  const hostVersion = await runCommand('target DSH version', 'dsh', ['--version'])
+  const defaultBaseURL = hostVersion.stdout.includes('0.2.') ? 'https://api.deepseek.com/anthropic' : 'https://api.deepseek.com/v1'
   const result = await runCommand(
     'DeepSeek V4 computer-use fixture workflow',
     'dsh',
@@ -226,7 +230,7 @@ async function realModelWorkflow() {
         DSH_TELEMETRY_DISABLED: '1',
         DSH_PERMISSION_MODE: 'workspace-write',
         DEEPSEEK_API_KEY: requiredEnvironment('DEEPSEEK_API_KEY'),
-        DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL?.trim() || 'https://api.deepseek.com/v1',
+        DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL?.trim() || defaultBaseURL,
       },
       timeoutMs: 600_000,
     },

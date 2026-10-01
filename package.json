@@ -100,7 +100,7 @@
         "0.1.5-alpha.2": "compatible",
         "0.1.5-rc.1": "compatible",
         "0.1.7-rc.2": "compatible",
-        "0.2.0-rc.2": "unknown"
+        "0.2.0-rc.2": "compatible"
       },
       "profiles": [
         "web"

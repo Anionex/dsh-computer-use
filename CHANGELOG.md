@@ -1,13 +1,15 @@
 # Changelog
 
-## 0.3.3 — Unreleased / 待发布
+## 0.3.3 — 2026-10-01
 
 - Adapt to DSH `0.2.0-rc.2` types, tool-message provenance, and explicit Connection injection for the Web Settings route. Rebuild the universal macOS helper as 0.3.3.
 - 适配新版类型、工具消息来源和 Web Settings 路由的显式 Connection 依赖；同步重建 0.3.3 通用 macOS helper。
-- Build, unit tests, clean tarball installation, host startup, and Web Settings passed. Native fixture and full model interaction acceptance still require an unlocked macOS session; `0.2.0-rc.2` compatibility remains `unknown` until those gates pass. This candidate has not been published.
-- 构建、单元测试、干净压缩包安装、宿主启动及 Web 设置已通过。原生 fixture 和完整模型交互仍需解锁 macOS 后验收；在通过前，新版兼容结论保持 `unknown`。候选包尚未发布。
-
-All notable changes to DSH Computer Use are recorded here. The project follows semantic versioning after `1.0.0`; before then, minor releases may change model-facing and provider behavior.
+- Disable AppKit panel fade so the agent cursor disappears immediately when the bound target loses foreground focus.
+- 禁用 AppKit 面板淡出动画，目标应用失去焦点后立即隐藏代理光标。
+- Verified DSH `0.2.0-rc.2` with six real macOS native fixture tests, clean Web/Headless tarball installation and actual tool execution, Web Settings, and an official DeepSeek model driving the target-process click. The model lane verifies durable Session v4 tool-result evidence and screenshot artifacts.
+- 已通过六项 macOS 原生测试、Web/Headless 干净压缩包安装及真实工具调用、Web 设置，以及官方 DeepSeek 模型驱动的目标进程点击；模型验收同时校验持久 Session v4 工具结果与截图产物。
+- Update release fixtures for cursor-motion configuration, the DeepSeek Messages endpoint, explicit target CLI selection, and both legacy/wrapped and v4/direct tool-result logs.
+- 更新验收夹具以覆盖光标速度配置、DeepSeek Messages 地址、明确目标 CLI，以及新旧工具结果日志格式。
 
 ## [Unreleased]
 

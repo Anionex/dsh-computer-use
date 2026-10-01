@@ -53,7 +53,7 @@ async function sessionLogs(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) result.push(...await sessionLogs(path))
-    else if (entry.isFile() && (entry.name === 'session.jsonl' || entry.name === 'session.jsonl.zstd')) result.push(path)
+    else if (entry.isFile() && /^session(?:\.v\d+)?\.jsonl(?:\.zstd)?$/u.test(entry.name)) result.push(path)
   }
   return result
 }
@@ -71,8 +71,9 @@ function resultValue(event) {
   const outer = event?.data?.message?.content
   if (!Array.isArray(outer)) return undefined
   for (const block of outer) {
-    if (block?.type !== 'tool-result' || !Array.isArray(block.content)) continue
-    for (const content of block.content) {
+    // Session v4 stores tool-role text directly; earlier logs wrap it.
+    const contents = block?.type === 'tool-result' && Array.isArray(block.content) ? block.content : [block]
+    for (const content of contents) {
       if (content?.type !== 'text' || typeof content.text !== 'string') continue
       try { return JSON.parse(content.text) }
       catch { return undefined }
