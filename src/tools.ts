@@ -1,7 +1,8 @@
 /** Focused model-facing Computer Use Tool definitions. */
 
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
-import { defineTool, type JsonValue, type ToolDefinition, type ToolRunContext, type ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolDefinition, type ToolRunContext, type ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import {
   ComputerConfirmationToken,
   ComputerObservationId,
@@ -38,7 +39,7 @@ function deferVisionHandoff(exec: ToolRunContext, artifact: ComputerArtifact | u
         'Do not inspect OCR executables or use bash, tesseract, screencapture, or an ad hoc Swift/Python OCR implementation.',
       ].join(' '),
     }],
-    source: { kind: 'plugin', plugin: 'dsh-computer-use' },
+    source: { kind: 'tool', callId: exec.callId },
   }))
 }
 

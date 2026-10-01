@@ -204,6 +204,9 @@ private final class CursorOverlayController: NSObject {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
+        // Target loss must remove the indicator immediately, without AppKit's
+        // panel fade leaving it visible over an unrelated foreground app.
+        window.animationBehavior = .none
         window.ignoresMouseEvents = true
         window.hidesOnDeactivate = false
         window.becomesKeyOnlyIfNeeded = true

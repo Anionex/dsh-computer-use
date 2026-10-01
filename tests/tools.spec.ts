@@ -181,7 +181,7 @@ describe('model-facing Computer Use tools', () => {
     )
     expect(exec.deferContext).toHaveBeenCalledOnce()
     expect(exec.deferContext.mock.calls[0]?.[0]).toMatchObject({
-      source: { kind: 'plugin', plugin: 'dsh-computer-use' },
+      source: { kind: 'tool', callId: expect.any(String) },
       content: [{ type: 'text', text: expect.stringContaining('call the skill tool with {"name":"vision-tools"}') }],
     })
     expect(service.act.mock.calls.map(call => call[0])).toEqual([

@@ -195,7 +195,7 @@ export class ComputerUseWebBackend {
 
 /** Attach the optional route when a Web host is present. */
 export function installComputerUseWeb(ctx: Context): void {
-  ctx.inject(['webServer'], (webCtx) => {
+  ctx.inject(['webServer', 'connection'], (webCtx) => {
     const connection = (webCtx as Context & {
       connection?: { requestRejection?: (req: IncomingMessage) => 401 | 403 | undefined }
     }).connection

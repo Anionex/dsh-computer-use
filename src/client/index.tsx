@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -561,7 +563,7 @@ export function apply(ctx: ClientContext): void {
   const controller = new ComputerUseSettingsController()
   ctx.effect(() => {
     const disposers = [
-      ctx.remote.$on('settings/document-updated', ns => { if (ns === NS) controller.refreshIfLoaded() }),
+      ctx.remote.$on('settings/document-updated', (ns: string) => { if (ns === NS) controller.refreshIfLoaded() }),
       ctx.on('connection/reset', () => { controller.refreshIfLoaded() }),
     ]
     return () => { for (const dispose of disposers) dispose() }

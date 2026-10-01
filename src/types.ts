@@ -2,7 +2,8 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { CallId } from '@deepseek-ai/dsh-llm'
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+type CallId = ToolRunContext['callId']
 
 /** Opaque identifier for one immutable observed UI state. */
 export type ComputerObservationId = Branded<'ComputerObservationId'>

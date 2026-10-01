@@ -9,10 +9,10 @@ import { temporaryDirectory } from './helpers.ts'
 const compressZstd = promisify(zstdCompress)
 
 describe('real-model Session evidence', () => {
-  it('reads every concatenated Zstandard frame and finds the exact computer_click result', async () => {
+  it.each(['session.jsonl.zstd', 'session.v4.jsonl.zstd'])('reads every concatenated Zstandard frame in %s and finds the exact computer_click result', async (filename) => {
     const directory = await temporaryDirectory('dsh-computer-session-evidence-')
     try {
-      const path = join(directory.path, 'session.jsonl.zstd')
+      const path = join(directory.path, filename)
       const header = { type: 'session', version: 0, id: 'session-evidence', createdAt: 1, delegationDepth: 0 }
       const call = {
         type: 'tool/call',
@@ -52,7 +52,12 @@ describe('real-model Session evidence', () => {
       const frames = await Promise.all([
         `${JSON.stringify(header)}\n`,
         `${JSON.stringify(call)}\n`,
-        `${JSON.stringify(result)}\n`,
+        `${JSON.stringify(filename.includes('.v4.') ? {
+          ...result, data: { ...result.data, message: {
+            ...result.data.message, role: 'tool', toolCallId: 'call-pointer',
+            content: result.data.message.content[0].content,
+          } },
+        } : result)}\n`,
       ].map(value => compressZstd(value)))
       await writeFile(path, Buffer.concat(frames))
 

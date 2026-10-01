@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, it } from 'vitest'
 import type { BackendObservation } from '../src/backend.ts'
+import { resolveConfig } from '../src/config.ts'
 import { describeComputerTarget, resolveComputerTarget } from '../src/target-resolver.ts'
 import { temporaryDirectory } from './helpers.ts'
 
@@ -58,6 +59,8 @@ interface InteractionPolicy {
   focusPolicy: 'preserve' | 'activate'
   keyboardPolicy: 'preserve' | 'activate'
   pointerInputPolicy: 'deny' | 'targeted'
+  cursorSpeedPxPerSecond: number
+  cursorAccelerationPxPerSecondSquared: number
 }
 
 interface FixtureTranscript {
@@ -88,18 +91,21 @@ interface InputMonitorResult {
 }
 
 const TARGETED_INTERACTION: InteractionPolicy = {
+  ...resolveConfig().interaction,
   focusPolicy: 'preserve',
   keyboardPolicy: 'preserve',
   pointerInputPolicy: 'targeted',
 }
 
 const PRESERVE_INTERACTION: InteractionPolicy = {
+  ...resolveConfig().interaction,
   focusPolicy: 'preserve',
   keyboardPolicy: 'preserve',
   pointerInputPolicy: 'deny',
 }
 
 const ACTIVATE_KEYBOARD_INTERACTION: InteractionPolicy = {
+  ...resolveConfig().interaction,
   focusPolicy: 'preserve',
   keyboardPolicy: 'activate',
   pointerInputPolicy: 'targeted',
@@ -511,7 +517,9 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       expect(protocol.responses).toEqual(expect.arrayContaining([
         expect.objectContaining({ ok: true, ready: true }),
         expect.objectContaining({ ok: true, op: 'move', visible: false, reasonCode: 'target-not-frontmost' }),
-        expect.objectContaining({ ok: true, op: 'press', visible: false, reasonCode: 'target-not-frontmost' }),
+        // The rejected move hides the overlay and clears its binding; a later
+        // press must stay hidden and report that there is no visible target.
+        expect.objectContaining({ ok: true, op: 'press', visible: false, reasonCode: 'target-invalid' }),
         expect.objectContaining({ ok: true, op: 'stop' }),
       ]))
       expect(result.eventTapAvailable).toBe(true)

@@ -2,7 +2,8 @@
 
 import { z } from 'zod'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { CallId } from '@deepseek-ai/dsh-llm'
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+type CallId = ToolRunContext['callId']
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
@@ -187,7 +188,7 @@ export class ComputerLeaseManager {
     await this.prepareStorage()
     const sessionEvents = typeof (agent.session as any).snapshotEvents === 'function'
       ? (agent.session as any).snapshotEvents()
-      : agent.session.events ?? []
+      : (agent.session as unknown as { events?: readonly SessionEvent[] }).events ?? []
     const turn = currentTurn(sessionEvents)
     if (turn === undefined) {
       throw new ComputerUseError('COMPUTER_PERMISSION_REQUIRED', `${scope} access for ${app.name} must be requested inside an open Agent turn`)

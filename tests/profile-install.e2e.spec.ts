@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -30,15 +30,15 @@ type ScriptedStep =
 type ScriptedStepFactory = ScriptedStep | ((body: unknown) => ScriptedStep)
 
 function commandAvailable(command: string): boolean {
-  return spawnSync(command, ['--version'], { stdio: 'ignore', timeout: 10000 }).status === 0
+  return spawnSync(command === 'dsh' ? process.env.DSH_TEST_CLI ?? command : command, ['--version'], { stdio: 'ignore', timeout: 10000 }).status === 0
 }
 
 function externalCommand(command: string, args: readonly string[]): { command: string; args: readonly string[] } {
   // A direct Vitest-worker child leaves DSH without its internal ESM loader.
   // A login shell matches the real CLI entry and keeps profile package resolution isolated.
   return command === 'dsh' && process.platform === 'darwin'
-    ? { command: '/bin/bash', args: ['-lc', 'exec dsh "$@"', 'dsh', ...args] }
-    : { command, args }
+    ? { command: '/bin/bash', args: ['-lc', 'exec "$@"', 'dsh', process.env.DSH_TEST_CLI ?? 'dsh', ...args] }
+    : { command: command === 'dsh' ? process.env.DSH_TEST_CLI ?? command : command, args }
 }
 
 function run(
@@ -365,6 +365,8 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     const tarball = join(packing, tarballs[0]!)
 
     for (const profile of ['headless', 'web']) {
+      await mkdir(join(home, 'profiles', profile), { recursive: true })
+      await writeFile(join(home, 'profiles', profile, 'pnpm-workspace.yaml'), 'nodeLinker: hoisted\nautoInstallPeers: false\n')
       const add = await run('dsh', ['plugin', '--profile', profile, 'add', tarball], { env: { DSH_HOME: home }, timeoutMs: 180000 })
       expect(add.code, add.stderr).toBe(0)
       const dump = await run('dsh', ['--profile', profile, '--dump-config'], { env: { DSH_HOME: home } })
@@ -400,6 +402,18 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       '  disabled: true',
       '',
     ].join('\n'))
+
+    const version = await run('dsh', ['--version'])
+    if (version.stdout.includes('0.2.')) {
+      await writeFile(patch, [
+        '\n- id: llm-pi-ai', '  config:', '    providers:', '      fixture:',
+        '        api: openai-completions',
+        '        baseURL: !!js process.env.DEEPSEEK_BASE_URL',
+        '        apiKeyEnv: DEEPSEEK_API_KEY', '        models:',
+        '          - id: fixture-model', '            contextWindow: 128000', '            maxTokens: 4096',
+        '- id: agent-default-model', '  config:', '    provider: fixture', '    model: fixture-model', '',
+      ].join('\n'), { flag: 'a' })
+    }
 
     const server = await startScriptedServer([
       { kind: 'tool', name: 'skill', arguments: JSON.stringify({ name: 'dsh-computer-use' }) },
