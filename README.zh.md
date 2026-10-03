@@ -240,7 +240,7 @@ Accessibility 与 Screen Recording 是 UI 权限，不是文件系统权限。�
 | `maxNodes` / `maxDepth` / `maxTextBytes` | Accessibility 遍历与模型可见文本上限 |
 | `maxScreenshotBytes` | PNG Artifact 最大字节数 |
 | `artifactRoot` | workspace 内的相对截图目录 |
-| `helper.path` | 可选的显式外部 helper executable |
+| `helper.path` | 可选的显式外部 helper executable；省略、空字符串或仅含空白字符时使用随包提供的托管 helper |
 | `helper.allowSourceBuild` | 提交 helper 缺失时允许显式托管源码重建；默认 `false` |
 | `interaction.focusPolicy` | `preserve`（默认）避免激活目标应用；`activate` 显式允许激活，并要求重新观察/校验 |
 | `interaction.keyboardPolicy` | `preserve` 不激活地把键盘事件定向投递；`activate`（Bundle 默认）在键盘 fallback 前激活目标应用 |

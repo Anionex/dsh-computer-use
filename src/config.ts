@@ -184,10 +184,7 @@ export function resolveConfig(config: ComputerUseConfig = {}): ResolvedComputerU
   if (artifactRoot.length === 0 || artifactRoot.startsWith('/') || artifactRoot.split(/[\\/]+/u).includes('..')) {
     throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'artifactRoot must be a non-empty workspace-relative path without ..')
   }
-  const helperPath = config.helper?.path?.trim()
-  if (helperPath !== undefined && helperPath.length === 0) {
-    throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'helper.path must not be empty')
-  }
+  const helperPath = config.helper?.path?.trim() || undefined
   const focusPolicy = option('interaction.focusPolicy', config.interaction?.focusPolicy ?? 'preserve', ['preserve', 'activate'] as const)
   const keyboardPolicy = option('interaction.keyboardPolicy', config.interaction?.keyboardPolicy ?? 'preserve', ['preserve', 'activate'] as const)
   const pointerInputPolicy = option('interaction.pointerInputPolicy', config.interaction?.pointerInputPolicy ?? 'targeted', ['deny', 'targeted'] as const)
