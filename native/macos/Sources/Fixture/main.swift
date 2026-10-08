@@ -408,5 +408,5 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
 let app = NSApplication.shared
 private let delegate = FixtureDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.regular)
+// The bundled app is already regular; resetting policy can activate a background launch.
 app.run()
