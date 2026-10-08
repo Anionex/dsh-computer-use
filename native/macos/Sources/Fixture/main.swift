@@ -115,7 +115,16 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if launchInBackground {
+            NSApplication.shared.setActivationPolicy(.prohibited)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if launchInBackground {
+            NSApplication.shared.setActivationPolicy(.regular)
+        }
         buildWindow()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 36 else { return event }
@@ -408,5 +417,4 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
 let app = NSApplication.shared
 private let delegate = FixtureDelegate()
 app.delegate = delegate
-// The bundled app is already regular; resetting policy can activate a background launch.
 app.run()

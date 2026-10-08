@@ -16,8 +16,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Build official fixture for launch diagnostics
-        run: node scripts/build-native.mjs --fixture-only
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.20.0
+      - run: pnpm install --frozen-lockfile
+      - name: Build all official artifacts before launch diagnostics
+        run: pnpm run build
       - name: Compare CLI and native background launch requests
         run: |
           mkdir -p "$RUNNER_TEMP/foreground-baseline"
