@@ -136,7 +136,6 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         if launchInBackground {
             NSApplication.shared.unhideWithoutActivation()
             window.orderFrontRegardless()
-            window.orderBack(nil)
         } else {
             NSApplication.shared.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
@@ -196,14 +195,15 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
 
     private func buildWindow() {
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "DSH Computer Use Fixture"
         window.center()
-        window.setFrameAutosaveName("dsh-computer-use-fixture")
+        // Keep deterministic geometry and reserve space for the harmless sibling.
+        // A saved frame from an earlier test must not change this fixture.
 
         let content = NSView()
         content.translatesAutoresizingMaskIntoConstraints = false
