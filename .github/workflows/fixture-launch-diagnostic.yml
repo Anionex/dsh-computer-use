@@ -29,6 +29,7 @@ jobs:
           cat > "$RUNNER_TEMP/launch-modes.swift" <<'SWIFT'
           import AppKit
           import Foundation
+          import CoreGraphics
           let root = CommandLine.arguments[1]
           let temporary = CommandLine.arguments[2]
           let fixtureURL = URL(fileURLWithPath: root + "/native/macos/fixture/DSHComputerUseFixture.app")
@@ -63,7 +64,14 @@ jobs:
                         "fixture", fixtures.map { "\($0.processIdentifier):active=\($0.isActive):policy=\($0.activationPolicy.rawValue):hidden=\($0.isHidden)" })
                   if let data = FileManager.default.contents(atPath: transcript), let text = String(data: data, encoding: .utf8) { print(text) }
                   if index == 5 {
-                      for app in fixtures { try process("/bin/ps", ["-ww", "-p", String(app.processIdentifier), "-o", "command="]) }
+                      for app in fixtures {
+                          try process("/bin/ps", ["-ww", "-p", String(app.processIdentifier), "-o", "command="])
+                          let windows = (CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []).filter {
+                              ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier
+                          }
+                          let data = try JSONSerialization.data(withJSONObject: windows, options: [.sortedKeys])
+                          print("FIXTURE_CG_WINDOWS", String(data: data, encoding: .utf8) ?? "")
+                      }
                   }
               }
               for app in NSRunningApplication.runningApplications(withBundleIdentifier: "io.anionex.dsh-computer-use-fixture") { app.terminate() }

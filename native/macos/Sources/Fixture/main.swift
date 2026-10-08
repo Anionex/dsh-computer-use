@@ -123,7 +123,15 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Restore an ordinary, explicitly activatable app before creating its UI.
+        if launchInBackground {
+            DispatchQueue.main.async { [weak self] in self?.finishFixtureLaunch() }
+        } else {
+            finishFixtureLaunch()
+        }
+    }
+
+    private func finishFixtureLaunch() {
+        // Finish AppKit's startup before restoring regular policy and creating UI.
         if launchInBackground {
             NSApplication.shared.setActivationPolicy(.regular)
         }

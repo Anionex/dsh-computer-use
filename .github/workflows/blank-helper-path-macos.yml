@@ -4,7 +4,7 @@ name: Validate blank helper path on macOS
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
 
 permissions:
   contents: read
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   validate:
-    if: github.repository == 'Anionex/dsh-computer-use' && github.event.pull_request.number == 31 && github.head_ref == 'fix/blank-helper-path'
+    if: github.repository == 'Anionex/dsh-computer-use' && github.event.pull_request.number == 31 && github.head_ref == 'fix/blank-helper-path' && (github.event.action != 'closed' || github.event.pull_request.merged)
     runs-on: macos-15
     timeout-minutes: 45
     steps:

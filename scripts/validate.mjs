@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dshSourceRoot } from './dsh-source-root.mjs'
+import { assertPluginCheckReport } from './plugin-check-policy.mjs'
 
 const ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
 const results = []
@@ -124,16 +125,13 @@ async function pluginCheck(options) {
     { env: { TSX_TSCONFIG_PATH: join(sourceRoot, 'tsconfig.json') }, timeoutMs: 30_000 },
   )
   const report = JSON.parse(checked.stdout.trim())
-  const warnings = report.warnings ?? []
-  const allowed = options.allowHubWarning && warnings.every(warning => warning.code === 'not-in-hub')
-  if (report.errors?.length > 0 || (warnings.length > 0 && !allowed)) {
-    throw new Error(`dsh-plugin-check did not pass cleanly: ${JSON.stringify(report, null, 2)}`)
-  }
+  const pkg = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8'))
+  const allowedWarnings = assertPluginCheckReport(report, pkg.name, options)
   results.push({
     name: 'dsh-plugin-check assertion',
     status: 'pass',
     verdict: report.verdict,
-    allowedWarnings: allowed ? warnings : [],
+    allowedWarnings,
     checks: report.checks,
   })
 }
@@ -239,4 +237,5 @@ const report = {
 }
 await writeOutput(options ?? {}, report)
 if (failure !== undefined) process.exitCode = 1
+
 
