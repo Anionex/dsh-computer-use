@@ -60,7 +60,7 @@ jobs:
                   pause(0.25)
                   let fixtures = NSRunningApplication.runningApplications(withBundleIdentifier: "io.anionex.dsh-computer-use-fixture")
                   print("SAMPLE", mode, index, "foreground", NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil",
-                        "fixture", fixtures.map { "\($0.processIdentifier):active=\($0.isActive):policy=\($0.activationPolicy.rawValue)" })
+                        "fixture", fixtures.map { "\($0.processIdentifier):active=\($0.isActive):policy=\($0.activationPolicy.rawValue):hidden=\($0.isHidden)" })
                   if let data = FileManager.default.contents(atPath: transcript), let text = String(data: data, encoding: .utf8) { print(text) }
                   if index == 5 {
                       for app in fixtures { try process("/bin/ps", ["-ww", "-p", String(app.processIdentifier), "-o", "command="]) }

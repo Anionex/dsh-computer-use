@@ -134,6 +134,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             return nil
         }
         if launchInBackground {
+            NSApplication.shared.unhideWithoutActivation()
             window.orderFrontRegardless()
             window.orderBack(nil)
         } else {
@@ -411,6 +412,9 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             "pointerDragGestureCount": pointerDragGestureCount,
             "activationCount": activationCount,
             "activationPolicy": NSApplication.shared.activationPolicy().rawValue,
+            "hidden": NSApplication.shared.isHidden,
+            "windowVisible": window?.isVisible ?? false,
+            "windowFrame": window?.frame.debugDescription ?? "",
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
         try? data.write(to: URL(fileURLWithPath: transcriptPath), options: .atomic)

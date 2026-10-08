@@ -486,6 +486,8 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
       expect(await fixtureTranscript(transcriptPath)).toMatchObject({
         activationCount: 0,
         activationPolicy: 0,
+        hidden: false,
+        windowVisible: true,
       })
     } finally {
       await terminateFixtures()
@@ -776,6 +778,7 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
         JSON.stringify(fresh.elements.filter(element => ['Enable deterministic option', 'Harmless dynamic sibling'].includes(element.label ?? ''))),
       ).not.toEqual(checkbox.locator)
       expect(movedCheckbox.nativeIdentifier).toBe(checkbox.nativeIdentifier)
+      expect(fresh.window, 'harmless sibling must preserve the selected window').toEqual(original.window)
       await expect(act(original, { kind: 'click', elementIndex: checkbox.index }, checkbox, PRESERVE_INTERACTION))
         .rejects.toThrow(/COMPUTER_STALE_OBSERVATION/)
 
