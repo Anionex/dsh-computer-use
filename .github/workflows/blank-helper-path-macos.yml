@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: blank-helper-path-macos
+  group: pr31-macos-validation
   cancel-in-progress: true
 
 jobs:
@@ -61,7 +61,6 @@ jobs:
           DSH_COMPUTER_USE_REQUIRE_TCC: '1'
         run: |
           mkdir -p "$RUNNER_TEMP/foreground-baseline"
-          mkdir -p "$RUNNER_TEMP/foreground-baseline"
           open "$RUNNER_TEMP/foreground-baseline"
           sleep 2
           swift -e 'import AppKit; let app = NSWorkspace.shared.frontmostApplication; print("Foreground baseline:", app?.bundleIdentifier ?? "none"); guard app?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
@@ -72,6 +71,7 @@ jobs:
       - name: Run the aggregate validation gate
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
+          mkdir -p "$RUNNER_TEMP/foreground-baseline"
           open "$RUNNER_TEMP/foreground-baseline"
           sleep 2
           swift -e 'import AppKit; let app = NSWorkspace.shared.frontmostApplication; print("Foreground baseline:", app?.bundleIdentifier ?? "none"); guard app?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
