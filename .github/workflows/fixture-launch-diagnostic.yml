@@ -1,0 +1,68 @@
+name: Diagnose fixture background launch
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+
+jobs:
+  launch:
+    if: github.repository == 'Anionex/dsh-computer-use' && github.event.pull_request.number == 31 && github.head_ref == 'fix/blank-helper-path'
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build official fixture for launch diagnostics
+        run: node scripts/build-native.mjs --fixture-only
+      - name: Compare CLI and native background launch requests
+        run: |
+          mkdir -p "$RUNNER_TEMP/foreground-baseline"
+          cat > "$RUNNER_TEMP/launch-modes.swift" <<'SWIFT'
+          import AppKit
+          import Foundation
+          let root = CommandLine.arguments[1]
+          let temporary = CommandLine.arguments[2]
+          let fixtureURL = URL(fileURLWithPath: root + "/native/macos/fixture/DSHComputerUseFixture.app")
+          func pause(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
+          func process(_ executable: String, _ arguments: [String]) throws {
+              let child = Process()
+              child.executableURL = URL(fileURLWithPath: executable)
+              child.arguments = arguments
+              try child.run()
+              child.waitUntilExit()
+          }
+          for mode in ["open", "workspace"] {
+              try process("/usr/bin/open", [temporary + "/foreground-baseline"])
+              pause(2)
+              print("MODE", mode, "BEFORE", NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")
+              let transcript = temporary + "/launch-" + mode + ".json"
+              if mode == "open" {
+                  try process("/usr/bin/open", ["-g", "-n", fixtureURL.path, "--args", "--background", "--transcript", transcript])
+              } else {
+                  let options = NSWorkspace.OpenConfiguration()
+                  options.activates = false
+                  options.createsNewApplicationInstance = true
+                  options.arguments = ["--background", "--transcript", transcript]
+                  NSWorkspace.shared.openApplication(at: fixtureURL, configuration: options) { app, error in
+                      print("WORKSPACE completion", app?.processIdentifier ?? -1, error?.localizedDescription ?? "ok")
+                  }
+              }
+              for index in 0..<20 {
+                  pause(0.25)
+                  let fixtures = NSRunningApplication.runningApplications(withBundleIdentifier: "io.anionex.dsh-computer-use-fixture")
+                  print("SAMPLE", mode, index, "foreground", NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil",
+                        "fixture", fixtures.map { "\($0.processIdentifier):active=\($0.isActive):policy=\($0.activationPolicy.rawValue)" })
+                  if let data = FileManager.default.contents(atPath: transcript), let text = String(data: data, encoding: .utf8) { print(text) }
+                  if index == 5 {
+                      for app in fixtures { try process("/bin/ps", ["-ww", "-p", String(app.processIdentifier), "-o", "command="]) }
+                  }
+              }
+              for app in NSRunningApplication.runningApplications(withBundleIdentifier: "io.anionex.dsh-computer-use-fixture") { app.terminate() }
+              pause(2)
+          }
+          SWIFT
+          xcrun swift "$RUNNER_TEMP/launch-modes.swift" "$PWD" "$RUNNER_TEMP"
