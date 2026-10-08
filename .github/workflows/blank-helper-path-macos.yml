@@ -35,44 +35,6 @@ jobs:
       - name: Verify native integrity and target-process routing
         if: success()
         run: pnpm run check:native
-      - name: Diagnose fixture launch without native helper actions
-        run: |
-          mkdir -p "$RUNNER_TEMP/foreground-baseline"
-          open "$RUNNER_TEMP/foreground-baseline"
-          sleep 2
-          cat > "$RUNNER_TEMP/fixture-launch.swift" <<'SWIFT'
-          import AppKit
-          import Foundation
-          let root = CommandLine.arguments[1]
-          let transcript = CommandLine.arguments[2]
-          func snapshot(_ stage: String) {
-              let front = NSWorkspace.shared.frontmostApplication
-              let fixtures = NSRunningApplication.runningApplications(withBundleIdentifier: "io.anionex.dsh-computer-use-fixture")
-              print(stage, "frontmost", front?.bundleIdentifier ?? "nil", front?.processIdentifier ?? -1,
-                    "fixtures", fixtures.map { "\($0.processIdentifier):active=\($0.isActive)" })
-              if let data = FileManager.default.contents(atPath: transcript), let text = String(data: data, encoding: .utf8) { print(text) }
-          }
-          snapshot("before")
-          let process = Process()
-          process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-          process.arguments = ["-g", "-n", root + "/native/macos/fixture/DSHComputerUseFixture.app", "--args", "--background", "--transcript", transcript]
-          try process.run()
-          process.waitUntilExit()
-          for index in 0..<20 {
-              RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-              snapshot("sample-\(index)")
-          }
-          for fixture in NSRunningApplication.runningApplications(withBundleIdentifier: "io.anionex.dsh-computer-use-fixture") { fixture.terminate() }
-          SWIFT
-          xcrun swift "$RUNNER_TEMP/fixture-launch.swift" "$PWD" "$RUNNER_TEMP/fixture-launch.json" | tee "$RUNNER_TEMP/fixture-launch.log"
-      - name: Save standalone fixture launch diagnostics
-        uses: actions/upload-artifact@v4
-        with:
-          name: fixture-launch-diagnostics
-          retention-days: 1
-          path: |
-            ${{ runner.temp }}/fixture-launch.log
-            ${{ runner.temp }}/fixture-launch.json
       - name: Build pinned official DSH source for profile validation
         run: |
           DSH_ROOT="$RUNNER_TEMP/deepseek-harness"
@@ -99,27 +61,28 @@ jobs:
           DSH_COMPUTER_USE_REQUIRE_TCC: '1'
         run: |
           mkdir -p "$RUNNER_TEMP/foreground-baseline"
+          mkdir -p "$RUNNER_TEMP/foreground-baseline"
           open "$RUNNER_TEMP/foreground-baseline"
           sleep 2
           swift -e 'import AppKit; let app = NSWorkspace.shared.frontmostApplication; print("Foreground baseline:", app?.bundleIdentifier ?? "none"); guard app?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
           pnpm exec vitest run tests
       - name: Verify package contents
-        if: always() && steps.build.outcome == 'success'
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: pnpm pack --dry-run
       - name: Run the aggregate validation gate
-        if: always() && steps.build.outcome == 'success'
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           open "$RUNNER_TEMP/foreground-baseline"
           sleep 2
           swift -e 'import AppKit; let app = NSWorkspace.shared.frontmostApplication; print("Foreground baseline:", app?.bundleIdentifier ?? "none"); guard app?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
           pnpm run validate
       - name: Report generated artifact changes
-        if: always() && steps.build.outcome == 'success'
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          git diff --stat -- lib native/macos/bin native/macos/manifest.json
+          git diff --exit-code -- lib native/macos/bin native/macos/manifest.json
           git diff --check
       - name: Save rebuilt artifacts for synchronization
-        if: always() && steps.build.outcome == 'success'
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: rebuilt-macos-artifacts
