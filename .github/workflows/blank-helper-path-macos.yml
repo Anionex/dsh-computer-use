@@ -1,0 +1,52 @@
+name: Validate blank helper path on macOS
+
+# Temporary validation scoped to PR #31's branch; no schedules or release actions.
+on:
+  push:
+    branches: [fix/blank-helper-path]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blank-helper-path-macos
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.repository == 'Anionex/dsh-computer-use'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install the repository package manager
+        run: npm install --global pnpm@11.20.0
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Rebuild all committed artifacts
+        id: build
+        run: pnpm run build
+      - name: Verify native integrity and target-process routing
+        if: success()
+        run: pnpm run check:native
+      - name: Run unit and native tests with mandatory TCC
+        if: success()
+        env:
+          DSH_COMPUTER_USE_REQUIRE_TCC: '1'
+        run: pnpm exec vitest run tests
+      - name: Verify package contents
+        if: always() && steps.build.outcome == 'success'
+        run: pnpm pack --dry-run
+      - name: Run the unmodified aggregate validation gate
+        if: always() && steps.build.outcome == 'success'
+        run: pnpm run validate
+      - name: Report generated artifact changes
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          git diff --stat -- lib native/macos/bin native/macos/manifest.json
+          git diff --check
