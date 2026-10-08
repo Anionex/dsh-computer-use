@@ -39,13 +39,22 @@ jobs:
         if: success()
         env:
           DSH_COMPUTER_USE_REQUIRE_TCC: '1'
-        run: pnpm exec vitest run tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/foreground-baseline"
+          open "$RUNNER_TEMP/foreground-baseline"
+          sleep 2
+          swift -e 'import AppKit; let app = NSWorkspace.shared.frontmostApplication; print("Foreground baseline:", app?.bundleIdentifier ?? "none"); guard app?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
+          pnpm exec vitest run tests
       - name: Verify package contents
         if: always() && steps.build.outcome == 'success'
         run: pnpm pack --dry-run
       - name: Run the unmodified aggregate validation gate
         if: always() && steps.build.outcome == 'success'
-        run: pnpm run validate
+        run: |
+          open "$RUNNER_TEMP/foreground-baseline"
+          sleep 2
+          swift -e 'import AppKit; let app = NSWorkspace.shared.frontmostApplication; print("Foreground baseline:", app?.bundleIdentifier ?? "none"); guard app?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
+          pnpm run validate
       - name: Report generated artifact changes
         if: always() && steps.build.outcome == 'success'
         run: |
