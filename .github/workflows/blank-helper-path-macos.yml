@@ -70,3 +70,31 @@ jobs:
             lib/
             native/macos/bin/dsh-computer-use-helper
             native/macos/manifest.json
+
+  baseline-fixtures:
+    if: github.repository == 'Anionex/dsh-computer-use' && github.event.pull_request.number == 31 && github.head_ref == 'fix/blank-helper-path'
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b9b9991d866c4593fe786aa7312d5e6f15722de0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.20.0
+      - run: pnpm install --frozen-lockfile
+      - name: Verify the unchanged baseline helper
+        run: pnpm run check:native
+      - name: Build only the test fixture for baseline comparison
+        run: node scripts/build-native.mjs --fixture-only
+      - name: Compare failing fixture suites against unchanged base
+        env:
+          DSH_COMPUTER_USE_REQUIRE_TCC: '1'
+        run: |
+          mkdir -p "$RUNNER_TEMP/foreground-baseline"
+          open "$RUNNER_TEMP/foreground-baseline"
+          sleep 2
+          swift -e 'import AppKit; let app = NSWorkspace.shared.frontmostApplication; print("Foreground baseline:", app?.bundleIdentifier ?? "none"); guard app?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
+          pnpm exec vitest run tests/action-surface.e2e.spec.ts tests/native-fixture.e2e.spec.ts
