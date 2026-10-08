@@ -71,3 +71,10 @@ jobs:
           }
           SWIFT
           xcrun swift "$RUNNER_TEMP/launch-modes.swift" "$PWD" "$RUNNER_TEMP"
+      - name: Verify every portable and native test without profile setup
+        env:
+          DSH_COMPUTER_USE_REQUIRE_TCC: '1'
+        run: |
+          open "$RUNNER_TEMP/foreground-baseline"
+          sleep 2
+          pnpm exec vitest run tests --exclude tests/profile-install.e2e.spec.ts

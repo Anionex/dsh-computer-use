@@ -116,12 +116,14 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Suppress AppKit's automatic startup activation only for background fixtures.
         if launchInBackground {
             NSApplication.shared.setActivationPolicy(.prohibited)
         }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Restore an ordinary, explicitly activatable app before creating its UI.
         if launchInBackground {
             NSApplication.shared.setActivationPolicy(.regular)
         }
@@ -408,6 +410,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             "pointerMouseUpCount": pointerMouseUpCount,
             "pointerDragGestureCount": pointerDragGestureCount,
             "activationCount": activationCount,
+            "activationPolicy": NSApplication.shared.activationPolicy().rawValue,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
         try? data.write(to: URL(fileURLWithPath: transcriptPath), options: .atomic)

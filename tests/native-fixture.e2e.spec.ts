@@ -475,6 +475,24 @@ async function stableObserve(
 }
 
 describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture', () => {
+  it('starts as a regular background app without transient activation', async () => {
+    const temporary = await temporaryDirectory('dsh-computer-startup-')
+    const transcriptPath = join(temporary.path, 'transcript.json')
+    await terminateFixtures()
+    try {
+      const app = await launchFixture(transcriptPath)
+      const observation = await stableObserve(app, current => !current.frontmost, 'background fixture startup')
+      expect(observation.frontmost).toBe(false)
+      expect(await fixtureTranscript(transcriptPath)).toMatchObject({
+        activationCount: 0,
+        activationPolicy: 0,
+      })
+    } finally {
+      await terminateFixtures()
+      await temporary.cleanup()
+    }
+  }, 20_000)
+
   it('keeps the overlay hidden over a background app without moving the real cursor', async () => {
     const temporary = await temporaryDirectory('dsh-computer-cursor-overlay-')
     const transcriptPath = join(temporary.path, 'transcript.json')
