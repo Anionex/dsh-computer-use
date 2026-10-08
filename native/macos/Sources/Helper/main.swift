@@ -444,7 +444,14 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
         if let selected { json["selected"] = selected }
         if let elementFrame { json["frame"] = rectJSON(elementFrame) }
         let frameKey = elementFrame.map { "\(Int($0.origin.x)),\(Int($0.origin.y)),\(Int($0.width)),\(Int($0.height))" } ?? ""
-        let hashLine = [locator.map(String.init).joined(separator: "."), nativeIdentifier ?? "", role, subrole ?? "", titleValue ?? "", labelValue ?? "", valueValue ?? "", String(enabled ?? true), String(focused ?? false), String(selected ?? false), frameKey, actions.joined(separator: ",")].joined(separator: "|")
+        let locatorKey = locator.map { String($0) }.joined(separator: ".")
+        let hashComponents: [String] = [
+            locatorKey, nativeIdentifier ?? "", role, subrole ?? "",
+            titleValue ?? "", labelValue ?? "", valueValue ?? "",
+            String(enabled ?? true), String(focused ?? false), String(selected ?? false),
+            frameKey, actions.joined(separator: ","),
+        ]
+        let hashLine = hashComponents.joined(separator: "|")
         var line = String(repeating: "  ", count: min(depth, 20)) + "[\(index)] \(role)"
         if let titleValue { line += " \(jsonString(sanitize(titleValue)))" }
         else if let labelValue { line += " \(jsonString(sanitize(labelValue)))" }
