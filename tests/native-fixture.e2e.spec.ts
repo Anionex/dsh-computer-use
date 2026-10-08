@@ -481,7 +481,7 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
     await terminateFixtures()
     try {
       const app = await launchFixture(transcriptPath)
-      const observation = await stableObserve(app, current => !current.frontmost, 'background fixture startup')
+      const observation = await stableObserve(app, current => !current.frontmost && current.window.id !== undefined, 'visible background fixture startup')
       expect(observation.frontmost).toBe(false)
       expect(await fixtureTranscript(transcriptPath)).toMatchObject({
         activationCount: 0,

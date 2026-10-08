@@ -144,6 +144,8 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         if launchInBackground {
             NSApplication.shared.unhideWithoutActivation()
             window.orderFrontRegardless()
+            window.makeKey()
+            window.makeFirstResponder(textField)
         } else {
             NSApplication.shared.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
@@ -183,6 +185,10 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
                 self?.activationHoldUntil = nil
             }
         }
+    }
+
+    func applicationDidUnhide(_ notification: Notification) {
+        writeTranscript(event: "unhidden")
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -335,7 +341,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             inputProbe.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
-        window.makeFirstResponder(textField)
+        window.initialFirstResponder = textField
     }
 
     @objc private func applyValues() {
