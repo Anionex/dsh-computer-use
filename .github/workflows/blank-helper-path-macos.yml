@@ -1,0 +1,93 @@
+name: Validate blank helper path on macOS
+
+# Temporary validation scoped to PR #31; no schedules or release actions.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr31-macos-validation
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.repository == 'Anionex/dsh-computer-use' && github.event.pull_request.number == 31 && github.head_ref == 'fix/blank-helper-path' && (github.event.action != 'closed' || github.event.pull_request.merged)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install the repository package manager
+        run: npm install --global pnpm@11.20.0
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Rebuild all committed artifacts
+        id: build
+        run: pnpm run build
+      - name: Verify native integrity and target-process routing
+        if: success()
+        run: pnpm run check:native
+      - name: Build pinned official DSH source for profile validation
+        run: |
+          DSH_ROOT="$RUNNER_TEMP/deepseek-harness"
+          git clone --depth=1 --branch dsh-v0.2.0-rc.2 https://github.com/deepseek-ai/deepseek-harness.git "$DSH_ROOT"
+          test "$(git -C "$DSH_ROOT" rev-parse HEAD)" = "639ed015397290b3745d163aafe02ffee4aa3f84"
+          (
+            cd "$DSH_ROOT"
+            npx --yes pnpm@11.7.0 install --frozen-lockfile
+            DSH_TELEMETRY_DISABLED=1 npx --yes pnpm@11.7.0 run build
+          )
+          chmod +x "$DSH_ROOT/apps/cli/lib/bin.js"
+          mkdir -p "$RUNNER_TEMP/dsh-bin"
+          ln -s "$DSH_ROOT/apps/cli/lib/bin.js" "$RUNNER_TEMP/dsh-bin/dsh"
+          echo "$RUNNER_TEMP/dsh-bin" >> "$GITHUB_PATH"
+          echo "DSH_TEST_CLI=$RUNNER_TEMP/dsh-bin/dsh" >> "$GITHUB_ENV"
+          echo "DSH_TELEMETRY_DISABLED=1" >> "$GITHUB_ENV"
+          test "$("$RUNNER_TEMP/dsh-bin/dsh" --version)" = "0.2.0-rc.2"
+          test -r "$DSH_ROOT/node_modules/tsx/dist/esm/index.mjs"
+          git clone --depth=1 https://github.com/omdsh-dev/dsh-hub-workshop.git "$RUNNER_TEMP/dsh-hub-workshop"
+          echo "DSH_HUB_SOURCE=$RUNNER_TEMP/dsh-hub-workshop/catalog.json" >> "$GITHUB_ENV"
+      - name: Run unit and native tests with mandatory TCC
+        if: success()
+        env:
+          DSH_COMPUTER_USE_REQUIRE_TCC: '1'
+        run: |
+          mkdir -p "$RUNNER_TEMP/foreground-baseline"
+          open "$RUNNER_TEMP/foreground-baseline"
+          sleep 2
+          swift -e 'import AppKit; let app = NSWorkspace.shared.frontmostApplication; print("Foreground baseline:", app?.bundleIdentifier ?? "none"); guard app?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
+          pnpm exec vitest run tests
+      - name: Verify package contents
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm pack --dry-run
+      - name: Run the aggregate validation gate
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/foreground-baseline"
+          open "$RUNNER_TEMP/foreground-baseline"
+          sleep 2
+          swift -e 'import AppKit; let app = NSWorkspace.shared.frontmostApplication; print("Foreground baseline:", app?.bundleIdentifier ?? "none"); guard app?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
+          pnpm run validate
+      - name: Report generated artifact changes
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          git diff --exit-code -- lib native/macos/bin native/macos/manifest.json
+          git diff --check
+      - name: Save rebuilt artifacts for synchronization
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuilt-macos-artifacts
+          retention-days: 1
+          path: |
+            lib/
+            native/macos/bin/dsh-computer-use-helper
+            native/macos/manifest.json

@@ -167,6 +167,10 @@ describe.skipIf(!REQUIRE_TCC)('action surface, verified by the target', () => {
 
   afterAll(async () => { await terminateFixtures() })
 
+  it('starts in the background before any input action', async () => {
+    expect((await observe()).frontmost).toBe(false)
+  })
+
   it('drag moves the pointer through the target, not just the API', async () => {
     // The verb with no coverage before this, and the one that failed silently
     // in a live session: the window never moved while the call answered ok.

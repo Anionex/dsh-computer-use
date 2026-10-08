@@ -171,6 +171,19 @@ function dragHandle() {
   return { handle, stdinLines, terminate, respond }
 }
 
+describe('native helper path selection', () => {
+  it.each([{}, { helper: {} }, { helper: { path: '' } }, { helper: { path: ' \t\n ' } }])(
+    'selects the packaged helper for an omitted or blank path: %o', (config) => {
+      expect(new NativeHelperClient({} as never, resolveConfig(config)).helperPath).toBe(HELPER)
+    },
+  )
+
+  it('keeps an explicit custom helper path', () => {
+    const config = resolveConfig({ helper: { path: '  /custom/helper  ' } })
+    expect(new NativeHelperClient({} as never, config).helperPath).toBe('/custom/helper')
+  })
+})
+
 describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
   it('contains no global pointer warp or HID-post implementation', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')

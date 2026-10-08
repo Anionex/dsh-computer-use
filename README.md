@@ -240,7 +240,7 @@ The committed helper is an ad-hoc-signed universal `arm64` + `x86_64` binary tar
 | `maxNodes` / `maxDepth` / `maxTextBytes` | Accessibility traversal and model-visible text bounds |
 | `maxScreenshotBytes` | Maximum PNG Artifact size |
 | `artifactRoot` | Workspace-relative screenshot directory |
-| `helper.path` | Optional explicit external helper executable |
+| `helper.path` | Optional explicit external helper executable; omitted, empty, or whitespace-only values use the packaged managed helper |
 | `helper.allowSourceBuild` | Permit an explicit managed-source rebuild when the committed helper is absent; default `false` |
 | `interaction.focusPolicy` | `preserve` (default) avoids target-app activation; `activate` explicitly permits it and requires re-observation/revalidation |
 | `interaction.keyboardPolicy` | `preserve` keeps keyboard events routed without activation; `activate` (Bundle default) activates the target app before keyboard fallback |

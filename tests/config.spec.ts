@@ -29,6 +29,22 @@ describe('Computer Use configuration', () => {
     })
   })
 
+  it.each([{}, { helper: {} }, { helper: { path: '' } }, { helper: { path: ' \t\n ' } }])(
+    'uses the managed helper for an omitted or blank path: %o', (value) => {
+      const config = resolveConfig(value)
+      expect(config.helper).toEqual({ allowSourceBuild: false })
+      expect(config.allowAllApps).toBe(false)
+      expect(config.grants).toEqual([])
+    },
+  )
+
+  it('preserves a trimmed custom helper path and explicit source-build policy', () => {
+    expect(resolveConfig({ helper: { path: '  /custom/helper  ', allowSourceBuild: true } }).helper)
+      .toEqual({ path: '/custom/helper', allowSourceBuild: true })
+    expect(resolveConfig({ helper: { path: '', allowSourceBuild: true } }).helper)
+      .toEqual({ allowSourceBuild: true })
+  })
+
   it('resolves allowAllApps independently of per-app grants', () => {
     expect(resolveConfig({ allowAllApps: true })).toMatchObject({ allowAllApps: true })
   })
@@ -81,7 +97,6 @@ describe('Computer Use configuration', () => {
     [{ observationTtlMs: 86400001 }, /observationTtlMs/],
     [{ settleMs: 5001, maxSettleMs: 5000 }, /settleMs/],
     [{ artifactRoot: '../outside' }, /artifactRoot/],
-    [{ helper: { path: '   ' } }, /helper\.path/],
     [{ interaction: { focusPolicy: 'invalid' } }, /interaction\.focusPolicy/],
     [{ interaction: { keyboardPolicy: 'invalid' } }, /interaction\.keyboardPolicy/],
     [{ interaction: { pointerInputPolicy: 'invalid' } }, /interaction\.pointerInputPolicy/],

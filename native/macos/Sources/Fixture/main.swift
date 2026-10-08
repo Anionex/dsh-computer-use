@@ -115,7 +115,26 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Suppress AppKit's automatic startup activation only for background fixtures.
+        if launchInBackground {
+            NSApplication.shared.setActivationPolicy(.prohibited)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if launchInBackground {
+            DispatchQueue.main.async { [weak self] in self?.finishFixtureLaunch() }
+        } else {
+            finishFixtureLaunch()
+        }
+    }
+
+    private func finishFixtureLaunch() {
+        // Finish AppKit's startup before restoring regular policy and creating UI.
+        if launchInBackground {
+            NSApplication.shared.setActivationPolicy(.regular)
+        }
         buildWindow()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 36 else { return event }
@@ -123,8 +142,10 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             return nil
         }
         if launchInBackground {
+            NSApplication.shared.unhideWithoutActivation()
             window.orderFrontRegardless()
-            window.orderBack(nil)
+            window.makeKey()
+            window.makeFirstResponder(textField)
         } else {
             NSApplication.shared.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
@@ -166,6 +187,10 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationDidUnhide(_ notification: Notification) {
+        writeTranscript(event: "unhidden")
+    }
+
     func applicationDidBecomeActive(_ notification: Notification) {
         activationCount += 1
         writeTranscript(event: "activated")
@@ -184,14 +209,15 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
 
     private func buildWindow() {
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "DSH Computer Use Fixture"
         window.center()
-        window.setFrameAutosaveName("dsh-computer-use-fixture")
+        // Keep deterministic geometry and reserve space for the harmless sibling.
+        // A saved frame from an earlier test must not change this fixture.
 
         let content = NSView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -315,7 +341,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             inputProbe.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
-        window.makeFirstResponder(textField)
+        window.initialFirstResponder = textField
     }
 
     @objc private func applyValues() {
@@ -399,6 +425,10 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             "pointerMouseUpCount": pointerMouseUpCount,
             "pointerDragGestureCount": pointerDragGestureCount,
             "activationCount": activationCount,
+            "activationPolicy": NSApplication.shared.activationPolicy().rawValue,
+            "hidden": NSApplication.shared.isHidden,
+            "windowVisible": window?.isVisible ?? false,
+            "windowFrame": window?.frame.debugDescription ?? "",
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
         try? data.write(to: URL(fileURLWithPath: transcriptPath), options: .atomic)
@@ -408,5 +438,4 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
 let app = NSApplication.shared
 private let delegate = FixtureDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.regular)
 app.run()
