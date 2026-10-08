@@ -3,10 +3,11 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { dshSourceRoot } from './dsh-source-root.mjs'
 
 const ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
 const results = []
@@ -101,30 +102,14 @@ async function executable(name) {
   throw new Error(`required executable is unavailable: ${name}`)
 }
 
-async function dshSourceRoot() {
-  const dsh = await realpath(await executable('dsh'))
-  let candidate = dirname(dsh)
-  for (let depth = 0; depth < 6; depth += 1) {
-    try {
-      await access(join(candidate, 'apps', 'cli', 'config', 'agent-presets', 'standard'))
-      return await realpath(candidate)
-    } catch {
-      const parent = dirname(candidate)
-      if (parent === candidate) break
-      candidate = parent
-    }
-  }
-  throw new Error(`cannot infer DSH source root from ${dsh}`)
-}
-
 async function pluginCheck(options) {
-  const sourceRoot = await dshSourceRoot()
+  const sourceRoot = await dshSourceRoot(await executable('dsh'))
   const checkout = await mkdtemp(join(tmpdir(), 'dsh-computer-plugin-check-'))
   temporaryPaths.push(checkout)
   await runCommand(
     'clone dsh-plugin-check',
-    'gh',
-    ['repo', 'clone', 'dsh-external/dsh-plugin-check', checkout, '--', '--depth=1'],
+    'git',
+    ['clone', '--depth=1', 'https://github.com/omdsh-dev/dsh-plugin-check.git', checkout],
     { timeoutMs: 60_000, retries: 1 },
   )
   const code = [
@@ -254,3 +239,4 @@ const report = {
 }
 await writeOutput(options ?? {}, report)
 if (failure !== undefined) process.exitCode = 1
+

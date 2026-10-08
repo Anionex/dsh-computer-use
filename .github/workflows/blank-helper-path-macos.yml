@@ -11,13 +11,13 @@ permissions:
 
 concurrency:
   group: blank-helper-path-macos
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate:
     if: github.repository == 'Anionex/dsh-computer-use' && github.event.pull_request.number == 31 && github.head_ref == 'fix/blank-helper-path'
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,7 +64,35 @@ jobs:
           }
           for fixture in NSRunningApplication.runningApplications(withBundleIdentifier: "io.anionex.dsh-computer-use-fixture") { fixture.terminate() }
           SWIFT
-          xcrun swift "$RUNNER_TEMP/fixture-launch.swift" "$PWD" "$RUNNER_TEMP/fixture-launch.json"
+          xcrun swift "$RUNNER_TEMP/fixture-launch.swift" "$PWD" "$RUNNER_TEMP/fixture-launch.json" | tee "$RUNNER_TEMP/fixture-launch.log"
+      - name: Save standalone fixture launch diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixture-launch-diagnostics
+          retention-days: 1
+          path: |
+            ${{ runner.temp }}/fixture-launch.log
+            ${{ runner.temp }}/fixture-launch.json
+      - name: Build pinned official DSH source for profile validation
+        run: |
+          DSH_ROOT="$RUNNER_TEMP/deepseek-harness"
+          git clone --depth=1 --branch dsh-v0.2.0-rc.2 https://github.com/deepseek-ai/deepseek-harness.git "$DSH_ROOT"
+          test "$(git -C "$DSH_ROOT" rev-parse HEAD)" = "639ed015397290b3745d163aafe02ffee4aa3f84"
+          (
+            cd "$DSH_ROOT"
+            npx --yes pnpm@11.7.0 install --frozen-lockfile
+            DSH_TELEMETRY_DISABLED=1 npx --yes pnpm@11.7.0 run build
+          )
+          chmod +x "$DSH_ROOT/apps/cli/lib/bin.js"
+          mkdir -p "$RUNNER_TEMP/dsh-bin"
+          ln -s "$DSH_ROOT/apps/cli/lib/bin.js" "$RUNNER_TEMP/dsh-bin/dsh"
+          echo "$RUNNER_TEMP/dsh-bin" >> "$GITHUB_PATH"
+          echo "DSH_TEST_CLI=$RUNNER_TEMP/dsh-bin/dsh" >> "$GITHUB_ENV"
+          echo "DSH_TELEMETRY_DISABLED=1" >> "$GITHUB_ENV"
+          test "$("$RUNNER_TEMP/dsh-bin/dsh" --version)" = "0.2.0-rc.2"
+          test -r "$DSH_ROOT/node_modules/tsx/dist/esm/index.mjs"
+          git clone --depth=1 https://github.com/omdsh-dev/dsh-hub-workshop.git "$RUNNER_TEMP/dsh-hub-workshop"
+          echo "DSH_HUB_SOURCE=$RUNNER_TEMP/dsh-hub-workshop/catalog.json" >> "$GITHUB_ENV"
       - name: Run unit and native tests with mandatory TCC
         if: success()
         env:
@@ -78,7 +106,7 @@ jobs:
       - name: Verify package contents
         if: always() && steps.build.outcome == 'success'
         run: pnpm pack --dry-run
-      - name: Run the unmodified aggregate validation gate
+      - name: Run the aggregate validation gate
         if: always() && steps.build.outcome == 'success'
         run: |
           open "$RUNNER_TEMP/foreground-baseline"
