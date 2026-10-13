@@ -4,13 +4,14 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { BackendActionResult, BackendCursorAction, BackendHealth, BackendObservation, ComputerUseBackend, CursorVisibility } from './backend.ts'
+import type { BackendActionResult, BackendCursorAction, BackendHealth, BackendObservation, BackendVisualSignature, ComputerUseBackend, CursorVisibility } from './backend.ts'
 import { allocateScreenshotPath, describeScreenshot } from './artifacts.ts'
 import type { ResolvedComputerUseConfig } from './config.ts'
 import { ComputerConfirmationManager } from './confirmations.ts'
 import { diffElements } from './diff.ts'
 import { ComputerUseError, computerUseError } from './errors.ts'
 import { ComputerLeaseManager } from './leases.ts'
+import { visualChange, type VisualChange } from './visual.ts'
 import {
   describeComputerTarget,
   resolveComputerTarget,
@@ -461,6 +462,12 @@ export class ComputerUseService extends Service {
       }
       cursorStarted = beforeCursor.visible
     }
+    // The structural hash cannot move on a target whose Accessibility tree
+    // exposes only window chrome, so the settle loop needs a luminance baseline
+    // sampled immediately before input. It is best-effort: without Screen
+    // Recording permission the provider omits the signature, and the loop then
+    // reports structural evidence only.
+    const visualBaseline = await this.observeVisualBaseline(actionObservation.app, signal)
     let outcome: BackendActionResult
     const request = {
       action,
@@ -504,21 +511,25 @@ export class ComputerUseService extends Service {
         }
       }
     }
-    // The settle loop reports whether the bounded structural observation
-    // changed. It complements routing facts without claiming causal proof or
-    // visibility into pixel-only, transient, or remote effects.
+    // The settle loop reports whether the bounded structural observation or the
+    // sampled luminance changed. Both complement routing facts without claiming
+    // causal proof or visibility into remote or transient effects.
     const started = Date.now()
     let latest: BackendObservation | undefined
     let settled = false
+    let visual: VisualChange | undefined
     do {
       if (this.config.settleMs > 0) await delay(this.config.settleMs, undefined, { signal })
       latest = await this.backend.observe(stored.backend.app, {
         screenshot: 'none',
+        visualSignature: true,
         maxNodes: this.config.maxNodes,
         maxDepth: this.config.maxDepth,
         maxTextBytes: this.config.maxTextBytes,
       }, signal)
+      visual = visualChange(visualBaseline, latest.visualSignature)
       if (latest.stateHash !== actionObservation.stateHash) { settled = true; break }
+      if (visual?.changed === true) break
     } while (Date.now() - started < this.config.maxSettleMs)
     const observation = await this.capture(
       stored.backend.app,
@@ -539,15 +550,19 @@ export class ComputerUseService extends Service {
       ...(cursorState === undefined || cursorState.visible ? {} : {
         agentCursor: { visible: false, ...(cursorState.reason === undefined ? {} : { reason: cursorState.reason }) },
       }),
-      // This reports only what the bounded structural observation can prove.
-      // Pixel-only, remote, or transient effects remain outside this hash and
-      // must not be described as action failure.
+      // This reports only what the bounded structural observation and the
+      // sampled luminance can prove. Remote or transient effects remain outside
+      // both and must not be described as action failure.
       effect: {
         observedStateChanged: settled,
+        ...(visual === undefined ? {} : { observedVisualChange: visual.changed }),
         observedForMs: Date.now() - started,
-        ...(settled ? {} : {
-          note: 'no change was observed in the window title, id, frame, or accessibility element tree;'
-            + ' pixel-only, remote, or transient effects may still have occurred',
+        ...(settled || visual?.changed === true ? {} : {
+          note: visual === undefined
+            ? 'no change was observed in the window title, id, frame, or accessibility element tree;'
+              + ' no luminance baseline was available, so pixel-only, remote, or transient effects may still have occurred'
+            : 'no change was observed in the window title, id, frame, accessibility element tree, or sampled luminance;'
+              + ' remote, transient, or sub-threshold effects may still have occurred',
         }),
       },
       ...(resolution === undefined ? {} : { resolution }),
@@ -602,6 +617,28 @@ export class ComputerUseService extends Service {
     }
     for (const [app, id] of state.latestByApp) {
       if (!state.observations.has(id)) state.latestByApp.delete(app)
+    }
+  }
+
+  /**
+   * Sample the luminance baseline that one action's effect evidence is measured
+   * against.
+   *
+   * A failure here must not fail the action: the baseline only sharpens the
+   * effect report, and the structural settle comparison still runs without it.
+   */
+  private async observeVisualBaseline(app: ComputerAppIdentity, signal: AbortSignal): Promise<BackendVisualSignature | undefined> {
+    try {
+      const baseline = await this.backend.observe(app, {
+        screenshot: 'none',
+        visualSignature: true,
+        maxNodes: this.config.maxNodes,
+        maxDepth: this.config.maxDepth,
+        maxTextBytes: this.config.maxTextBytes,
+      }, signal)
+      return baseline.visualSignature
+    } catch {
+      return undefined
     }
   }
 

@@ -50,6 +50,14 @@ export declare class ComputerUseService extends Service {
     private state;
     private requireObservation;
     private prune;
+    /**
+     * Sample the luminance baseline that one action's effect evidence is measured
+     * against.
+     *
+     * A failure here must not fail the action: the baseline only sharpens the
+     * effect report, and the structural settle comparison still runs without it.
+     */
+    private observeVisualBaseline;
     private capture;
     private wait;
     private clearState;

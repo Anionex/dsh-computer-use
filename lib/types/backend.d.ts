@@ -6,6 +6,19 @@ export interface BackendElement extends Omit<ComputerElement, 'targetHandle'> {
     locator: number[];
     nativeIdentifier?: string;
 }
+/**
+ * Coarse luminance grid sampled from one observed window.
+ *
+ * It is derived evidence for pixel-only effects: the provider never writes it to
+ * disk, the Service never returns it to the model, and it carries no readable
+ * window content.
+ */
+export interface BackendVisualSignature {
+    /** Square grid edge length. */
+    side: number;
+    /** Base64 of `side * side` 8-bit luminance samples in row-major order. */
+    bytes: string;
+}
 /** Raw full-state observation returned by a provider before Service diff projection. */
 export interface BackendObservation {
     app: ComputerAppIdentity;
@@ -24,6 +37,7 @@ export interface BackendObservation {
         width: number;
         height: number;
     };
+    visualSignature?: BackendVisualSignature;
     permissions: {
         accessibility: ComputerPermissionState;
         screenRecording: ComputerPermissionState;
@@ -33,6 +47,11 @@ export interface BackendObservation {
 export interface BackendObserveOptions {
     screenshot: ComputerScreenshotMode;
     screenshotPath?: string;
+    /**
+     * Request the coarse luminance signature used to report pixel-only effects.
+     * The Service, never a model argument, decides when to ask for it.
+     */
+    visualSignature?: boolean;
     maxNodes: number;
     maxDepth: number;
     maxTextBytes: number;

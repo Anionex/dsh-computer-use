@@ -13,6 +13,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Report `effect.observedVisualChange` from a coarse luminance grid of the observed window sampled immediately before input, so an action that only repaints pixels is no longer indistinguishable from an inert one on targets whose Accessibility tree exposes only window chrome. The grid is derived evidence: it is never written to disk, never returned to the model, and a plain `computer_observe` never requests it.
+- 通过输入前采样的目标窗口粗粒度亮度网格上报 `effect.observedVisualChange`；当目标 Accessibility 树只暴露窗口 chrome 时，仅重绘像素的动作不再与无效动作无法区分。该网格属于派生证据：从不写入磁盘、从不返回模型，普通 `computer_observe` 也从不请求它。
+
+### Changed
+
+- Stop the post-action settle loop as soon as the sampled luminance moves, instead of waiting out the whole `maxSettleMs` budget.
+- 采样亮度发生变化时立即结束动作后的 settle 循环，不再耗尽整个 `maxSettleMs` 预算。
+
 ## [0.3.2] - 2026-09-10
 
 ### Fixed

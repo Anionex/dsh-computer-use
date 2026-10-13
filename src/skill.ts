@@ -37,8 +37,11 @@ plugin; an API or CLI; browser automation for browser tasks; then Computer Use.
    before deciding the next step; do not add a redundant observe unless you need
    a full tree or screenshot that the returned state omitted. The accompanying
    effect.observedStateChanged reports only changes in the window metadata and
-   Accessibility element tree. False does not prove the action failed: pixel-only,
-   transient, remote, or otherwise external effects may still have occurred.
+   Accessibility element tree. effect.observedVisualChange reports whether the
+   window's coarse luminance moved, which catches repaints the tree cannot
+   describe; it is omitted when Screen Recording is unavailable, because not
+   measured is not unchanged. False on both does not prove the action failed:
+   transient, remote, or sub-threshold effects may still have occurred.
    Verify those effects visually before retrying, especially for sensitive actions.
 6. When agentCursor is present, the separate Agent cursor was expected but is not
    visible. Read its reason and do not claim the user can see where the action landed.

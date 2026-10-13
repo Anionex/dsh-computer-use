@@ -265,14 +265,21 @@ export interface ComputerActionResult {
  *
  * The comparison covers the window title, id and frame plus the Accessibility
  * element tree. It does not prove that the action caused the change, and it
- * cannot observe pixel-only, transient, remote, or otherwise external effects.
+ * cannot observe transient, remote, or otherwise external effects.
  */
 export interface ComputerActionEffect {
   /** True when the post-action structural state hash differed. */
   observedStateChanged: boolean
+  /**
+   * True when the coarse luminance sampled immediately before and after the
+   * action moved past the reporting threshold. Omitted when Screen Recording is
+   * unavailable, because "not measured" is not "no change". It reports pixel
+   * movement, not proof that the action caused it.
+   */
+  observedVisualChange?: boolean
   /** How long the settle loop watched, in milliseconds. */
   observedForMs: number
-  /** Scope guidance when no structural change was observed. */
+  /** Scope guidance when neither the structural nor the luminance comparison moved. */
   note?: string
 }
 

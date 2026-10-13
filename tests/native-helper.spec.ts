@@ -214,6 +214,22 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(binaryStrings).not.toContain('CGAssociateMouseAndMouseCursorPosition')
   })
 
+  it('samples the luminance signature only on request and never writes it to disk', async () => {
+    const source = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    const observeCase = source.slice(source.indexOf('case "observe":'), source.indexOf('case "activate-for-cursor":'))
+    // A plain observation stays pixel-free: the window is captured only for a
+    // requested screenshot or a requested luminance signature.
+    expect(observeCase).toContain('let wantsVisualSignature = bool(options["visualSignature"])')
+    expect(observeCase).toContain('if mode != "none" || wantsVisualSignature {')
+    expect(observeCase).toContain('visualSignatureJSON = visualSignature(image)')
+    expect(observeCase).toContain('writeScreenshot(image, path: path)')
+    expect(source).toContain('private let visualSignatureSide = 32')
+    const signature = source.slice(source.indexOf('private func visualSignature('), source.indexOf('private func observationJSON('))
+    expect(signature).toContain('CGColorSpaceCreateDeviceGray()')
+    expect(signature).not.toMatch(/\.write\(|URL\(fileURLWithPath/u)
+    expect(source).toContain('result["visualSignature"] = visualSignature')
+  })
+
   it('implements a click-through nonactivating cursor overlay without cursor warping', async () => {
     const source = await readFile(join(NATIVE, 'Sources', 'Helper', 'CursorOverlay.swift'), 'utf8')
     expect(source).toContain('.nonactivatingPanel')

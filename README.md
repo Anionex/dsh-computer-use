@@ -166,12 +166,13 @@ resolution?: {
 agentCursor?: { visible: false; reason?: string }
 effect: {
   observedStateChanged: boolean
+  observedVisualChange?: boolean
   observedForMs: number
   note?: string
 }
 ```
 
-`effect.observedStateChanged` compares the window title, id and frame plus the Accessibility element tree. It does not prove causation and cannot see pixel-only, transient, remote, or otherwise external effects. `agentCursor` appears only when the separate Agent cursor was expected but could not be shown or validated.
+`effect.observedStateChanged` compares the window title, id and frame plus the Accessibility element tree. `effect.observedVisualChange` compares a coarse luminance grid of the observed window sampled immediately before input and again while settling, which catches repaints the tree cannot describe. It is omitted when Screen Recording is unavailable, because not measured is not unchanged, and it proves pixel movement rather than causation: an animation, another process, or a remote update can move the same pixels. Neither field being true does not prove the action failed, since transient, remote, and sub-threshold effects stay outside both comparisons. `agentCursor` appears only when the separate Agent cursor was expected but could not be shown or validated.
 
 The model cannot override these host policies through Tool arguments.
 
@@ -203,6 +204,8 @@ No Tool accepts AppleScript, JXA, shell, Swift, Objective-C, native selectors, a
 ## Observation, permissions, and sensitive actions
 
 An observation contains an opaque id and expiry, exact app identity, frontmost/window metadata, bounded tree text, current elements with opaque target handles, optional screenshot metadata, and permission state. Target handles expose no provider object reference or native identifier. Secure text values are emitted as `[secure]`; they do not enter target descriptors, tree text, Tool results, screenshot metadata, or native errors. A screenshot can still contain other visible application data and should be treated as sensitive.
+
+A luminance signature is derived evidence rather than an observation field. To measure one action's effect the Service asks the provider for a 32x32 grayscale grid of the observed window immediately before input, and only the Service decides to ask. The grid is never written to disk, never enters a Tool result, Session log, or model message, and carries no readable window content. A plain `computer_observe` never requests it, so observing without a screenshot stays pixel-free.
 
 The technical access model has two exact-bundle-id leases:
 
@@ -270,6 +273,8 @@ Settings updates replace the active provider generation only after validation an
 - `focusPolicy: activate` and `keyboardPolicy: activate` are intentionally disruptive and exist as operator-selected compatibility modes.
 - A target application may change its own activation or focus as a side effect of an accepted action.
 - The package captures requested discrete observations, not a live desktop feed.
+- The luminance signature compares one 32x32 grayscale grid, so a change confined to a few small controls can stay under its reporting threshold while a large animation can cross it. It reports that pixels moved, never that the action moved them.
+- The post-action settle loop stops early on a structural or luminance change. On a target whose Accessibility tree exposes only window chrome, an inert action still waits out the whole `maxSettleMs` budget, which `computer_wait` also uses as its timeout ceiling.
 - Browser work should continue to use browser automation because DOM/CDP state is narrower and more precise.
 - The public npm package installs into both Web and Headless profiles as `@anionex/dsh-computer-use`.
 

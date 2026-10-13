@@ -12,7 +12,7 @@ import {
   type ComputerActionRequest,
   type ComputerUseContext,
 } from '../src/types.ts'
-import { FakeBackend, FIXTURE_APP, backendObservation, fakeAgent, temporaryDirectory } from './helpers.ts'
+import { FakeBackend, FIXTURE_APP, backendObservation, fakeAgent, temporaryDirectory, visualSignatureGrid } from './helpers.ts'
 
 class TestComputerUseService extends ComputerUseService {
   initializeForTest(): Promise<void> {
@@ -156,10 +156,65 @@ describe('Computer Use Service', () => {
         context,
       )
       expect(inert.effect.observedStateChanged).toBe(false)
-      expect(inert.effect.note).toContain('pixel-only, remote, or transient effects may still have occurred')
+      // No luminance grid was requested from this provider, so the effect must
+      // report "not measured" rather than "no visual change".
+      expect(inert.effect).not.toHaveProperty('observedVisualChange')
+      expect(inert.effect.note).toContain('no luminance baseline was available')
       // The attempt still reads as a clean success, which is exactly why the
       // outcome needs its own field.
       expect(inert.pointerRouting).toBe('target-process')
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('reports a pixel-only effect and stops settling once the luminance moves', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-visual-')
+    try {
+      const { backend, service } = serviceHarness({ settleMs: 0, maxSettleMs: 5_000 })
+      backend.inert = true
+      backend.visualSignature = visualSignatureGrid(0)
+      backend.inertVisualSignature = visualSignatureGrid(255)
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      // The model-facing observation must stay pixel-free: only the Service asks
+      // for the luminance baseline, and it asks immediately before input.
+      expect(backend.observations.at(-1)?.visualSignature).toBeUndefined()
+      const result = await service.act(
+        { kind: 'click', observationId: before.observationId, elementIndex: 1 },
+        context,
+      )
+      expect(result.effect.observedStateChanged).toBe(false)
+      expect(result.effect.observedVisualChange).toBe(true)
+      expect(result.effect).not.toHaveProperty('note')
+      // The loop breaks on the first sampled change instead of watching the
+      // whole settle budget.
+      expect(result.effect.observedForMs).toBeLessThan(1_000)
+      expect(backend.observations.some(options => options.visualSignature === true)).toBe(true)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('reports no visual change when the sampled luminance holds still', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-visual-inert-')
+    try {
+      const { backend, service } = serviceHarness({ settleMs: 0, maxSettleMs: 100 })
+      backend.inert = true
+      backend.visualSignature = visualSignatureGrid(10)
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      const result = await service.act(
+        { kind: 'click', observationId: before.observationId, elementIndex: 1 },
+        context,
+      )
+      expect(result.effect.observedStateChanged).toBe(false)
+      expect(result.effect.observedVisualChange).toBe(false)
+      expect(result.effect.note).toContain('sub-threshold effects may still have occurred')
     } finally {
       await workspace.cleanup()
     }

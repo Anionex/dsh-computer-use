@@ -166,12 +166,13 @@ resolution?: {
 agentCursor?: { visible: false; reason?: string }
 effect: {
   observedStateChanged: boolean
+  observedVisualChange?: boolean
   observedForMs: number
   note?: string
 }
 ```
 
-`effect.observedStateChanged` 比较窗口 title、id、frame 与 Accessibility 元素树；它不证明变化由本次动作造成，也无法观察纯像素、瞬时、远端或其他外部效果。只有独立 Agent 光标本应显示却无法显示或验证时，结果才会出现 `agentCursor`。
+`effect.observedStateChanged` 比较窗口 title、id、frame 与 Accessibility 元素树。`effect.observedVisualChange` 比较输入前后对目标窗口采样的粗粒度亮度网格，可捕捉元素树无法描述的纯像素重绘。Screen Recording 不可用时该字段省略，因为「未测量」不等于「未变化」；它只证明像素发生移动，不证明变化由本次动作造成：动画、其他进程或远端更新都可能移动同样的像素。两个字段都为 false 也不证明动作失败，瞬时、远端与低于阈值的效果都落在两种比较之外。只有独立 Agent 光标本应显示却无法显示或验证时，结果才会出现 `agentCursor`。
 
 模型不能通过 Tool 参数覆盖这些宿主策略。
 
@@ -203,6 +204,8 @@ Bundle 初始只贡献 `computer_use_activate`。加载 Skill 后，才为当前
 ## Observation、权限与敏感动作
 
 Observation 包含 opaque id 与过期时间、准确 app 身份、frontmost/window metadata、有界 tree text、带 opaque target handle 的当前元素、可选截图 metadata 和权限状态。Target handle 不暴露 provider object reference 或 native identifier。Secure text value 以 `[secure]` 输出，不会进入 target descriptor、tree text、Tool result、截图 metadata 或 native error。截图仍可能包含应用中其他可见数据，应按敏感数据处理。
+
+亮度签名属于派生证据，而不是 observation 字段。为度量单个动作的效果，Service 会在输入前请求 provider 采样目标窗口的 32x32 灰度网格，且只有 Service 会决定是否请求。该网格从不写入磁盘，不进入 Tool result、Session log 或模型消息，也不包含任何可读的窗口内容。普通 `computer_observe` 从不请求它，因此不带截图的观察不会触碰像素。
 
 技术访问模型包含两类准确 bundle-id lease：
 
@@ -272,6 +275,8 @@ Settings 更新只有在校验与健康检查通过后才替换当前 provider g
 - 软件包按请求捕获离散 observation，不提供实时桌面流。
 - 浏览器工作应继续使用 browser automation，因为 DOM/CDP 状态更窄、更精确。
 - 公共 npm 包以 `@anionex/dsh-computer-use` 安装，可同时挂载到 Web 与 Headless Profile。
+- 亮度签名只比较 32x32 灰度网格：局限于少数小控件的改动可能低于上报阈值，而大面积动画则可能越过阈值。它只报告像素发生移动，从不报告移动由本次动作造成。
+- 动作后的 settle 循环在结构性或亮度变化出现时提前结束。若目标 Accessibility 树只暴露窗口 chrome，无效动作仍会耗尽整个 `maxSettleMs` 预算，而该值同时也是 `computer_wait` 的超时上限。
 
 ## 开发与发布验收
 

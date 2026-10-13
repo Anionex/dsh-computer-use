@@ -369,6 +369,12 @@ private func sha256(_ value: String) -> String {
     SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
 }
 
+/// Edge length of the coarse luminance grid the Service compares for pixel-only
+/// effects. 32x32 keeps one sample per roughly 50x30 points of a typical window,
+/// which absorbs small text changes such as a ticking clock while still moving
+/// for dialogs, menus, page switches, and layout changes.
+private let visualSignatureSide = 32
+
 private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) throws -> ObservationSnapshot {
     guard AXIsProcessTrusted() else {
         throw fail("COMPUTER_PERMISSION_REQUIRED", "macOS Accessibility permission is required for the DSH helper")
@@ -495,7 +501,9 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
     )
 }
 
-private func captureWindow(_ snapshot: ObservationSnapshot, path: String, required: Bool) async throws -> [String: Any]? {
+/// Capture the observed window as one image, or `nil` when Screen Recording
+/// permission is unavailable and the caller did not require a screenshot.
+private func captureWindowImage(_ snapshot: ObservationSnapshot, required: Bool) async throws -> CGImage? {
     guard CGPreflightScreenCaptureAccess() else {
         if required { throw fail("COMPUTER_PERMISSION_REQUIRED", "macOS Screen Recording permission is required for screenshots") }
         return nil
@@ -529,13 +537,15 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
     configuration.width = max(1, Int((selected.frame.width * pixelScale).rounded()))
     configuration.height = max(1, Int((selected.frame.height * pixelScale).rounded()))
     configuration.showsCursor = false
-    let image: CGImage
     do {
-        image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     } catch {
         if required { throw fail("COMPUTER_PROVIDER_FAILURE", "ScreenCaptureKit could not capture the selected window") }
         return nil
     }
+}
+
+private func writeScreenshot(_ image: CGImage, path: String) throws -> [String: Any] {
     let representation = NSBitmapImageRep(cgImage: image)
     guard let data = representation.representation(using: .png, properties: [:]) else {
         throw fail("COMPUTER_PROVIDER_FAILURE", "captured window could not be encoded as PNG")
@@ -548,7 +558,35 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
     return ["path": path, "width": image.width, "height": image.height]
 }
 
-private func observationJSON(_ snapshot: ObservationSnapshot, screenshot: [String: Any]?) -> [String: Any] {
+/// Downsample one captured window image into a coarse luminance grid.
+///
+/// The grid is derived evidence: it is never written to disk, never returned to
+/// the model, and carries no readable window content. The Service compares it
+/// across one action to tell a pixel-only effect from an inert action on
+/// targets whose Accessibility tree exposes only window chrome, where the
+/// structural state hash cannot move.
+private func visualSignature(_ image: CGImage) -> [String: Any]? {
+    let side = visualSignatureSide
+    var pixels = [UInt8](repeating: 0, count: side * side)
+    let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+        guard let context = CGContext(
+            data: buffer.baseAddress,
+            width: side,
+            height: side,
+            bitsPerComponent: 8,
+            bytesPerRow: side,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return false }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        return true
+    }
+    guard drawn else { return nil }
+    return ["side": side, "bytes": Data(pixels).base64EncodedString()]
+}
+
+private func observationJSON(_ snapshot: ObservationSnapshot, screenshot: [String: Any]?, visualSignature: [String: Any]? = nil) -> [String: Any] {
     var result: [String: Any] = [
         "app": snapshot.appJSON,
         "stateHash": snapshot.stateHash,
@@ -563,6 +601,7 @@ private func observationJSON(_ snapshot: ObservationSnapshot, screenshot: [Strin
     ]
     if let window = snapshot.windowJSON { result["window"] = window }
     if let screenshot { result["screenshot"] = screenshot }
+    if let visualSignature { result["visualSignature"] = visualSignature }
     return result
 }
 
@@ -1151,12 +1190,20 @@ private func handle(
         let options = try dictionary(request["options"], "options")
         let snapshot = try observeSnapshot(app: app, limits: options)
         let mode = options["screenshot"] as? String ?? "optional"
+        let wantsVisualSignature = bool(options["visualSignature"])
         var screenshot: [String: Any]?
-        if mode != "none" {
-            let path = try string(options["screenshotPath"], "options.screenshotPath")
-            screenshot = try await captureWindow(snapshot, path: path, required: mode == "required")
+        var visualSignatureJSON: [String: Any]?
+        if mode != "none" || wantsVisualSignature {
+            let image = try await captureWindowImage(snapshot, required: mode == "required")
+            if let image {
+                if wantsVisualSignature { visualSignatureJSON = visualSignature(image) }
+                if mode != "none" {
+                    let path = try string(options["screenshotPath"], "options.screenshotPath")
+                    screenshot = try writeScreenshot(image, path: path)
+                }
+            }
         }
-        return observationJSON(snapshot, screenshot: screenshot)
+        return observationJSON(snapshot, screenshot: screenshot, visualSignature: visualSignatureJSON)
     case "activate-for-cursor":
         let appIdentity = try dictionary(request["app"], "app")
         let app = try resolveApp([

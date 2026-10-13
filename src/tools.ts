@@ -185,6 +185,7 @@ const actionResultSchema = {
       required: true,
       properties: {
         observedStateChanged: { type: 'boolean', required: true },
+        observedVisualChange: { type: 'boolean' },
         observedForMs: { type: 'integer', required: true },
         note: { type: 'string' },
       },

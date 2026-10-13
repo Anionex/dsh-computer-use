@@ -11,6 +11,7 @@ import type {
   BackendHealth,
   BackendObservation,
   BackendObserveOptions,
+  BackendVisualSignature,
   ComputerUseBackend,
   CursorVisibility,
 } from '../src/backend.ts'
@@ -26,6 +27,19 @@ export const FIXTURE_APP: ComputerAppIdentity = {
   bundleId: 'io.anionex.dsh-computer-use-fixture',
   pid: 4242,
   name: 'DSH Computer Use Fixture',
+}
+
+/**
+ * Uniform luminance grid standing in for one provider pixel sample set.
+ *
+ * The four-by-four side keeps a single moved cell at 6.25% of the grid, so a
+ * test can move exactly one cell and still cross the reporting threshold.
+ */
+export function visualSignatureGrid(fill: number, side = 4): BackendVisualSignature {
+  return {
+    side,
+    bytes: Buffer.from(Array.from({ length: side * side }, () => fill)).toString('base64'),
+  }
 }
 
 export function backendObservation(overrides: Partial<BackendObservation> = {}): BackendObservation {
@@ -110,10 +124,15 @@ export class FakeBackend implements ComputerUseBackend {
       await writeFile(options.screenshotPath, Buffer.from('fake-png'))
       screenshot = { path: options.screenshotPath, width: 760, height: 592 }
     }
-    return structuredClone({
-      ...this.observation,
-      ...(screenshot === undefined ? {} : { screenshot }),
-    })
+    const observation: BackendObservation = { ...this.observation }
+    // The fake provider reports luminance only when the caller asks for it, so a
+    // test can prove that a plain observation stays pixel-free.
+    delete observation.visualSignature
+    if (options.visualSignature === true && this.visualSignature !== undefined) {
+      observation.visualSignature = this.visualSignature
+    }
+    if (screenshot !== undefined) observation.screenshot = screenshot
+    return structuredClone(observation)
   }
 
   activateForCursor(_app: ComputerAppIdentity, expectedStateHash: string): Promise<BackendCursorActivation> {
@@ -133,12 +152,23 @@ export class FakeBackend implements ComputerUseBackend {
    */
   inert = false
 
+  /** Luminance grid the fake provider reports when a caller asks for one. */
+  visualSignature: BackendVisualSignature | undefined
+
+  /**
+   * Luminance grid the fake provider reports after an inert action, standing in
+   * for a target that received the input and repainted without moving its
+   * Accessibility tree.
+   */
+  inertVisualSignature: BackendVisualSignature | undefined
+
   act(request: BackendActionRequest): Promise<BackendActionResult> {
     if (request.expectedStateHash !== this.observation.stateHash) {
       throw new ComputerUseError('COMPUTER_STALE_OBSERVATION', 'fake UI changed')
     }
     this.actions.push(structuredClone(request))
     if (this.inert) {
+      if (this.inertVisualSignature !== undefined) this.visualSignature = this.inertVisualSignature
       return Promise.resolve({
         channel: 'coordinates',
         activation: 'not-requested',
