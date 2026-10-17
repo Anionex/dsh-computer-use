@@ -11,7 +11,11 @@ const PACKAGE = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8')) a
   exports: Record<string, unknown>
   files: string[]
   scripts: Record<string, string>
-  dsh?: { bundle?: { patch?: string }; client?: { platform?: string; inject?: string[] } }
+  dsh?: {
+    bundle?: { patch?: string }
+    client?: { platform?: string; inject?: string[] }
+    compatibility?: { dsh?: string; dshReleases?: Record<string, string> }
+  }
   dshClient?: unknown
   dependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
@@ -112,6 +116,16 @@ describe('published package layout', () => {
         expect(spec, name).not.toMatch(/^\/|^[A-Za-z]:\\|^file:|^link:|^workspace:/)
       }
     }
+  })
+
+  it('declares DSH 0.2.1-rc.2 across every DSH peer and the compatibility matrix', () => {
+    for (const [name, range] of Object.entries(PACKAGE.peerDependencies ?? {})) {
+      if (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) {
+        expect(range, name).toContain('0.2.1-rc.2')
+      }
+    }
+    expect(PACKAGE.dsh?.compatibility?.dsh).toContain('0.2.1-rc.2')
+    expect(PACKAGE.dsh?.compatibility?.dshReleases?.['0.2.1-rc.2']).toBe('compatible')
   })
 
   it('keeps the local npm credential file out of Git', async () => {

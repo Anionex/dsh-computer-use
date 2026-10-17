@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4 — 2026-10-18
+
+- Support DSH `0.2.1-rc.2`: extend every DSH peer range and the declared compatibility matrix, and move the development baseline to `0.2.1-rc.2` (cordis `4.0.5`, schemastery `3.18.5`).
+- 支持 DSH `0.2.1-rc.2`：扩展全部 DSH peer 范围与兼容性声明，并把开发基线升级到 `0.2.1-rc.2`（cordis `4.0.5`、schemastery `3.18.5`）。
+- Verified on DSH `0.2.1-rc.2`: the plugin manager accepts a clean tarball install without a version exemption, the Web host boots, and `/_dsh/computer-use/settings` returns the expected schema; 194 unit tests pass against the `0.2.1-rc.2` type packages.
+- 已在 DSH `0.2.1-rc.2` 验证：插件管理器接受无需版本豁免的干净压缩包安装，Web Host 正常启动，`/_dsh/computer-use/settings` 返回预期 schema；194 项单元测试在 `0.2.1-rc.2` 类型包下通过。
+
 ## 0.3.3 — 2026-10-01
 
 - Adapt to DSH `0.2.0-rc.2` types, tool-message provenance, and explicit Connection injection for the Web Settings route. Rebuild the universal macOS helper as 0.3.3.
