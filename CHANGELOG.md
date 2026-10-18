@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.4 — 2026-10-18
+
+- Support DSH `0.2.1-rc.2`: extend every DSH peer range and the declared compatibility matrix, and move the development baseline to `0.2.1-rc.2` (cordis `4.0.5`, schemastery `3.18.5`).
+- 支持 DSH `0.2.1-rc.2`：扩展全部 DSH peer 范围与兼容性声明，并把开发基线升级到 `0.2.1-rc.2`（cordis `4.0.5`、schemastery `3.18.5`）。
+- Rebuild the universal macOS helper as 0.3.4 and keep its source, signature, manifest, and package version synchronized. Pin pnpm release-age exceptions to the exact host dependency versions.
+- 将通用 macOS helper 重建为 0.3.4，同步源码、签名、清单及软件包版本；pnpm 发布隔离豁免仅针对确切宿主依赖版本。
+- Verify clean tarball installation, host imports, background unit tests, and Web Settings on DSH `0.2.1-rc.2`. Foreground overlay validation was inconclusive under concurrent desktop use; the real-model desktop lane was not rerun.
+- 已在 DSH `0.2.1-rc.2` 验证干净压缩包安装、宿主导入、后台单元测试及 Web 设置。前台浮层验收受并发桌面操作的焦点冲突影响，结论不完整；本轮未重跑模型桌面操作验收。
+
 ## 0.3.3 — 2026-10-01
 
 - Adapt to DSH `0.2.0-rc.2` types, tool-message provenance, and explicit Connection injection for the Web Settings route. Rebuild the universal macOS helper as 0.3.3.
