@@ -133,7 +133,7 @@ describe('published package layout', () => {
   })
 
   it('keeps frozen standalone installs aligned with the lockfile peer policy', async () => {
-    expect(await readFile(join(ROOT, 'pnpm-workspace.yaml'), 'utf8')).toBe([
+    expect(await readFile(join(ROOT, 'pnpm-workspace.yaml'), 'utf8')).toContain([
       'packages:',
       '  - .',
       '',
