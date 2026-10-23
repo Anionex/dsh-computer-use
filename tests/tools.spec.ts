@@ -115,6 +115,7 @@ describe('model-facing Computer Use tools', () => {
         screenshot: { enum: ['none', 'optional', 'required'] },
       },
     })
+    expect(tools[1]?.output.schema).toMatchObject({ properties: { screenshot: { properties: { pixelScale: { type: 'number' } } } } })
     expect(tools[1]?.description).toContain('load the vision-tools Skill')
     expect(tools[1]?.description).toContain('instead of using bash, tesseract, screencapture, or an ad hoc OCR script')
     expect(tools[5]?.parameters).toMatchObject({
@@ -126,10 +127,10 @@ describe('model-facing Computer Use tools', () => {
     })
     expect(tools[2]?.parameters).not.toHaveProperty('properties.focusPolicy')
     expect(tools[2]?.parameters).not.toHaveProperty('properties.pointerInputPolicy')
-    expect(tools[2]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
+    expect(tools[2]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen', 'screenshot'] } } })
     expect(tools[2]?.parameters).toMatchObject({ properties: { targetHandle: { type: 'string' }, allowRebind: { type: 'boolean' } } })
-    expect(tools[6]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
-    expect(tools[7]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen'] } } })
+    expect(tools[6]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen', 'screenshot'] } } })
+    expect(tools[7]?.parameters).toMatchObject({ properties: { coordinateSpace: { enum: ['window', 'screen', 'screenshot'] } } })
     expect(tools[2]?.output.schema).toMatchObject({
       // `effect` is required: every action must report whether its bounded
       // post-action structural observation changed.

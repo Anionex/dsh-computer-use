@@ -204,6 +204,8 @@ No Tool accepts AppleScript, JXA, shell, Swift, Objective-C, native selectors, a
 
 An observation contains an opaque id and expiry, exact app identity, frontmost/window metadata, bounded tree text, current elements with opaque target handles, optional screenshot metadata, and permission state. Target handles expose no provider object reference or native identifier. Secure text values are emitted as `[secure]`; they do not enter target descriptors, tree text, Tool results, screenshot metadata, or native errors. A screenshot can still contain other visible application data and should be treated as sensitive.
 
+Coordinate actions accept three spaces: `window` and `screen` are measured in points, the unit of Accessibility frames, while `screenshot` is measured in the observation screenshot's pixels. A screenshot is captured at the window's backing scale without the drop shadow, so the image is a direct rendering of the window frame and `screenshot.pixelScale` reports pixels per point (normally `2` on Retina). Coordinates read off the screenshot image must therefore be passed as `coordinateSpace: 'screenshot'`; passing them as `window` points offsets the click by the pixel scale — on a 2x display a click intended for the middle of a window lands at twice its offset and can miss the control entirely. The service converts screenshot pixels to window points before any input is sent, and rejects window coordinates that exceed the frame but fit the screenshot with an error naming the scale.
+
 The technical access model has two exact-bundle-id leases:
 
 - `read`: inspect Accessibility state and a requested screenshot;

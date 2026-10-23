@@ -69,7 +69,7 @@ These fields do not claim that a target application can never change focus as it
 | scroll | None | Target pid + window | Allowed when `pointerInputPolicy: targeted` |
 | drag | None | Target pid + window | Allowed when `pointerInputPolicy: targeted` |
 
-`pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag while leaving semantic Accessibility and process-targeted keyboard paths available. `coordinateSpace: window` (default) resolves coordinates inside the observed window frame; `coordinateSpace: screen` accepts Quartz screen-global points.
+`pointerInputPolicy: deny` disables coordinate click/fallback, scroll, and drag while leaving semantic Accessibility and process-targeted keyboard paths available. `coordinateSpace: window` (default) resolves coordinates in points inside the observed window frame; `coordinateSpace: screen` accepts Quartz screen-global points; `coordinateSpace: screenshot` accepts pixels in the observation screenshot, which are converted through `screenshot.pixelScale` before any input is sent.
 
 ## Critical decisions
 

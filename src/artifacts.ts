@@ -64,6 +64,7 @@ export async function describeScreenshot(
   height: number,
   maxBytes: number,
   sourceTool: ComputerArtifact['sourceTool'],
+  pixelScale?: number,
 ): Promise<ComputerArtifact> {
   const link = await lstat(path).catch((error: unknown) => {
     throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'the screenshot artifact was not created', { cause: error })
@@ -78,6 +79,9 @@ export async function describeScreenshot(
   if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
     throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'provider returned invalid screenshot dimensions')
   }
+  if (pixelScale !== undefined && (!Number.isFinite(pixelScale) || pixelScale <= 0)) {
+    throw new ComputerUseError('COMPUTER_PROVIDER_FAILURE', 'provider returned an invalid screenshot pixel scale')
+  }
   return {
     path,
     filename: basename(path),
@@ -89,5 +93,6 @@ export async function describeScreenshot(
     bytes: info.size,
     width,
     height,
+    ...(pixelScale === undefined ? {} : { pixelScale }),
   }
 }

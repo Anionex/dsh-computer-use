@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Capture windows without ScreenCaptureKit's default shadow framing, which drew the window content inset and scaled inside an image that already had the window frame's pixel size. Screenshot pixels are now a direct `pixelScale` rendering of the window frame, and the helper fails closed when the captured dimensions do not match it.
+- Add a `screenshot` coordinate space for coordinate actions, so a coordinate read off a screenshot can be passed without dividing by the pixel scale by hand. `computer_observe` reports `screenshot.pixelScale` (pixels per window point), the service converts screenshot pixels to window points before the Agent cursor and native input run, and validates the provider scale against the captured dimensions. Window coordinates that exceed the window frame but fit the screenshot now fail with an error naming the scale and the correct space, instead of clicking at the wrong offset.
+- Mint sensitive-action confirmation tokens over the normalized action, so a confirmed `coordinateSpace: 'screenshot'` action executes instead of failing the one-use token match.
+- 捕获窗口时关闭 ScreenCaptureKit 默认的阴影取景：此前窗口内容会在与 frame 像素尺寸相同的图像中被内缩并缩放，截图像素无法线性映射到窗口 point。现在截图是窗口 frame 的直接 `pixelScale` 渲染，捕获尺寸不匹配时 helper 会 fail closed。
+- 新增 `screenshot` 坐标空间：从截图上读到的坐标可以直接传入，无需手动除以像素倍率。`computer_observe` 返回 `screenshot.pixelScale`（每个窗口 point 对应的像素数），Service 在 Agent 光标与 native 输入之前把截图像素换算为窗口 point，并用 provider 倍率校验截图尺寸。window 坐标超出窗口 frame 但落在截图范围内时，会报错说明倍率与应使用的坐标空间，而不是偏移后点到错误位置。
+- 敏感动作的确认 token 改为绑定归一化后的 action，已确认的 `coordinateSpace: 'screenshot'` 动作不再因 token 哈希不匹配而失败。
+
 ## 0.3.4 — 2026-10-18
 
 - Support DSH `0.2.1-rc.2`: extend every DSH peer range and the declared compatibility matrix, and move the development baseline to `0.2.1-rc.2` (cordis `4.0.5`, schemastery `3.18.5`).

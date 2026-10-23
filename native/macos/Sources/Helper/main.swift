@@ -529,12 +529,24 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
     configuration.width = max(1, Int((selected.frame.width * pixelScale).rounded()))
     configuration.height = max(1, Int((selected.frame.height * pixelScale).rounded()))
     configuration.showsCursor = false
+    // ScreenCaptureKit frames a single window with its drop shadow by default,
+    // which draws the window content inset and scaled inside an image that still
+    // has the window frame's pixel size. Agent coordinates read off the image
+    // would then be off by the shadow margin, so capture the content only and
+    // keep the image a direct `pixelScale` rendering of the window frame.
+    configuration.ignoreShadowsSingleWindow = true
     let image: CGImage
     do {
         image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     } catch {
         if required { throw fail("COMPUTER_PROVIDER_FAILURE", "ScreenCaptureKit could not capture the selected window") }
         return nil
+    }
+    guard image.width == configuration.width, image.height == configuration.height else {
+        throw fail(
+            "COMPUTER_PROVIDER_FAILURE",
+            "captured window is \(image.width)x\(image.height), expected \(configuration.width)x\(configuration.height); coordinates cannot be mapped to the window frame",
+        )
     }
     let representation = NSBitmapImageRep(cgImage: image)
     guard let data = representation.representation(using: .png, properties: [:]) else {
@@ -545,7 +557,7 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
     } catch {
         throw fail("COMPUTER_PROVIDER_FAILURE", "captured PNG could not be written")
     }
-    return ["path": path, "width": image.width, "height": image.height]
+    return ["path": path, "width": image.width, "height": image.height, "pixelScale": Double(pixelScale)]
 }
 
 private func observationJSON(_ snapshot: ObservationSnapshot, screenshot: [String: Any]?) -> [String: Any] {

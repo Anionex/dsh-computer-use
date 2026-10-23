@@ -269,6 +269,13 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(helperSource).toContain('let coordinateSpace = action["coordinateSpace"] as? String ?? "window"')
   })
 
+  it('captures windows without shadow framing so image pixels map to the window frame', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).toContain('configuration.ignoreShadowsSingleWindow = true')
+    expect(helperSource).toContain('"pixelScale": Double(pixelScale)')
+    expect(helperSource).toMatch(/image\.width == configuration\.width[\s\S]*?coordinates cannot be mapped to the window frame/u)
+  })
+
   it('routes AXRaise through explicit foreground authorization and refreshed target validation', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
     expect(helperSource).toContain('action == (kAXRaiseAction as String)')
