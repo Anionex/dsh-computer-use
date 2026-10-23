@@ -19,6 +19,12 @@ private struct ElementRecord {
     let element: AXUIElement
     let json: [String: Any]
     let hashLine: String
+    /// True for nodes inside an AXWebArea (Chromium/Electron web content).
+    ///
+    /// Chromium accepts AXPress on these nodes and returns success without
+    /// activating them, so they are clicked with target-process pointer input
+    /// at the element center instead.
+    let webContent: Bool
 }
 
 private struct ObservationSnapshot {
@@ -439,7 +445,7 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
         windowJSON = json
     }
 
-    var queue: [(AXUIElement, [Int], Int)] = [(root, [], 0)]
+    var queue: [(AXUIElement, [Int], Int, Bool)] = [(root, [], 0, false)]
     var cursor = 0
     var seen = Set<CFHashCode>()
     var records: [ElementRecord] = []
@@ -449,7 +455,7 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
 
     while cursor < queue.count {
         if records.count >= maxNodes { truncated = true; break }
-        let (element, locator, depth) = queue[cursor]
+        let (element, locator, depth, webContent) = queue[cursor]
         cursor += 1
         let identity = CFHash(element)
         if seen.contains(identity) { continue }
@@ -511,13 +517,14 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
         } else {
             truncated = true
         }
-        records.append(ElementRecord(index: index, locator: locator, element: element, json: json, hashLine: hashLine))
+        records.append(ElementRecord(index: index, locator: locator, element: element, json: json, hashLine: hashLine, webContent: webContent))
         if depth >= maxDepth {
             if !axChildren(element).isEmpty { truncated = true }
             continue
         }
+        let childWebContent = webContent || role == "AXWebArea"
         for (childIndex, child) in axChildren(element).enumerated() {
-            queue.append((child, locator + [childIndex], depth + 1))
+            queue.append((child, locator + [childIndex], depth + 1, childWebContent))
         }
     }
     let appData = try appJSON(app)
@@ -966,10 +973,16 @@ private func performAction(
 
     switch kind {
     case "click":
-        if let record, pressWithDescendantFallback(record.element) {
+        // Chromium accepts AXPress on web content and activates nothing, so an
+        // element inside AXWebArea is clicked through targeted pointer input at
+        // its center. Native controls keep the Accessibility press path.
+        if let record, record.webContent, pointerInputPolicy != "targeted" {
+            throw fail("COMPUTER_ACTION_BLOCKED", "clicking Chromium web content requires targeted pointer input, which this host denies")
+        }
+        if let record, !record.webContent, pressWithDescendantFallback(record.element) {
             return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
         }
-        let elementFallback = record != nil && bool(action["allowCoordinateFallback"])
+        let elementFallback = record != nil && (bool(action["allowCoordinateFallback"]) || record?.webContent == true)
         let coordinateFallback = action["x"] != nil && action["y"] != nil
         guard elementFallback || coordinateFallback else {
             throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "element does not support an actionable AXPress and coordinate fallback was not requested")

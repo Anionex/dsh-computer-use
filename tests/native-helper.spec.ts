@@ -269,6 +269,16 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(helperSource).toContain('let coordinateSpace = action["coordinateSpace"] as? String ?? "window"')
   })
 
+  it('clicks Chromium web content through targeted pointer input', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).toContain('let webContent: Bool')
+    expect(helperSource).toContain('let childWebContent = webContent || role == "AXWebArea"')
+    expect(helperSource).toContain('webContent: webContent')
+    expect(helperSource).toMatch(/if let record, record\.webContent, pointerInputPolicy != "targeted" \{[\s\S]*?COMPUTER_ACTION_BLOCKED/u)
+    expect(helperSource).toMatch(/if let record, !record\.webContent, pressWithDescendantFallback\(record\.element\)/u)
+    expect(helperSource).toContain('bool(action["allowCoordinateFallback"]) || record?.webContent == true')
+  })
+
   it('enables Chromium web accessibility before observing an Electron app', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
     expect(helperSource).toContain('AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)')
