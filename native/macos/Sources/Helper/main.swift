@@ -369,6 +369,49 @@ private func sha256(_ value: String) -> String {
     SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
 }
 
+/// Whether the app already exposes a web area (Chromium/Electron with web
+/// accessibility on, or a WebKit app).
+private func containsWebArea(_ element: AXUIElement, maxNodes: Int = 4_000) -> Bool {
+    var queue: [AXUIElement] = [element]
+    var cursor = 0
+    var seen = Set<CFHashCode>()
+    while cursor < queue.count && cursor < maxNodes {
+        let current = queue[cursor]
+        cursor += 1
+        if !seen.insert(CFHash(current)).inserted { continue }
+        if axString(current, kAXRoleAttribute as CFString) == "AXWebArea" { return true }
+        if let children = axCopy(current, kAXChildrenAttribute as CFString) as? [AXUIElement] {
+            queue.append(contentsOf: children)
+        }
+    }
+    return false
+}
+
+/// Ask Chromium/Electron to expose its document to Accessibility.
+///
+/// A windowed Electron app otherwise publishes only its native shell (window,
+/// traffic lights, a few groups) and forces agents to act from screenshots.
+/// `AXManualAccessibility` is the supported switch Chromium documents for
+/// accessibility tools; native apps reject it and keep their existing tree.
+/// The document normally stays exposed for the lifetime of the app process, so
+/// the bounded wait below is paid once per launch; it repeats only if the app
+/// hides the document again. The check starts at the window because Chromium
+/// does not list its windows as application children while the document is
+/// hidden.
+private func ensureWebAccessibility(_ appElement: AXUIElement, window: AXUIElement?) {
+    func exposed() -> Bool {
+        if let window, containsWebArea(window) { return true }
+        return containsWebArea(appElement)
+    }
+    if exposed() { return }
+    guard AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success else { return }
+    let deadline = Date().addingTimeInterval(2.5)
+    while Date() < deadline {
+        usleep(100_000)
+        if exposed() { return }
+    }
+}
+
 private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) throws -> ObservationSnapshot {
     guard AXIsProcessTrusted() else {
         throw fail("COMPUTER_PERMISSION_REQUIRED", "macOS Accessibility permission is required for the DSH helper")
@@ -380,7 +423,9 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
         throw fail("COMPUTER_PROVIDER_FAILURE", "observation limits must be positive")
     }
     let appElement = AXUIElementCreateApplication(app.processIdentifier)
-    let rootWindow = chosenWindow(appElement)
+    var rootWindow = chosenWindow(appElement)
+    ensureWebAccessibility(appElement, window: rootWindow)
+    if rootWindow == nil { rootWindow = chosenWindow(appElement) }
     let root = rootWindow ?? appElement
     let frame = rootWindow.flatMap(axFrame)
     let title = rootWindow.flatMap { axString($0, kAXTitleAttribute as CFString) }

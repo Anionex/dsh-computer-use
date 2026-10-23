@@ -269,6 +269,14 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(helperSource).toContain('let coordinateSpace = action["coordinateSpace"] as? String ?? "window"')
   })
 
+  it('enables Chromium web accessibility before observing an Electron app', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).toContain('AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)')
+    expect(helperSource).toMatch(/func observeSnapshot\(app: NSRunningApplication[\s\S]*?ensureWebAccessibility\(appElement, window: rootWindow\)/u)
+    expect(helperSource).toContain('func ensureWebAccessibility(_ appElement: AXUIElement, window: AXUIElement?)')
+    expect(helperSource).toContain('if let window, containsWebArea(window) { return true }')
+  })
+
   it('captures windows without shadow framing so image pixels map to the window frame', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
     expect(helperSource).toContain('configuration.ignoreShadowsSingleWindow = true')
