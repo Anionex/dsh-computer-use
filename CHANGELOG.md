@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Support DSH `0.2.1-rc.3`: extend every DSH peer range and the declared compatibility matrix, and move the development baseline to `0.2.1-rc.3`. DSH rejects a plugin whose exact prerelease peers do not name the running release, so `0.2.1-rc.2` alone made the plugin show as incompatible and drop out of the profile after that update.
+- 支持 DSH `0.2.1-rc.3`：扩展全部 DSH peer 范围与兼容性声明，并把开发基线升级到 `0.2.1-rc.3`。DSH 要求精确的预发布 peer 必须包含当前运行的版本，只声明 `0.2.1-rc.2` 会让插件在升级后显示为不兼容并从 profile 中掉出。
 - Capture windows without ScreenCaptureKit's default shadow framing, which drew the window content inset and scaled inside an image that already had the window frame's pixel size. Screenshot pixels are now a direct `pixelScale` rendering of the window frame, and the helper fails closed when the captured dimensions do not match it.
 - Add a `screenshot` coordinate space for coordinate actions, so a coordinate read off a screenshot can be passed without dividing by the pixel scale by hand. `computer_observe` reports `screenshot.pixelScale` (pixels per window point), the service converts screenshot pixels to window points before the Agent cursor and native input run, and validates the provider scale against the captured dimensions. Window coordinates that exceed the window frame but fit the screenshot now fail with an error naming the scale and the correct space, instead of clicking at the wrong offset.
 - Mint sensitive-action confirmation tokens over the normalized action, so a confirmed `coordinateSpace: 'screenshot'` action executes instead of failing the one-use token match.

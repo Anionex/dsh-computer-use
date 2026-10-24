@@ -118,14 +118,17 @@ describe('published package layout', () => {
     }
   })
 
-  it('declares DSH 0.2.1-rc.2 across every DSH peer and the compatibility matrix', () => {
+  it('declares DSH 0.2.1-rc.2 and 0.2.1-rc.3 across every DSH peer and the compatibility matrix', () => {
     for (const [name, range] of Object.entries(PACKAGE.peerDependencies ?? {})) {
       if (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) {
         expect(range, name).toContain('0.2.1-rc.2')
+        expect(range, name).toContain('0.2.1-rc.3')
       }
     }
     expect(PACKAGE.dsh?.compatibility?.dsh).toContain('0.2.1-rc.2')
+    expect(PACKAGE.dsh?.compatibility?.dsh).toContain('0.2.1-rc.3')
     expect(PACKAGE.dsh?.compatibility?.dshReleases?.['0.2.1-rc.2']).toBe('compatible')
+    expect(PACKAGE.dsh?.compatibility?.dshReleases?.['0.2.1-rc.3']).toBe('compatible')
   })
 
   it('keeps the local npm credential file out of Git', async () => {
