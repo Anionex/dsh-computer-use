@@ -299,6 +299,25 @@ private func pressRecursive(_ element: AXUIElement, remainingDepth: Int, visited
     return false
 }
 
+/// True when an Accessibility press on a Chromium control returned success but
+/// changed neither the tree nor focus, which is how Chromium reports a press it
+/// never handled. Scoped to apps that publish an AXWebArea so native controls
+/// keep the fast, ordinary press path.
+private func pressLeftNoObservableEffect(
+    app: NSRunningApplication,
+    limits: [String: Any],
+    before: ObservationSnapshot,
+    record: ElementRecord
+) -> Bool {
+    guard before.elements.contains(where: { ($0.json["role"] as? String) == "AXWebArea" }) else { return false }
+    usleep(200_000)
+    guard let refreshed = try? observeSnapshot(app: app, limits: limits) else { return false }
+    guard refreshed.stateHash == before.stateHash else { return false }
+    guard let current = refreshed.elements.first(where: { $0.locator == record.locator }),
+          axBool(current.element, kAXFocusedAttribute as CFString) != true else { return false }
+    return true
+}
+
 private func sanitize(_ value: String, max: Int = 240) -> String {
     let collapsed = value.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
     guard collapsed.count > max else { return collapsed }
@@ -979,10 +998,16 @@ private func performAction(
         if let record, record.webContent, pointerInputPolicy != "targeted" {
             throw fail("COMPUTER_ACTION_BLOCKED", "clicking Chromium web content requires targeted pointer input, which this host denies")
         }
+        var silentPressFallback = false
         if let record, !record.webContent, pressWithDescendantFallback(record.element) {
-            return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
+            if pointerInputPolicy == "targeted",
+               pressLeftNoObservableEffect(app: app, limits: limits, before: snapshot, record: record) {
+                silentPressFallback = true
+            } else {
+                return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
+            }
         }
-        let elementFallback = record != nil && (bool(action["allowCoordinateFallback"]) || record?.webContent == true)
+        let elementFallback = record != nil && (bool(action["allowCoordinateFallback"]) || record?.webContent == true || silentPressFallback)
         let coordinateFallback = action["x"] != nil && action["y"] != nil
         guard elementFallback || coordinateFallback else {
             throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "element does not support an actionable AXPress and coordinate fallback was not requested")

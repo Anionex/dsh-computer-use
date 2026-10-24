@@ -279,6 +279,16 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(helperSource).toContain('bool(action["allowCoordinateFallback"]) || record?.webContent == true')
   })
 
+  it('retries a Chromium press that changed neither the tree nor focus', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).toContain('func pressLeftNoObservableEffect(')
+    expect(helperSource).toContain('before.elements.contains(where: { ($0.json["role"] as? String) == "AXWebArea" })')
+    expect(helperSource).toContain('refreshed.stateHash == before.stateHash')
+    expect(helperSource).toContain('kAXFocusedAttribute as CFString) != true')
+    expect(helperSource).toContain('silentPressFallback = true')
+    expect(helperSource).toContain('|| silentPressFallback')
+  })
+
   it('enables Chromium web accessibility before observing an Electron app', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
     expect(helperSource).toContain('AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)')
