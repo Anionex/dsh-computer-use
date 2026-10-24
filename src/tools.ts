@@ -107,6 +107,7 @@ const artifactSchema = {
     bytes: { type: 'integer', required: true },
     width: { type: 'integer', required: true },
     height: { type: 'integer', required: true },
+    pixelScale: { type: 'number' },
   },
 } as const satisfies ValueSchemaSpec
 
@@ -216,7 +217,7 @@ const confirmationActionSchema = {
         allowRebind: { type: 'boolean' },
         x: { type: 'number' },
         y: { type: 'number' },
-        coordinateSpace: { type: 'string', enum: ['window', 'screen'] },
+        coordinateSpace: { type: 'string', enum: ['window', 'screen', 'screenshot'] },
         button: { type: 'string', enum: ['left', 'right', 'middle'] },
         clickCount: { type: 'integer' },
         allowCoordinateFallback: { type: 'boolean' },
@@ -256,7 +257,7 @@ const confirmationActionSchema = {
         allowRebind: { type: 'boolean' },
         x: { type: 'number' },
         y: { type: 'number' },
-        coordinateSpace: { type: 'string', enum: ['window', 'screen'] },
+        coordinateSpace: { type: 'string', enum: ['window', 'screen', 'screenshot'] },
         direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], required: true },
         pages: { type: 'integer' },
       },
@@ -269,7 +270,7 @@ const confirmationActionSchema = {
         fromY: { type: 'number', required: true },
         toX: { type: 'number', required: true },
         toY: { type: 'number', required: true },
-        coordinateSpace: { type: 'string', enum: ['window', 'screen'] },
+        coordinateSpace: { type: 'string', enum: ['window', 'screen', 'screenshot'] },
       },
     },
     {
@@ -313,6 +314,7 @@ function artifactPresentation(artifact: ComputerArtifact): JsonValue {
     bytes: artifact.bytes,
     width: artifact.width,
     height: artifact.height,
+    ...(artifact.pixelScale === undefined ? {} : { pixelScale: artifact.pixelScale }),
   }
 }
 
@@ -354,7 +356,7 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const observe = defineTool({
     name: 'computer_observe',
-    description: 'Read a fresh Accessibility observation for one exact running app. Element indexes belong only to the returned observationId. Prefer the tree; request a screenshot for pixel-only facts. When a screenshot needs OCR, visual grounding, or pixel inspection, load the vision-tools Skill and pass the returned Artifact path to its native tools instead of using bash, tesseract, screencapture, or an ad hoc OCR script.',
+    description: 'Read a fresh Accessibility observation for one exact running app. Element indexes belong only to the returned observationId. Prefer the tree; request a screenshot for pixel-only facts. A screenshot reports its pixel dimensions and `pixelScale` (pixels per window point); coordinates read off that image belong to coordinateSpace: screenshot, not window. When a screenshot needs OCR, visual grounding, or pixel inspection, load the vision-tools Skill and pass the returned Artifact path to its native tools instead of using bash, tesseract, screencapture, or an ad hoc OCR script.',
     parameters: {
       app: { ...appSelectorSchema, required: true },
       screenshot: { type: 'string', enum: ['none', 'optional', 'required'], description: 'Default optional. Required fails when Screen Recording is unavailable.' },
@@ -375,7 +377,7 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const click = defineTool({
     name: 'computer_click',
-    description: 'Click an observed element, preferring AXPress without foreground activation, or use a window-relative or screen-global coordinate when host pointer policy allows it. For safe recovery after harmless tree reordering, pass the element targetHandle and allowRebind=true; elementIndex remains exact-observation compatibility. The successful result includes deterministic resolution metadata and a fresh post-click observation.',
+    description: 'Click an observed element, preferring AXPress without foreground activation, or use a window-relative point, a screen-global point, or a screenshot-pixel coordinate when host pointer policy allows it. Screenshot pixels are what you read off the observation image; pass them with coordinateSpace: screenshot so they are divided by screenshot.pixelScale instead of landing at pixelScale times the intended offset. For safe recovery after harmless tree reordering, pass the element targetHandle and allowRebind=true; elementIndex remains exact-observation compatibility. The successful result includes deterministic resolution metadata and a fresh post-click observation.',
     parameters: {
       observationId: { type: 'string', required: true },
       elementIndex: { type: 'integer' },
@@ -383,7 +385,7 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
       allowRebind: { type: 'boolean', description: 'Allow fail-closed native-identifier or unique semantic rebinding. Requires targetHandle.' },
       x: { type: 'number' },
       y: { type: 'number' },
-      coordinateSpace: { type: 'string', enum: ['window', 'screen'], description: 'Default window interprets x/y inside the observed window frame; screen uses Quartz screen-global coordinates.' },
+      coordinateSpace: { type: 'string', enum: ['window', 'screen', 'screenshot'], description: 'Default window interprets x/y in points inside the observed window frame; screen uses Quartz screen-global points; screenshot interprets x/y in the observation screenshot pixels, which is what you read off the screenshot image on a Retina display.' },
       button: { type: 'string', enum: ['left', 'right', 'middle'] },
       clickCount: { type: 'integer' },
       allowCoordinateFallback: { type: 'boolean' },
@@ -439,7 +441,7 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const scroll = defineTool({
     name: 'computer_scroll',
-    description: 'Scroll by routing a wheel event only to the selected app process at an observed element or window-relative/screen-global coordinate. The system cursor is not moved.',
+    description: 'Scroll by routing a wheel event only to the selected app process at an observed element, a window-relative/screen-global point, or a screenshot-pixel coordinate. The system cursor is not moved.',
     parameters: {
       observationId: { type: 'string', required: true },
       elementIndex: { type: 'integer' },
@@ -447,7 +449,7 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
       allowRebind: { type: 'boolean' },
       x: { type: 'number' },
       y: { type: 'number' },
-      coordinateSpace: { type: 'string', enum: ['window', 'screen'], description: 'Default window interprets x/y inside the observed window frame; screen uses Quartz screen-global coordinates.' },
+      coordinateSpace: { type: 'string', enum: ['window', 'screen', 'screenshot'], description: 'Default window interprets x/y in points inside the observed window frame; screen uses Quartz screen-global points; screenshot interprets x/y in the observation screenshot pixels, which is what you read off the screenshot image on a Retina display.' },
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], required: true },
       pages: { type: 'integer' },
       ...sensitiveParameters,
@@ -459,14 +461,14 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const drag = defineTool({
     name: 'computer_drag',
-    description: 'Drag by routing mouse events only to the selected app process between two points in the observed-window or screen-global coordinate space. The system cursor is not moved.',
+    description: 'Drag by routing mouse events only to the selected app process between two points in the observed-window, screen-global, or screenshot-pixel coordinate space. The system cursor is not moved.',
     parameters: {
       observationId: { type: 'string', required: true },
       fromX: { type: 'number', required: true },
       fromY: { type: 'number', required: true },
       toX: { type: 'number', required: true },
       toY: { type: 'number', required: true },
-      coordinateSpace: { type: 'string', enum: ['window', 'screen'], description: 'Default window interprets the points inside the observed window frame; screen uses Quartz screen-global coordinates.' },
+      coordinateSpace: { type: 'string', enum: ['window', 'screen', 'screenshot'], description: 'Default window interprets the points inside the observed window frame; screen uses Quartz screen-global points; screenshot interprets the points in the observation screenshot pixels.' },
       ...sensitiveParameters,
     },
     output: actionOutput(),

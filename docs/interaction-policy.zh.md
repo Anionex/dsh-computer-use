@@ -69,7 +69,7 @@ resolution?: {
 | 滚动 | 不激活 | 目标 pid + window | `pointerInputPolicy: targeted` 时允许 |
 | 拖拽 | 不激活 | 目标 pid + window | `pointerInputPolicy: targeted` 时允许 |
 
-`pointerInputPolicy: deny` 会禁用坐标点击/fallback、滚动和拖拽，但保留语义化 Accessibility 与进程定向键盘路径。`coordinateSpace: window`（默认）在已观察窗口 frame 内解释坐标；`coordinateSpace: screen` 接受 Quartz 屏幕全局坐标。
+`pointerInputPolicy: deny` 会禁用坐标点击/fallback、滚动和拖拽，但保留语义化 Accessibility 与进程定向键盘路径。`coordinateSpace: window`（默认）以 point 在已观察窗口 frame 内解释坐标；`coordinateSpace: screen` 接受 Quartz 屏幕全局坐标；`coordinateSpace: screenshot` 接受 observation 截图中的像素，并在发送任何输入前按 `screenshot.pixelScale` 换算。
 
 ## 关键决策
 

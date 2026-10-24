@@ -23,6 +23,10 @@ plugin; an API or CLI; browser automation for browser tasks; then Computer Use.
 1. Select an exact running app, preferring bundleId over display name.
 2. Call computer_observe before acting. Prefer the Accessibility tree and
    element targets; request a screenshot only for pixel-only or visual facts.
+   The helper asks Chromium-based apps (Electron, Chrome) to expose their
+   document, so an AXWebArea with buttons and rows may appear where a first
+   observation only showed the window shell; use those elements instead of
+   coordinate clicks.
 3. Every element has an observation-local elementIndex and opaque targetHandle.
    Use elementIndex for exact compatibility. For a low-risk action that may need
    recovery from harmless tree reordering, pass targetHandle with
@@ -30,9 +34,14 @@ plugin; an API or CLI; browser automation for browser tasks; then Computer Use.
    provider-native identifier, then a unique role/name/actions/ancestor match.
    Ambiguous or low-confidence candidates fail closed.
 4. Use an element action before coordinate fallback. Coordinates are relative
-   to the observed window by default (\`coordinateSpace: window\`);
-   \`coordinateSpace: screen\` accepts Quartz screen-global points and still
-   carries the same observationId.
+   to the observed window in points by default (\`coordinateSpace: window\`);
+   \`coordinateSpace: screen\` accepts Quartz screen-global points, and
+   \`coordinateSpace: screenshot\` accepts pixels in the observation screenshot.
+   The observation's \`screenshot\` is captured at the window's backing scale
+   (\`screenshot.pixelScale\`, normally 2 on Retina), so any pixel coordinate you
+   read off the screenshot must be passed with \`coordinateSpace: screenshot\`
+   rather than \`window\`; passing screenshot pixels as window points offsets the
+   click by the pixel scale. All spaces still carry the same observationId.
 5. Every successful action returns the fresh post-action observation. Read it
    before deciding the next step; do not add a redundant observe unless you need
    a full tree or screenshot that the returned state omitted. The accompanying
@@ -61,7 +70,10 @@ Toolkit operation with bash. If vision-tools is unavailable, continue from the
 Accessibility evidence when safe or report that visual inspection is blocked;
 do not build a temporary OCR stack. A vision-derived coordinate is only target
 selection evidence: take a fresh computer_observe after any UI change and keep
-the resulting observationId on the Computer Use action.
+the resulting observationId on the Computer Use action. Coordinates returned by
+the vision tools are screenshot pixels; pass them with
+\`coordinateSpace: screenshot\` (or divide them by \`screenshot.pixelScale\`), never
+as \`coordinateSpace: window\`.
 
 The host owns foreground and pointer policy; never ask for or invent policy
 overrides in Tool arguments. The default policy preserves the user's current

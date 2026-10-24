@@ -204,6 +204,10 @@ Bundle 初始只贡献 `computer_use_activate`。加载 Skill 后，才为当前
 
 Observation 包含 opaque id 与过期时间、准确 app 身份、frontmost/window metadata、有界 tree text、带 opaque target handle 的当前元素、可选截图 metadata 和权限状态。Target handle 不暴露 provider object reference 或 native identifier。Secure text value 以 `[secure]` 输出，不会进入 target descriptor、tree text、Tool result、截图 metadata 或 native error。截图仍可能包含应用中其他可见数据，应按敏感数据处理。
 
+对于 Chromium 系应用（Electron、Chrome），窗口默认只向 Accessibility 暴露原生外壳。helper 在观察到稀疏 AX 树时会设置 Chromium 的 `AXManualAccessibility` 并在有限时间内等待文档出现，使 DSH 这类 Electron 应用的按钮、列表行与输入框以普通元素出现，而不是只能依赖坐标点击。该文档会在 app 进程存活期间保持暴露，因此这段有上限的等待通常只在启动后发生一次。 web 区域内元素上的点击会以 element 中心为坐标、通过 target-process 指针输入送达，因为 Chromium 会对 web 内容接受 `AXPress` 却不触发任何动作；原生控件仍走 Accessibility press 路径。 若该 Chromium 应用的其他控件上 Accessibility press 报告成功、但树与焦点都没有任何变化，helper 会改用元素中心的指针点击重试一次，而不是报告一次幽灵成功。
+
+坐标动作支持三种空间：`window` 与 `screen` 以 point 为单位（与 Accessibility frame 一致），`screenshot` 以 observation 截图的像素为单位。截图按窗口的 backing scale 捕获且不含窗口阴影，因此图像是窗口 frame 的直接渲染，`screenshot.pixelScale` 表示每个 point 对应的像素数（Retina 上通常为 `2`）。从截图图像上读出的坐标必须用 `coordinateSpace: 'screenshot'` 传入；若当作 `window` point 传入，点击会整体偏移一个像素倍率——在 2x 屏上，想点窗口中间的点击会落到两倍偏移处，可能完全错过控件。Service 会在发送任何输入之前把截图像素换算为窗口 point，并对「超出窗口 frame 但落在截图范围内」的 window 坐标报错并说明倍率。
+
 技术访问模型包含两类准确 bundle-id lease：
 
 - `read`：读取 Accessibility 状态和请求的截图；
