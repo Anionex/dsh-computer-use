@@ -75,7 +75,7 @@ These fields do not claim that a target application can never change focus as it
 
 ### Host policy is not a Tool argument
 
-The deployment owns `focusPolicy`, `keyboardPolicy`, and `pointerInputPolicy`. `allowCoordinateFallback` says only that `computer_click` may try the host-authorized pointer route after `AXPress` is unavailable. It cannot enable pointer delivery or foreground activation. `computer_perform_action` also treats `AXRaise` as foreground-affecting and rejects it under `preserve`.
+The deployment owns `focusPolicy`, `keyboardPolicy`, and `pointerInputPolicy`. `allowCoordinateFallback` says only that `computer_click` may try the host-authorized pointer route after `AXPress` is unavailable. It cannot enable pointer delivery or foreground activation. `computer_perform_action` also treats `AXRaise` as foreground-affecting and rejects it under `preserve`. For Electron web content whose app supports the writable AXManualAccessibility attribute, explicit allowCoordinateFallback selects the pointer route before attempting AXPress; a successful AXPress is never replayed based on unchanged UI.
 
 ### Accessibility remains the primary route
 

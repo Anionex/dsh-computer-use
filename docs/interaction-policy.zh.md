@@ -75,7 +75,7 @@ resolution?: {
 
 ### 宿主策略不是 Tool 参数
 
-`focusPolicy`、`keyboardPolicy` 与 `pointerInputPolicy` 归部署方所有。`allowCoordinateFallback` 只表示 `computer_click` 在 `AXPress` 不可用后可以尝试宿主已授权的指针路由，不能自行开启指针投递或前台激活。`computer_perform_action` 也会把 `AXRaise` 视为影响前台的动作，并在 `preserve` 下拒绝。
+`focusPolicy`、`keyboardPolicy` 与 `pointerInputPolicy` 归部署方所有。`allowCoordinateFallback` 只表示 `computer_click` 在 `AXPress` 不可用后可以尝试宿主已授权的指针路由，不能自行开启指针投递或前台激活。`computer_perform_action` 也会把 `AXRaise` 视为影响前台的动作，并在 `preserve` 下拒绝。 对支持可写 AXManualAccessibility 属性的 Electron web 内容，显式 allowCoordinateFallback 会在 AXPress 前选择指针路径；AXPress 成功后不会根据界面未变化而重放输入。
 
 ### Accessibility 始终是主路径
 

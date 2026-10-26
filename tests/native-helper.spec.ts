@@ -269,24 +269,22 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(helperSource).toContain('let coordinateSpace = action["coordinateSpace"] as? String ?? "window"')
   })
 
-  it('clicks Chromium web content through targeted pointer input', async () => {
+  it('gates the web pointer workaround on app capability and caller consent', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
     expect(helperSource).toContain('let webContent: Bool')
     expect(helperSource).toContain('let childWebContent = webContent || role == "AXWebArea"')
     expect(helperSource).toContain('webContent: webContent')
-    expect(helperSource).toMatch(/if let record, record\.webContent, pointerInputPolicy != "targeted" \{[\s\S]*?COMPUTER_ACTION_BLOCKED/u)
-    expect(helperSource).toMatch(/if let record, !record\.webContent, pressWithDescendantFallback\(record\.element\)/u)
-    expect(helperSource).toContain('bool(action["allowCoordinateFallback"]) || record?.webContent == true')
+    expect(helperSource).toContain('AXUIElementIsAttributeSettable(')
+    expect(helperSource).toContain('let route = elementClickRoute(')
+    expect(helperSource).toContain('allowCoordinateFallback: elementFallback')
+    expect(helperSource).toContain('pointerInputAllowed: pointerInputPolicy == "targeted"')
   })
 
-  it('retries a Chromium press that changed neither the tree nor focus', async () => {
+  it('never retries a successful AX press based on an unchanged observation', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
-    expect(helperSource).toContain('func pressLeftNoObservableEffect(')
-    expect(helperSource).toContain('before.elements.contains(where: { ($0.json["role"] as? String) == "AXWebArea" })')
-    expect(helperSource).toContain('refreshed.stateHash == before.stateHash')
-    expect(helperSource).toContain('kAXFocusedAttribute as CFString) != true')
-    expect(helperSource).toContain('silentPressFallback = true')
-    expect(helperSource).toContain('|| silentPressFallback')
+    expect(helperSource).not.toContain('pressLeftNoObservableEffect')
+    expect(helperSource).not.toContain('silentPressFallback')
+    expect(helperSource).toContain('if route == .accessibility')
   })
 
   it('enables Chromium web accessibility before observing an Electron app', async () => {

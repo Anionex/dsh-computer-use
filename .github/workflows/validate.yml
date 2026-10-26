@@ -1,0 +1,50 @@
+name: Validate package and native input
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.20.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run check:native
+      - run: git diff --exit-code -- lib
+      - name: Install the exact rc.3 host
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/dsh-cli" @deepseek-ai/dsh@0.2.1-rc.3 --registry=https://registry.npmjs.org
+          echo "$RUNNER_TEMP/dsh-cli/bin" >> "$GITHUB_PATH"
+          echo "DSH_TEST_CLI=$RUNNER_TEMP/dsh-cli/bin/dsh" >> "$GITHUB_ENV"
+          echo "DSH_TELEMETRY_DISABLED=1" >> "$GITHUB_ENV"
+      - name: Run unit tests without desktop access
+        run: pnpm exec vitest run tests --exclude '**/*.e2e.spec.ts'
+      - name: Run native and clean Profile acceptance on the CI desktop
+        env:
+          DSH_COMPUTER_USE_REQUIRE_TCC: '1'
+        run: |
+          mkdir -p "$RUNNER_TEMP/foreground-baseline"
+          open "$RUNNER_TEMP/foreground-baseline"
+          sleep 2
+          swift -e 'import AppKit; guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else { exit(1) }'
+          pnpm exec vitest run tests/native-fixture.e2e.spec.ts tests/cursor-overlay-tracking.e2e.spec.ts tests/action-surface.e2e.spec.ts tests/profile-install.e2e.spec.ts --maxWorkers=1
+      - run: pnpm pack --dry-run
+      - run: git diff --check
