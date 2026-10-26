@@ -35,6 +35,8 @@ export interface BackendObservation {
     path: string
     width: number
     height: number
+    /** Authoritative pixels per window point reported by the provider, when it knows. */
+    pixelScale?: number
   }
   permissions: {
     accessibility: ComputerPermissionState

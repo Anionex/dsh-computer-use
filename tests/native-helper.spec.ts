@@ -269,6 +269,39 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(helperSource).toContain('let coordinateSpace = action["coordinateSpace"] as? String ?? "window"')
   })
 
+  it('gates the web pointer workaround on app capability and caller consent', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).toContain('let webContent: Bool')
+    expect(helperSource).toContain('let childWebContent = webContent || role == "AXWebArea"')
+    expect(helperSource).toContain('webContent: webContent')
+    expect(helperSource).toContain('AXUIElementIsAttributeSettable(')
+    expect(helperSource).toContain('let route = elementClickRoute(')
+    expect(helperSource).toContain('allowCoordinateFallback: elementFallback')
+    expect(helperSource).toContain('pointerInputAllowed: pointerInputPolicy == "targeted"')
+  })
+
+  it('never retries a successful AX press based on an unchanged observation', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).not.toContain('pressLeftNoObservableEffect')
+    expect(helperSource).not.toContain('silentPressFallback')
+    expect(helperSource).toContain('if route == .accessibility')
+  })
+
+  it('enables Chromium web accessibility before observing an Electron app', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).toContain('AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)')
+    expect(helperSource).toMatch(/func observeSnapshot\(app: NSRunningApplication[\s\S]*?ensureWebAccessibility\(appElement, window: rootWindow\)/u)
+    expect(helperSource).toContain('func ensureWebAccessibility(_ appElement: AXUIElement, window: AXUIElement?)')
+    expect(helperSource).toContain('if let window, containsWebArea(window) { return true }')
+  })
+
+  it('captures windows without shadow framing so image pixels map to the window frame', async () => {
+    const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    expect(helperSource).toContain('configuration.ignoreShadowsSingleWindow = true')
+    expect(helperSource).toContain('"pixelScale": Double(pixelScale)')
+    expect(helperSource).toMatch(/image\.width == configuration\.width[\s\S]*?coordinates cannot be mapped to the window frame/u)
+  })
+
   it('routes AXRaise through explicit foreground authorization and refreshed target validation', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
     expect(helperSource).toContain('action == (kAXRaiseAction as String)')

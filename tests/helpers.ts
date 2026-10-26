@@ -102,13 +102,24 @@ export class FakeBackend implements ComputerUseBackend {
     }])
   }
 
+  /** Pixel size of the fake screenshot; override to model a 2x Retina capture. */
+  screenshotSize = { width: 760, height: 592 }
+
+  /** Provider-reported pixels per point; undefined models a provider that omits it. */
+  screenshotPixelScale: number | undefined
+
   async observe(_app: ComputerAppIdentity, options: BackendObserveOptions): Promise<BackendObservation> {
     this.observations.push(structuredClone(options))
     let screenshot: BackendObservation['screenshot']
     if (options.screenshot !== 'none') {
       if (options.screenshotPath === undefined) throw new Error('fake screenshot needs screenshotPath')
       await writeFile(options.screenshotPath, Buffer.from('fake-png'))
-      screenshot = { path: options.screenshotPath, width: 760, height: 592 }
+      screenshot = {
+        path: options.screenshotPath,
+        width: this.screenshotSize.width,
+        height: this.screenshotSize.height,
+        ...(this.screenshotPixelScale === undefined ? {} : { pixelScale: this.screenshotPixelScale }),
+      }
     }
     return structuredClone({
       ...this.observation,

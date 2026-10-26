@@ -19,6 +19,8 @@ private struct ElementRecord {
     let element: AXUIElement
     let json: [String: Any]
     let hashLine: String
+    /// AXWebArea ancestry alone does not identify Chromium or Electron.
+    let webContent: Bool
 }
 
 private struct ObservationSnapshot {
@@ -369,6 +371,49 @@ private func sha256(_ value: String) -> String {
     SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
 }
 
+/// Whether the app already exposes a web area (Chromium/Electron with web
+/// accessibility on, or a WebKit app).
+private func containsWebArea(_ element: AXUIElement, maxNodes: Int = 4_000) -> Bool {
+    var queue: [AXUIElement] = [element]
+    var cursor = 0
+    var seen = Set<CFHashCode>()
+    while cursor < queue.count && cursor < maxNodes {
+        let current = queue[cursor]
+        cursor += 1
+        if !seen.insert(CFHash(current)).inserted { continue }
+        if axString(current, kAXRoleAttribute as CFString) == "AXWebArea" { return true }
+        if let children = axCopy(current, kAXChildrenAttribute as CFString) as? [AXUIElement] {
+            queue.append(contentsOf: children)
+        }
+    }
+    return false
+}
+
+/// Ask Chromium/Electron to expose its document to Accessibility.
+///
+/// A windowed Electron app otherwise publishes only its native shell (window,
+/// traffic lights, a few groups) and forces agents to act from screenshots.
+/// `AXManualAccessibility` is the supported switch Chromium documents for
+/// accessibility tools; native apps reject it and keep their existing tree.
+/// The document normally stays exposed for the lifetime of the app process, so
+/// the bounded wait below is paid once per launch; it repeats only if the app
+/// hides the document again. The check starts at the window because Chromium
+/// does not list its windows as application children while the document is
+/// hidden.
+private func ensureWebAccessibility(_ appElement: AXUIElement, window: AXUIElement?) {
+    func exposed() -> Bool {
+        if let window, containsWebArea(window) { return true }
+        return containsWebArea(appElement)
+    }
+    if exposed() { return }
+    guard AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success else { return }
+    let deadline = Date().addingTimeInterval(2.5)
+    while Date() < deadline {
+        usleep(100_000)
+        if exposed() { return }
+    }
+}
+
 private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) throws -> ObservationSnapshot {
     guard AXIsProcessTrusted() else {
         throw fail("COMPUTER_PERMISSION_REQUIRED", "macOS Accessibility permission is required for the DSH helper")
@@ -380,7 +425,9 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
         throw fail("COMPUTER_PROVIDER_FAILURE", "observation limits must be positive")
     }
     let appElement = AXUIElementCreateApplication(app.processIdentifier)
-    let rootWindow = chosenWindow(appElement)
+    var rootWindow = chosenWindow(appElement)
+    ensureWebAccessibility(appElement, window: rootWindow)
+    if rootWindow == nil { rootWindow = chosenWindow(appElement) }
     let root = rootWindow ?? appElement
     let frame = rootWindow.flatMap(axFrame)
     let title = rootWindow.flatMap { axString($0, kAXTitleAttribute as CFString) }
@@ -394,7 +441,7 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
         windowJSON = json
     }
 
-    var queue: [(AXUIElement, [Int], Int)] = [(root, [], 0)]
+    var queue: [(AXUIElement, [Int], Int, Bool)] = [(root, [], 0, false)]
     var cursor = 0
     var seen = Set<CFHashCode>()
     var records: [ElementRecord] = []
@@ -404,7 +451,7 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
 
     while cursor < queue.count {
         if records.count >= maxNodes { truncated = true; break }
-        let (element, locator, depth) = queue[cursor]
+        let (element, locator, depth, webContent) = queue[cursor]
         cursor += 1
         let identity = CFHash(element)
         if seen.contains(identity) { continue }
@@ -466,13 +513,14 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
         } else {
             truncated = true
         }
-        records.append(ElementRecord(index: index, locator: locator, element: element, json: json, hashLine: hashLine))
+        records.append(ElementRecord(index: index, locator: locator, element: element, json: json, hashLine: hashLine, webContent: webContent))
         if depth >= maxDepth {
             if !axChildren(element).isEmpty { truncated = true }
             continue
         }
+        let childWebContent = webContent || role == "AXWebArea"
         for (childIndex, child) in axChildren(element).enumerated() {
-            queue.append((child, locator + [childIndex], depth + 1))
+            queue.append((child, locator + [childIndex], depth + 1, childWebContent))
         }
     }
     let appData = try appJSON(app)
@@ -529,12 +577,24 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
     configuration.width = max(1, Int((selected.frame.width * pixelScale).rounded()))
     configuration.height = max(1, Int((selected.frame.height * pixelScale).rounded()))
     configuration.showsCursor = false
+    // ScreenCaptureKit frames a single window with its drop shadow by default,
+    // which draws the window content inset and scaled inside an image that still
+    // has the window frame's pixel size. Agent coordinates read off the image
+    // would then be off by the shadow margin, so capture the content only and
+    // keep the image a direct `pixelScale` rendering of the window frame.
+    configuration.ignoreShadowsSingleWindow = true
     let image: CGImage
     do {
         image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     } catch {
         if required { throw fail("COMPUTER_PROVIDER_FAILURE", "ScreenCaptureKit could not capture the selected window") }
         return nil
+    }
+    guard image.width == configuration.width, image.height == configuration.height else {
+        throw fail(
+            "COMPUTER_PROVIDER_FAILURE",
+            "captured window is \(image.width)x\(image.height), expected \(configuration.width)x\(configuration.height); coordinates cannot be mapped to the window frame",
+        )
     }
     let representation = NSBitmapImageRep(cgImage: image)
     guard let data = representation.representation(using: .png, properties: [:]) else {
@@ -545,7 +605,7 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
     } catch {
         throw fail("COMPUTER_PROVIDER_FAILURE", "captured PNG could not be written")
     }
-    return ["path": path, "width": image.width, "height": image.height]
+    return ["path": path, "width": image.width, "height": image.height, "pixelScale": Double(pixelScale)]
 }
 
 private func observationJSON(_ snapshot: ObservationSnapshot, screenshot: [String: Any]?) -> [String: Any] {
@@ -909,11 +969,29 @@ private func performAction(
 
     switch kind {
     case "click":
-        if let record, pressWithDescendantFallback(record.element) {
-            return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
-        }
-        let elementFallback = record != nil && bool(action["allowCoordinateFallback"])
         let coordinateFallback = action["x"] != nil && action["y"] != nil
+        let elementFallback = record != nil && bool(action["allowCoordinateFallback"])
+        if let record {
+            // Electron documents this writable app attribute. WebKit also
+            // exposes AXWebArea, so ancestry alone must never select this route.
+            var manualAccessibilitySettable = DarwinBoolean(false)
+            let supportsManualAccessibility = AXUIElementIsAttributeSettable(
+                AXUIElementCreateApplication(app.processIdentifier),
+                "AXManualAccessibility" as CFString,
+                &manualAccessibilitySettable
+            ) == .success && manualAccessibilitySettable.boolValue
+            let route = elementClickRoute(
+                webContent: record.webContent,
+                supportsManualAccessibility: supportsManualAccessibility,
+                allowCoordinateFallback: elementFallback,
+                hasCoordinates: coordinateFallback,
+                pointerInputAllowed: pointerInputPolicy == "targeted",
+                press: { pressWithDescendantFallback(record.element) }
+            )
+            if route == .accessibility {
+                return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
+            }
+        }
         guard elementFallback || coordinateFallback else {
             throw fail("COMPUTER_ELEMENT_UNAVAILABLE", "element does not support an actionable AXPress and coordinate fallback was not requested")
         }

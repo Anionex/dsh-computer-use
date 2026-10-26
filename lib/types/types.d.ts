@@ -78,6 +78,8 @@ export interface ComputerArtifact {
     bytes: number;
     width: number;
     height: number;
+    /** Screenshot pixels per window point; present when a screenshot and a window frame were available. */
+    pixelScale?: number;
 }
 /** Complete model-visible observation. */
 export interface ComputerObservation {
@@ -115,8 +117,15 @@ export interface ComputerObserveRequest {
 export type ComputerKeyModifier = 'command' | 'control' | 'option' | 'shift';
 /** Closed set of supported mouse buttons. */
 export type ComputerMouseButton = 'left' | 'right' | 'middle';
-/** Coordinate space accepted by coordinate-based pointer actions. */
-export type ComputerCoordinateSpace = 'window' | 'screen';
+/**
+ * Coordinate space accepted by coordinate-based pointer actions.
+ *
+ * `window` and `screen` are measured in points, the unit of Accessibility
+ * frames. `screenshot` is measured in the observation screenshot's pixels, so
+ * coordinates read off a Retina screenshot can be passed directly instead of
+ * dividing by the screenshot's pixel scale by hand.
+ */
+export type ComputerCoordinateSpace = 'window' | 'screen' | 'screenshot';
 /** Shared fields carried by every action against an existing observation. */
 export interface ComputerActionBase {
     observationId: ComputerObservationId;
@@ -139,7 +148,7 @@ export interface ComputerClickAction extends ComputerActionBase, ComputerElement
     kind: 'click';
     x?: number;
     y?: number;
-    /** `window` (default) resolves `x`/`y` inside the observed window frame; `screen` treats them as Quartz screen-global points. */
+    /** `window` (default) resolves `x`/`y` in points inside the observed window frame; `screen` treats them as Quartz screen-global points; `screenshot` treats them as pixels in the observation screenshot. */
     coordinateSpace?: ComputerCoordinateSpace;
     button?: ComputerMouseButton;
     clickCount?: number;
@@ -170,7 +179,7 @@ export interface ComputerScrollAction extends ComputerActionBase, ComputerElemen
     direction: 'up' | 'down' | 'left' | 'right';
     pages?: number;
 }
-/** Drag between two points in the observed window or screen coordinate space. */
+/** Drag between two points in the observed-window, screen, or screenshot coordinate space. */
 export interface ComputerDragAction extends ComputerActionBase {
     kind: 'drag';
     fromX: number;

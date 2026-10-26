@@ -204,6 +204,10 @@ Bundle 初始只贡献 `computer_use_activate`。加载 Skill 后，才为当前
 
 Observation 包含 opaque id 与过期时间、准确 app 身份、frontmost/window metadata、有界 tree text、带 opaque target handle 的当前元素、可选截图 metadata 和权限状态。Target handle 不暴露 provider object reference 或 native identifier。Secure text value 以 `[secure]` 输出，不会进入 target descriptor、tree text、Tool result、截图 metadata 或 native error。截图仍可能包含应用中其他可见数据，应按敏感数据处理。
 
+对于 Electron 应用，helper 通过 AXManualAccessibility 请求暴露文档，并在有限时间内等待 web 控件出现。仅当应用支持该可写属性、目标位于 web 区域且调用明确传入 allowCoordinateFallback=true 时，才在 AX press 之前选择一次指向元素中心的目标进程鼠标点击。其他应用（包括 WebKit web 区域）、原生控件和未显式允许降级的调用仍优先走语义 AX 路径。AX press 成功后不会因为树未变化而自动重试：动作效果可能延迟或发生在界面之外。宿主的指针和激活策略仍然生效。
+
+坐标动作支持三种空间：`window` 与 `screen` 以 point 为单位（与 Accessibility frame 一致），`screenshot` 以 observation 截图的像素为单位。截图按窗口的 backing scale 捕获且不含窗口阴影，因此图像是窗口 frame 的直接渲染，`screenshot.pixelScale` 表示每个 point 对应的像素数（Retina 上通常为 `2`）。从截图图像上读出的坐标必须用 `coordinateSpace: 'screenshot'` 传入；若当作 `window` point 传入，点击会整体偏移一个像素倍率——在 2x 屏上，想点窗口中间的点击会落到两倍偏移处，可能完全错过控件。Service 会在发送任何输入之前把截图像素换算为窗口 point，并对「超出窗口 frame 但落在截图范围内」的 window 坐标报错并说明倍率。
+
 技术访问模型包含两类准确 bundle-id lease：
 
 - `read`：读取 Accessibility 状态和请求的截图；

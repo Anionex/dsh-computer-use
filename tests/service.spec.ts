@@ -1237,4 +1237,225 @@ describe('Computer Use Service', () => {
       await workspace.cleanup()
     }
   })
+
+  it('leaves screen coordinates untouched and prefers the provider pixel scale', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-screenshot-screen-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.screenshotSize = { width: 1520, height: 1184 }
+      backend.screenshotPixelScale = 2
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+      expect(observation.screenshot?.pixelScale).toBe(2)
+
+      await service.act({
+        kind: 'click',
+        observationId: observation.observationId,
+        x: 1500,
+        y: 1100,
+        coordinateSpace: 'screen',
+      }, context)
+      expect(backend.actions.at(-1)?.action).toMatchObject({ kind: 'click', coordinateSpace: 'screen', x: 1500, y: 1100 })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('fails closed when screenshot dimensions do not match the reported scale', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-screenshot-scale-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.screenshotSize = { width: 1600, height: 1184 }
+      backend.screenshotPixelScale = 2
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+      await expect(service.act({
+        kind: 'click',
+        observationId: observation.observationId,
+        x: 520,
+        y: 668,
+        coordinateSpace: 'screenshot',
+      }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_STALE_OBSERVATION',
+        message: expect.stringContaining('observe again'),
+      })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('confirms then executes a screenshot-space sensitive action with one token', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-screenshot-confirm-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.screenshotSize = { width: 1520, height: 1184 }
+      backend.screenshotPixelScale = 2
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+      const proposed: ComputerActionRequest = {
+        kind: 'click',
+        observationId: observation.observationId,
+        x: 520,
+        y: 668,
+        coordinateSpace: 'screenshot',
+        sensitive: true,
+      }
+      const confirmation = await service.confirm({ action: proposed, reason: 'Activate a fixture control', target: 'fixture' }, context)
+      const result = await service.act({ ...proposed, confirmationToken: confirmation.token }, context)
+      expect(result.action).toBe('click')
+      expect(backend.actions.at(-1)?.action).toMatchObject({ kind: 'click', coordinateSpace: 'window', x: 260, y: 334 })
+      await expect(service.act({ ...proposed, confirmationToken: confirmation.token }, context))
+        .rejects.toMatchObject({ code: 'COMPUTER_CONFIRMATION_REQUIRED' })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('reports a missing window frame for screenshot coordinates instead of asking for a screenshot', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-screenshot-nowindow-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.observation = backendObservation({ window: undefined })
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+      await expect(service.act({
+        kind: 'click',
+        observationId: observation.observationId,
+        x: 20,
+        y: 20,
+        coordinateSpace: 'screenshot',
+      }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_TARGET_UNAVAILABLE',
+        message: expect.stringContaining('no window frame'),
+      })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+})
+
+describe('screenshot coordinate space', () => {
+  it('maps 2x screenshot pixels onto window points for click, scroll, and drag', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-screenshot-space-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.screenshotSize = { width: 1520, height: 1184 }
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+      expect(before.screenshot?.pixelScale).toBe(2)
+      expect(before.screenshot).toMatchObject({ width: 1520, height: 1184 })
+
+      const clicked = await service.act({
+        kind: 'click',
+        observationId: before.observationId,
+        x: 520,
+        y: 668,
+        coordinateSpace: 'screenshot',
+      }, context)
+      expect(backend.actions.at(-1)?.action).toMatchObject({
+        kind: 'click',
+        coordinateSpace: 'window',
+        x: 260,
+        y: 334,
+      })
+      // The Agent cursor travels to the same window point the click uses.
+      expect(backend.cursorActions.at(-2)?.action).toMatchObject({ to: { x: 360, y: 534 } })
+
+      await service.act({
+        kind: 'scroll',
+        observationId: clicked.observation.observationId,
+        x: 520,
+        y: 668,
+        direction: 'down',
+        coordinateSpace: 'screenshot',
+      }, context)
+      expect(backend.actions.at(-1)?.action).toMatchObject({
+        kind: 'scroll',
+        coordinateSpace: 'window',
+        x: 260,
+        y: 334,
+        direction: 'down',
+      })
+
+      const dragObservation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+      await service.act({
+        kind: 'drag',
+        observationId: dragObservation.observationId,
+        fromX: 40,
+        fromY: 60,
+        toX: 520,
+        toY: 668,
+        coordinateSpace: 'screenshot',
+      }, context)
+      expect(backend.actions.at(-1)?.action).toMatchObject({
+        kind: 'drag',
+        coordinateSpace: 'window',
+        fromX: 20,
+        fromY: 30,
+        toX: 260,
+        toY: 334,
+      })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('rejects screenshot coordinates without a captured screenshot', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-screenshot-missing-')
+    try {
+      const { service } = serviceHarness()
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      expect(observation.screenshot).toBeUndefined()
+      await expect(service.act({
+        kind: 'click',
+        observationId: observation.observationId,
+        x: 20,
+        y: 20,
+        coordinateSpace: 'screenshot',
+      }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_TARGET_UNAVAILABLE',
+        message: expect.stringContaining("coordinateSpace 'screenshot'"),
+      })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('explains window coordinates that only fit the screenshot pixel space', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-screenshot-hint-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.screenshotSize = { width: 1520, height: 1184 }
+      await service.initializeForTest()
+      const agent = fakeAgent(workspace.path)
+      const context = callContext(agent, workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+      await expect(service.act({
+        kind: 'click',
+        observationId: observation.observationId,
+        x: 1200,
+        y: 900,
+        coordinateSpace: 'window',
+      }, context)).rejects.toMatchObject({
+        code: 'COMPUTER_TARGET_UNAVAILABLE',
+        message: expect.stringContaining('pixelScale 2'),
+      })
+    } finally {
+      await workspace.cleanup()
+    }
+  })
 })

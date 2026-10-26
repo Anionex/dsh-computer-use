@@ -69,13 +69,13 @@ resolution?: {
 | 滚动 | 不激活 | 目标 pid + window | `pointerInputPolicy: targeted` 时允许 |
 | 拖拽 | 不激活 | 目标 pid + window | `pointerInputPolicy: targeted` 时允许 |
 
-`pointerInputPolicy: deny` 会禁用坐标点击/fallback、滚动和拖拽，但保留语义化 Accessibility 与进程定向键盘路径。`coordinateSpace: window`（默认）在已观察窗口 frame 内解释坐标；`coordinateSpace: screen` 接受 Quartz 屏幕全局坐标。
+`pointerInputPolicy: deny` 会禁用坐标点击/fallback、滚动和拖拽，但保留语义化 Accessibility 与进程定向键盘路径。`coordinateSpace: window`（默认）以 point 在已观察窗口 frame 内解释坐标；`coordinateSpace: screen` 接受 Quartz 屏幕全局坐标；`coordinateSpace: screenshot` 接受 observation 截图中的像素，并在发送任何输入前按 `screenshot.pixelScale` 换算。
 
 ## 关键决策
 
 ### 宿主策略不是 Tool 参数
 
-`focusPolicy`、`keyboardPolicy` 与 `pointerInputPolicy` 归部署方所有。`allowCoordinateFallback` 只表示 `computer_click` 在 `AXPress` 不可用后可以尝试宿主已授权的指针路由，不能自行开启指针投递或前台激活。`computer_perform_action` 也会把 `AXRaise` 视为影响前台的动作，并在 `preserve` 下拒绝。
+`focusPolicy`、`keyboardPolicy` 与 `pointerInputPolicy` 归部署方所有。`allowCoordinateFallback` 只表示 `computer_click` 在 `AXPress` 不可用后可以尝试宿主已授权的指针路由，不能自行开启指针投递或前台激活。`computer_perform_action` 也会把 `AXRaise` 视为影响前台的动作，并在 `preserve` 下拒绝。 对支持可写 AXManualAccessibility 属性的 Electron web 内容，显式 allowCoordinateFallback 会在 AXPress 前选择指针路径；AXPress 成功后不会根据界面未变化而重放输入。
 
 ### Accessibility 始终是主路径
 
