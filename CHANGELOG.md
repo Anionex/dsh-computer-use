@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.5 — 2026-10-26
 
 - Keep AX success terminal; require explicit coordinate fallback and the Electron AX capability before selecting a web pointer click. WebKit and native controls retain semantic input.
 - AX 成功后不自动补点；web 鼠标替代路径要求显式坐标降级和 Electron AX 能力，保留 WebKit 与原生控件的语义输入。
@@ -35,11 +35,6 @@
 - 已通过六项 macOS 原生测试、Web/Headless 干净压缩包安装及真实工具调用、Web 设置，以及官方 DeepSeek 模型驱动的目标进程点击；模型验收同时校验持久 Session v4 工具结果与截图产物。
 - Update release fixtures for cursor-motion configuration, the DeepSeek Messages endpoint, explicit target CLI selection, and both legacy/wrapped and v4/direct tool-result logs.
 - 更新验收夹具以覆盖光标速度配置、DeepSeek Messages 地址、明确目标 CLI，以及新旧工具结果日志格式。
-
-## [Unreleased]
-
-- Keep AX success terminal; require explicit coordinate fallback and the Electron AX capability before selecting a web pointer click. WebKit and native controls retain semantic input.
-- AX 成功后不自动补点；web 鼠标替代路径要求显式坐标降级和 Electron AX 能力，保留 WebKit 与原生控件的语义输入。
 
 ## [0.3.2] - 2026-09-10
 
