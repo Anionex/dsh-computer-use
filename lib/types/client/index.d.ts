@@ -7,6 +7,7 @@ declare const en: {
     readonly title: "macOS Computer Use";
     readonly intro: "Inspect the native helper, macOS privacy permissions, foreground/targeted-input policy, observation limits, and exact per-app read/control grants.";
     readonly pluginKind: "DSH native plugin";
+    readonly githubStar: "Like this plugin? Star it on GitHub";
     readonly privacy: "macOS privacy";
     readonly access: "Application access";
     readonly accessHint: "Choose whether Computer Use may work with every app. Exact per-app rules remain available under Advanced settings.";

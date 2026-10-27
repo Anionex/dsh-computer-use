@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.6 — 2026-10-27
+
+- Keep advanced-settings dropdowns within their grid columns, including options with long labels.
+- 修复高级设置下拉框被长选项撑宽、溢出面板的问题。
+- Add a localized GitHub Star link to the settings footer.
+- 在设置页底部增加中英文 GitHub Star 跳转链接。
+
 ## 0.3.5 — 2026-10-26
 
 - Keep AX success terminal; require explicit coordinate fallback and the Electron AX capability before selecting a web pointer click. WebKit and native controls retain semantic input.
