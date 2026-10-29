@@ -136,6 +136,16 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
             NSApplication.shared.setActivationPolicy(.regular)
         }
         buildWindow()
+        let mainMenu = NSMenu()
+        let menuRoot = NSMenuItem(title: "Fixture", action: nil, keyEquivalent: "")
+        let commands = NSMenu(title: "Fixture")
+        let apply = NSMenuItem(title: "Apply Values", action: #selector(applyValues), keyEquivalent: "u")
+        apply.keyEquivalentModifierMask = [.command, .shift]
+        apply.target = self
+        commands.addItem(apply)
+        menuRoot.submenu = commands
+        mainMenu.addItem(menuRoot)
+        NSApplication.shared.mainMenu = mainMenu
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 36 else { return event }
             self?.applyValues()
@@ -143,7 +153,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         }
         if launchInBackground {
             NSApplication.shared.unhideWithoutActivation()
-            window.orderFrontRegardless()
+            window.orderBack(nil)
             window.makeKey()
             window.makeFirstResponder(textField)
         } else {

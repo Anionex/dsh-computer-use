@@ -193,6 +193,8 @@ export interface ComputerSetValueAction extends ComputerActionBase, ComputerElem
 export interface ComputerTypeTextAction extends ComputerActionBase {
   kind: 'type-text'
   text: string
+  /** Select keyboard upfront for editors with unreliable AXSelectedText support; host focus policy still applies. */
+  method?: 'auto' | 'keyboard'
 }
 
 /** Press one validated key chord. */

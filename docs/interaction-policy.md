@@ -22,6 +22,15 @@ interaction:
 
 This is an input-routing property, not a consequence of Accessibility permission alone. Accessibility grants semantic UI access; foreground preservation comes from choosing semantic Accessibility operations first and using process/window-targeted fallback instead of the system cursor.
 
+### Background text input
+
+Background Cmd+A uses a verified Accessibility text selection when the focused field supports it. Other Command shortcuts use a unique enabled matching menu action when available; otherwise they remain process-directed key events. Application support varies, so verify the committed value or visible effect.
+
+Set both `focusPolicy: preserve` and `keyboardPolicy: preserve` when the user needs to keep working in another application. For Keynote and rich-text editors that acknowledge AXSelectedText without applying the edit, select `computer_type_text` with `method: keyboard` upfront. This routes Unicode key events to the observed process; it neither activates the application nor reads or replaces the clipboard. `method: auto` retains Accessibility-first behavior. No successful AX write is automatically repeated through the keyboard.
+
+Keyboard text is delivered as Unicode characters with cleared modifier flags, complete down/up pairs, and bounded delivery delays. Verify the target's actual text and committed numeric value. Background acceptance remains application-dependent; a rejected edit is not permission to activate the application.
+
+
 ## Overall design
 
 The action path has five ordered layers:

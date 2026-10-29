@@ -188,7 +188,7 @@ Bundle 初始只贡献 `computer_use_activate`。加载 Skill 后，才为当前
 | `computer_observe` | 返回新鲜的 full/diff Accessibility observation 与可选截图 Artifact |
 | `computer_click` | 优先使用 `AXPress`；接受准确 index 或 opaque target handle，并可在目标进程坐标 fallback 前执行安全 rebind |
 | `computer_set_value` | 通过准确 index 或 opaque target handle 设置或清空可编辑 Accessibility value，不使用剪贴板 |
-| `computer_type_text` | 支持时通过 Accessibility 插入 Unicode，否则使用进程定向键盘 fallback |
+| `computer_type_text` | 通过 Accessibility 或目标进程键盘事件插入 Unicode；`method: keyboard` 跳过不可靠的 AX 写入，但不改变宿主焦点策略 |
 | `computer_press_key` | 向选定进程发送有限词表中的按键，并支持可选 modifier |
 | `computer_scroll` | 在已解析元素或窗口/屏幕坐标处向选定进程与窗口发送有界方向滚动 |
 | `computer_drag` | 在引用 observation 的窗口/屏幕两点之间拖拽 |

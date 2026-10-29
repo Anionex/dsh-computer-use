@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.7 — 2026-10-29
+
+- Add an explicit `method: "keyboard"` text-input option for editors such as Keynote that acknowledge Accessibility writes without applying them. Deliver Unicode characters to the target process with bounded pacing, without clipboard paste or foreground activation when both host policies are `preserve`.
+- 新增明确的 `method: "keyboard"` 文本输入方式，支持 Keynote 等接受 Accessibility 写入却未实际应用的编辑器。逐字符向目标进程发送 Unicode 并保留事件处理间隔；宿主两项焦点策略均为 `preserve` 时，不粘贴剪贴板、不激活前台。
+- Resolve background Select All through verified Accessibility selection and unambiguous enabled Command shortcuts through application menu actions. Preserve targeted key delivery for unsupported controls and shortcuts.
+- 后台全选优先使用经回读验证的 Accessibility 文本选择，唯一且启用的 Command 快捷键通过应用菜单执行；不支持的控件和快捷键继续使用目标进程按键。
+- Add native acceptance for mixed Unicode replacement, background selection, menu shortcuts, actual field values, and continuous foreground monitoring. Verify real Keynote numeric replacement and subtitle entry through DSH model tools while it remains in the background.
+- 增加混合 Unicode 替换、后台选择、菜单快捷键、真实字段值与连续前台监测的原生验收；通过 DSH 模型工具验证真实 Keynote 在后台完成数值替换与副标题输入。
+
 ## 0.3.6 — 2026-10-27
 
 - Keep advanced-settings dropdowns within their grid columns, including options with long labels.

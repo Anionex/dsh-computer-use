@@ -862,6 +862,45 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
     }
   }, 30000)
 
+  it('types Unicode into a background app without changing foreground focus', async (testContext) => {
+    const health = await invoke<{ accessibility: string }>({ command: 'health' })
+    if (health.accessibility !== 'granted') {
+      if (process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1') {
+        throw new Error(`release lane requires Accessibility; got ${JSON.stringify(health)}`)
+      }
+      testContext.skip(`macOS Accessibility permission unavailable: ${JSON.stringify(health)}`)
+      return
+    }
+
+    const temporary = await temporaryDirectory('dsh-computer-background-keyboard-')
+    await terminateFixtures()
+    const transcriptPath = join(temporary.path, 'transcript.json')
+    let app: NativeObservation['app'] | undefined
+    try {
+      app = await launchFixture(transcriptPath)
+      let current = await stableObserve(app, observation => !observation.frontmost)
+      await expect(act(current, { kind: 'press-key', key: 'a', modifiers: ['command'] }, undefined, PRESERVE_INTERACTION))
+        .resolves.toMatchObject({ channel: 'accessibility', activation: 'not-requested' })
+      current = await stableObserve(app, observation => !observation.frontmost)
+      const result = await monitorInput(beforeSend => act(current, { kind: 'type-text', method: 'keyboard', text: 'Background 深度🌿 42.' }, undefined, PRESERVE_INTERACTION, beforeSend))
+      expect(result.action).toMatchObject({ channel: 'keyboard', activation: 'not-requested', pointerInput: false })
+      expectNoForegroundOrCursorInterference(result.monitor, app.pid, result.sourcePid)
+      expect(result.monitor.observedFrontmostPids).not.toContain(app.pid)
+      current = await stableObserve(app, observation => !observation.frontmost && findElement(observation, element => element.label === 'Editable text').value === 'Background 深度🌿 42.', 'background Unicode keyboard input')
+      const shortcut = await monitorInput(beforeSend => act(current, { kind: 'press-key', key: 'u', modifiers: ['command', 'shift'] }, undefined, PRESERVE_INTERACTION, beforeSend))
+      expect(shortcut.action).toMatchObject({ channel: 'accessibility', activation: 'not-requested' })
+      expect(shortcut.monitor.observedFrontmostPids).not.toContain(app.pid)
+      await waitForText(app, 'Status: applied Background 深度🌿 42.')
+      expect((await fixtureTranscript(transcriptPath)).activationCount).toBe(0)
+    } finally {
+      if (app !== undefined) {
+        try { process.kill(app.pid, 'SIGKILL') } catch {}
+      }
+      await terminateFixtures()
+      await temporary.cleanup()
+    }
+  }, 30000)
+
   it('activates the target application for reliable keyboard input when keyboardPolicy is activate', async (testContext) => {
     const health = await invoke<{ accessibility: string }>({ command: 'health' })
     if (health.accessibility !== 'granted') {
@@ -878,7 +917,7 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
     let app: NativeObservation['app'] | undefined
     try {
       app = await launchFixture(transcriptPath)
-      const current = await stableObserve(app, observation => !observation.frontmost)
+      let current = await stableObserve(app, observation => !observation.frontmost)
       const result = await act(current, { kind: 'press-key', key: 'return', modifiers: [] }, undefined, ACTIVATE_KEYBOARD_INTERACTION)
       expect(result).toEqual({
         channel: 'keyboard',
@@ -886,7 +925,18 @@ describe.skipIf(process.platform !== 'darwin')('real macOS Computer Use fixture'
         pointerInput: false,
         pointerRouting: 'none',
       })
-      await waitForText(app, 'Status: applied')
+      current = await waitForText(app, 'Status: applied')
+      await act(current, { kind: 'press-key', key: 'a', modifiers: ['command'] }, undefined, ACTIVATE_KEYBOARD_INTERACTION)
+      current = await stableObserve(app)
+      await expect(act(current, { kind: 'type-text', method: 'keyboard', text: 'Room to breathe. 深度测试🌿 0123456789' }, undefined, ACTIVATE_KEYBOARD_INTERACTION))
+        .resolves.toMatchObject({ channel: 'keyboard', activation: 'already-frontmost' })
+      current = await stableObserve(
+        app,
+        observation => findElement(observation, element => element.label === 'Editable text').value === 'Room to breathe. 深度测试🌿 0123456789',
+        'keyboard text replacement after command+a',
+      )
+      await act(current, { kind: 'press-key', key: 'return', modifiers: [] }, undefined, ACTIVATE_KEYBOARD_INTERACTION)
+      await waitForText(app, 'Status: applied Room to breathe. 深度测试🌿 0123456789')
       const transcript = await fixtureTranscript(transcriptPath)
       expect(transcript.activationCount).toBeGreaterThan(0)
     } finally {

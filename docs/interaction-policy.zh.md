@@ -22,6 +22,15 @@ interaction:
 
 这是一项输入路由属性，并不是只要拿到 Accessibility 权限就自然成立。Accessibility 授予语义化 UI 访问能力；真正避免抢前台的是优先使用语义化 Accessibility 操作，并用进程/窗口定向 fallback 代替系统光标。
 
+### 后台文字输入
+
+后台 Cmd+A 在当前字段支持时，使用经回读验证的 Accessibility 文本选择。其他 Command 快捷键在存在唯一且启用的匹配菜单项时通过菜单动作执行，否则仍向目标进程发送按键。应用支持情况不同，需要验证提交后的数值或可见效果。
+
+用户需要继续使用其他应用时，将 `focusPolicy` 和 `keyboardPolicy` 都设为 `preserve`。对于 Keynote 等会接受 AXSelectedText 调用却不应用编辑的富文本应用，直接选择 `computer_type_text` 的 `method: keyboard`。此方式把 Unicode 按键事件发送到已观察的目标进程，不激活应用，也不读取或替换剪贴板。`method: auto` 保留 Accessibility 优先行为；AX 写入返回成功后不会自动通过键盘重复发送。
+
+键盘文字按 Unicode 字符投递，清除修饰键状态，发送完整的按下/松开事件并保留有限的投递间隔。须核对目标中的实际文字及提交后的数值。后台输入仍取决于应用是否接受；编辑被拒绝不代表允许激活应用。
+
+
 ## 总体设计
 
 动作路径按以下五层执行：
