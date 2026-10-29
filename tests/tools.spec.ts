@@ -162,7 +162,7 @@ describe('model-facing Computer Use tools', () => {
     await tools[1]!.execute({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required', full: true }, exec as never)
     await tools[2]!.execute({ observationId: 'observation-1', elementIndex: 4, targetHandle: 'target-4', allowRebind: true, allowCoordinateFallback: true, coordinateSpace: 'screen' }, exec as never)
     await tools[3]!.execute({ observationId: 'observation-1', targetHandle: 'target-5', allowRebind: true, value: 'secret-value' }, exec as never)
-    await tools[4]!.execute({ observationId: 'observation-1', text: 'typed-secret' }, exec as never)
+    await tools[4]!.execute({ observationId: 'observation-1', text: 'typed-secret', method: 'keyboard' }, exec as never)
     await tools[5]!.execute({ observationId: 'observation-1', key: 'return', modifiers: ['command'] }, exec as never)
     await tools[6]!.execute({ observationId: 'observation-1', direction: 'down', x: 1, y: 2, pages: 2, coordinateSpace: 'screen' }, exec as never)
     await tools[7]!.execute({ observationId: 'observation-1', fromX: 1, fromY: 2, toX: 3, toY: 4, coordinateSpace: 'screen' }, exec as never)
@@ -188,7 +188,7 @@ describe('model-facing Computer Use tools', () => {
     expect(service.act.mock.calls.map(call => call[0])).toEqual([
       expect.objectContaining({ kind: 'click', observationId: 'observation-1', elementIndex: 4, targetHandle: 'target-4', allowRebind: true, allowCoordinateFallback: true, coordinateSpace: 'screen' }),
       expect.objectContaining({ kind: 'set-value', targetHandle: 'target-5', allowRebind: true, value: 'secret-value' }),
-      expect.objectContaining({ kind: 'type-text', text: 'typed-secret' }),
+      expect.objectContaining({ kind: 'type-text', text: 'typed-secret', method: 'keyboard' }),
       expect.objectContaining({ kind: 'press-key', key: 'return', modifiers: ['command'] }),
       expect.objectContaining({ kind: 'scroll', direction: 'down', x: 1, y: 2, pages: 2, coordinateSpace: 'screen' }),
       expect.objectContaining({ kind: 'drag', fromX: 1, toY: 4, coordinateSpace: 'screen' }),

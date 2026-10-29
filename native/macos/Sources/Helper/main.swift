@@ -6,7 +6,7 @@ import Darwin
 import Foundation
 import ScreenCaptureKit
 
-private let helperVersion = "0.3.6"
+private let helperVersion = "0.3.7"
 
 private struct HelperError: Error {
     let code: String
@@ -637,13 +637,6 @@ private func activate(_ app: NSRunningApplication, timeoutMs: Int) throws {
     }
 }
 
-private func targetedEventSource() throws -> CGEventSource {
-    guard let source = CGEventSource(stateID: .privateState) else {
-        throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics input event source is unavailable")
-    }
-    return source
-}
-
 private func cgRect(_ frame: [String: Any]) throws -> CGRect {
     CGRect(
         x: try double(frame["x"], "window.x"),
@@ -776,9 +769,8 @@ private func pressKey(_ key: String, modifiers: [String], app: NSRunningApplicat
     guard let code = keyCodes[normalized] else {
         throw fail("COMPUTER_PROVIDER_FAILURE", "unsupported key; use the documented key vocabulary")
     }
-    let source = try targetedEventSource()
-    guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
-          let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else {
+    guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
+          let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
         throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics could not create keyboard events")
     }
     let eventFlags = try flags(modifiers)
@@ -787,6 +779,8 @@ private func pressKey(_ key: String, modifiers: [String], app: NSRunningApplicat
     down.postToPid(app.processIdentifier)
     usleep(5_000)
     up.postToPid(app.processIdentifier)
+    // Allow process-directed key events to drain before this one-shot helper exits.
+    usleep(100_000)
 }
 
 private func focusedElement(_ app: NSRunningApplication) -> AXUIElement? {
@@ -796,25 +790,85 @@ private func focusedElement(_ app: NSRunningApplication) -> AXUIElement? {
     return (focused as! AXUIElement)
 }
 
+private func selectAllText(app: NSRunningApplication) -> Bool {
+    guard let focused = focusedElement(app),
+          let text = axString(focused, kAXValueAttribute as CFString) else { return false }
+    var settable = DarwinBoolean(false)
+    guard AXUIElementIsAttributeSettable(focused, kAXSelectedTextRangeAttribute as CFString, &settable) == .success,
+          settable.boolValue else { return false }
+    var range = CFRange(location: 0, length: text.utf16.count)
+    guard let value = AXValueCreate(.cfRange, &range) else { return false }
+    guard AXUIElementSetAttributeValue(focused, kAXSelectedTextRangeAttribute as CFString, value) == .success,
+          let actual = axCopy(focused, kAXSelectedTextRangeAttribute as CFString) as AnyObject?,
+          CFGetTypeID(actual) == AXValueGetTypeID() else { return false }
+    var observed = CFRange()
+    return AXValueGetValue(actual as! AXValue, .cfRange, &observed)
+        && observed.location == range.location && observed.length == range.length
+}
+
+private func performMenuShortcut(_ key: String, modifiers: [String], app: NSRunningApplication) -> Bool {
+    guard modifiers.contains("command"), let code = keyCodes[key.lowercased()] else { return false }
+    let appElement = AXUIElementCreateApplication(app.processIdentifier)
+    guard let raw = axCopy(appElement, kAXMenuBarAttribute as CFString) as AnyObject?,
+          CFGetTypeID(raw) == AXUIElementGetTypeID() else { return false }
+    var expected = 0
+    if modifiers.contains("shift") { expected |= 1 }
+    if modifiers.contains("option") { expected |= 2 }
+    if modifiers.contains("control") { expected |= 4 }
+    var queue: [(AXUIElement, Int)] = [(raw as! AXUIElement, 0)]
+    var offset = 0
+    var seen = Set<CFHashCode>()
+    var matches: [AXUIElement] = []
+    var truncated = false
+    while offset < queue.count && offset < 2048 {
+        let (element, depth) = queue[offset]
+        offset += 1
+        guard seen.insert(CFHash(element)).inserted else { continue }
+        if axString(element, kAXRoleAttribute as CFString) == "AXMenuItem",
+           axBool(element, kAXEnabledAttribute as CFString) == true,
+           (axCopy(element, kAXMenuItemCmdModifiersAttribute as CFString) as? NSNumber)?.intValue == expected {
+            let virtualKey = (axCopy(element, kAXMenuItemCmdVirtualKeyAttribute as CFString) as? NSNumber)?.intValue
+            let character = axString(element, kAXMenuItemCmdCharAttribute as CFString)?.lowercased()
+            if virtualKey == Int(code) || character == key.lowercased() {
+                matches.append(element)
+            }
+        }
+        let children = axChildren(element)
+        if depth < 8 { queue += children.map { ($0, depth + 1) } }
+        else if !children.isEmpty { truncated = true }
+    }
+    // Never guess between duplicate shortcuts, or use a partially scanned menu.
+    guard !truncated, offset == queue.count, matches.count == 1 else { return false }
+    return AXUIElementPerformAction(matches[0], kAXPressAction as CFString) == .success
+}
+
 private func setSelectedText(_ text: String, app: NSRunningApplication) -> Bool {
     guard let focused = focusedElement(app) else { return false }
+    var settable = DarwinBoolean(false)
+    guard AXUIElementIsAttributeSettable(focused, kAXSelectedTextAttribute as CFString, &settable) == .success,
+          settable.boolValue else { return false }
     return AXUIElementSetAttributeValue(focused, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success
 }
 
 private func typeTextWithKeyboard(_ text: String, app: NSRunningApplication) throws {
-    let source = try targetedEventSource()
-    guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-          let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
-        throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics could not create Unicode keyboard events")
+    for character in text {
+        let units = Array(String(character).utf16)
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
+              let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {
+            throw fail("COMPUTER_ACTION_BLOCKED", "CoreGraphics could not create Unicode keyboard events")
+        }
+        down.flags = []
+        up.flags = []
+        units.withUnsafeBufferPointer { buffer in
+            down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: buffer.baseAddress!)
+            up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: buffer.baseAddress!)
+        }
+        down.postToPid(app.processIdentifier)
+        usleep(5_000)
+        up.postToPid(app.processIdentifier)
+        usleep(20_000)
     }
-    let units = Array(text.utf16)
-    units.withUnsafeBufferPointer { buffer in
-        down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: buffer.baseAddress!)
-        up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: buffer.baseAddress!)
-    }
-    down.postToPid(app.processIdentifier)
-    usleep(5_000)
-    up.postToPid(app.processIdentifier)
+    usleep(100_000)
 }
 
 private func targetRecord(_ request: [String: Any], snapshot: ObservationSnapshot) throws -> ElementRecord? {
@@ -1043,7 +1097,13 @@ private func performAction(
         return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
     case "type-text":
         let text = try string(action["text"], "action.text")
-        if setSelectedText(text, app: app) {
+        let method = action["method"] as? String ?? "auto"
+        guard ["auto", "keyboard"].contains(method) else {
+            throw fail("COMPUTER_PROVIDER_FAILURE", "unsupported text input method")
+        }
+        // Choose the route before delivery; an AX success must not trigger an
+        // automatic keyboard retry when an asynchronous edit might still arrive.
+        if method == "auto", setSelectedText(text, app: app) {
             return actionResult(channel: "accessibility", activation: "not-requested", pointerInput: false)
         }
         let current = try inputContext(
@@ -1057,7 +1117,7 @@ private func performAction(
             actionKind: kind,
             timeoutMs: actionTimeoutMs,
         )
-        if current.activation == "activated", setSelectedText(text, app: app) {
+        if method == "auto", current.activation == "activated", setSelectedText(text, app: app) {
             return actionResult(channel: "accessibility", activation: current.activation, pointerInput: false)
         }
         try typeTextWithKeyboard(text, app: app)
@@ -1075,7 +1135,17 @@ private func performAction(
             timeoutMs: actionTimeoutMs,
         )
         let modifiers = action["modifiers"] as? [String] ?? []
-        try pressKey(try string(action["key"], "action.key"), modifiers: modifiers, app: app)
+        let key = try string(action["key"], "action.key").lowercased()
+        _ = try flags(modifiers)
+        if !app.isActive {
+            if key == "a", Set(modifiers) == Set(["command"]), selectAllText(app: app) {
+                return actionResult(channel: "accessibility", activation: current.activation, pointerInput: false)
+            }
+            if performMenuShortcut(key, modifiers: modifiers, app: app) {
+                return actionResult(channel: "accessibility", activation: current.activation, pointerInput: false)
+            }
+        }
+        try pressKey(key, modifiers: modifiers, app: app)
         return actionResult(channel: "keyboard", activation: current.activation, pointerInput: false)
     case "scroll":
         try requirePointerInput(pointerInputPolicy)

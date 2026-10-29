@@ -188,7 +188,7 @@ The Bundle initially contributes only `computer_use_activate`. Loading the Skill
 | `computer_observe` | Return a fresh full/diff Accessibility observation and optional screenshot Artifact |
 | `computer_click` | Prefer `AXPress`; accept an exact index or opaque target handle, with optional safe rebinding, before target-process coordinate fallback |
 | `computer_set_value` | Set or clear an editable Accessibility value through an exact index or opaque target handle without using the clipboard |
-| `computer_type_text` | Insert Unicode through Accessibility when supported, with a process-targeted keyboard fallback |
+| `computer_type_text` | Insert Unicode through Accessibility or process-targeted keyboard input; `method: keyboard` skips unreliable AX insertion without changing the host focus policy |
 | `computer_press_key` | Send one key from a finite vocabulary to the selected process, with optional modifiers |
 | `computer_scroll` | Send bounded directional scrolling to the selected process and window at a resolved element or window/screen coordinate |
 | `computer_drag` | Drag between two window/screen points in the referenced observation |

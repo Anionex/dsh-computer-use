@@ -238,6 +238,7 @@ const confirmationActionSchema = {
         kind: { type: 'string', const: 'type-text', required: true },
         observationId: { type: 'string', required: true },
         text: { type: 'string', required: true },
+        method: { type: 'string', enum: ['auto', 'keyboard'] },
       },
     },
     {
@@ -414,14 +415,15 @@ export function createComputerUseTools(service: ComputerUseService): ToolDefinit
 
   const typeText = defineTool({
     name: 'computer_type_text',
-    description: 'Type Unicode into the currently focused control without reading or replacing the clipboard. Focus a control using fresh state first; keyboard fallback may require host-authorized foreground activation. The result does not echo the supplied text.',
+    description: 'Type Unicode into the currently focused control without reading or replacing the clipboard. Focus a control using fresh state first. Set method: keyboard upfront for rich-text editors such as Keynote that acknowledge AXSelectedText without applying it. Keyboard input stays process-targeted and obeys the host focus policy; preserve does not activate the app. The result does not echo the supplied text.',
     parameters: {
       observationId: { type: 'string', required: true },
       text: { type: 'string', required: true },
+      method: { type: 'string', enum: ['auto', 'keyboard'], description: 'auto prefers Accessibility; keyboard skips it and sends Unicode events to the selected process without changing host activation policy.' },
       ...sensitiveParameters,
     },
     output: actionOutput(),
-    execute: (args, exec) => service.act({ kind: 'type-text', ...actionBase(args), text: args.text }, contextOf(exec)),
+    execute: (args, exec) => service.act({ kind: 'type-text', ...actionBase(args), text: args.text, ...args.method === undefined ? {} : { method: args.method } }, contextOf(exec)),
     presentCall: () => ({ card: 'generic', title: 'Type in macOS app', kind: 'execute' }),
   })
 
