@@ -15,6 +15,10 @@ concurrency:
 
 jobs:
   macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh-version: [0.2.1-rc.3, 0.2.1-rc.5]
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -29,12 +33,15 @@ jobs:
       - run: pnpm run build
       - run: pnpm run check:native
       - run: git diff --exit-code -- lib
-      - name: Install the exact rc.3 host
+      - name: Install the exact ${{ matrix.dsh-version }} host
         run: |
-          npm install --global --prefix "$RUNNER_TEMP/dsh-cli" @deepseek-ai/dsh@0.2.1-rc.3 --registry=https://registry.npmjs.org
+          npm install --global --prefix "$RUNNER_TEMP/dsh-cli" @deepseek-ai/dsh@${{ matrix.dsh-version }} --registry=https://registry.npmjs.org
           echo "$RUNNER_TEMP/dsh-cli/bin" >> "$GITHUB_PATH"
           echo "DSH_TEST_CLI=$RUNNER_TEMP/dsh-cli/bin/dsh" >> "$GITHUB_ENV"
           echo "DSH_TELEMETRY_DISABLED=1" >> "$GITHUB_ENV"
+          test "$("$RUNNER_TEMP/dsh-cli/bin/dsh" --version)" = "${{ matrix.dsh-version }}"
+      - name: Verify compatibility with the installed official evaluator
+        run: node scripts/check-dsh-compatibility.mjs "$DSH_TEST_CLI"
       - name: Run unit tests without desktop access
         run: pnpm exec vitest run tests --exclude '**/*.e2e.spec.ts'
       - name: Run native and clean Profile acceptance on the CI desktop
