@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { satisfies } from 'semver'
 
 const ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
 const PACKAGE = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8')) as {
@@ -118,17 +119,28 @@ describe('published package layout', () => {
     }
   })
 
-  it('declares DSH 0.2.1-rc.2 and 0.2.1-rc.3 across every DSH peer and the compatibility matrix', () => {
-    for (const [name, range] of Object.entries(PACKAGE.peerDependencies ?? {})) {
-      if (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) {
-        expect(range, name).toContain('0.2.1-rc.2')
-        expect(range, name).toContain('0.2.1-rc.3')
+  it('accepts exact verified DSH releases without admitting untested prereleases', () => {
+    const peers = Object.entries(PACKAGE.peerDependencies ?? {}).filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
+    expect(peers).toHaveLength(18)
+    const ranges = [...peers, ['dsh.compatibility.dsh', PACKAGE.dsh?.compatibility?.dsh ?? '']]
+    for (const [name, range] of ranges) {
+      for (const version of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.5']) {
+        expect(satisfies(version, range, { includePrerelease: true }), `${name}: ${version}`).toBe(true)
       }
+      for (const version of ['0.2.1-rc.4', '0.2.1-rc.6', '0.2.1', '0.2.2-rc.1', '0.3.0']) {
+        expect(satisfies(version, range, { includePrerelease: true }), `${name}: ${version}`).toBe(false)
+      }
+      // Reproduce the pre-fix version gate and ensure the only new range is exact rc.5.
+      const previousRange = range.replace(' || 0.2.1-rc.5', '')
+      expect(satisfies('0.2.1-rc.5', previousRange, { includePrerelease: true }), name).toBe(false)
+      expect(range, name).toBe(`${previousRange} || 0.2.1-rc.5`)
     }
-    expect(PACKAGE.dsh?.compatibility?.dsh).toContain('0.2.1-rc.2')
-    expect(PACKAGE.dsh?.compatibility?.dsh).toContain('0.2.1-rc.3')
-    expect(PACKAGE.dsh?.compatibility?.dshReleases?.['0.2.1-rc.2']).toBe('compatible')
-    expect(PACKAGE.dsh?.compatibility?.dshReleases?.['0.2.1-rc.3']).toBe('compatible')
+    for (const version of ['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.5']) {
+      expect(PACKAGE.dsh?.compatibility?.dshReleases?.[version]).toBe('compatible')
+    }
+    for (const version of ['0.2.1-rc.4', '0.2.1-rc.6']) {
+      expect(PACKAGE.dsh?.compatibility?.dshReleases?.[version]).toBeUndefined()
+    }
   })
 
   it('keeps the local npm credential file out of Git', async () => {

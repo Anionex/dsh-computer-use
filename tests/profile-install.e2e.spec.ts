@@ -337,6 +337,9 @@ async function startWeb(home: string) {
 }
 
 const enabled = process.platform === 'darwin' && commandAvailable('dsh') && commandAvailable('pnpm')
+if (process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1' && !enabled) {
+  throw new Error('Mandatory Profile acceptance requires macOS and working dsh/pnpm executables; refusing to skip')
+}
 
 describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
   const temporary: string[] = []
