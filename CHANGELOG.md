@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.8 — 2026-11-07
+
+- Support exact DSH `0.2.1-rc.5`, preserving earlier supported versions and requiring native and clean Profile acceptance on both rc.3 and rc.5.
+- 支持确切的 DSH `0.2.1-rc.5`，保留此前支持版本，并在 rc.3、rc.5 上执行必需的原生输入与干净 Profile 验收。
+- Synchronize the bundled universal macOS helper and package version to 0.3.8.
+- 同步通用 macOS helper 与软件包版本为 0.3.8。
+
 ## 0.3.7 — 2026-10-29
 
 - Add an explicit `method: "keyboard"` text-input option for editors such as Keynote that acknowledge Accessibility writes without applying them. Deliver Unicode characters to the target process with bounded pacing, without clipboard paste or foreground activation when both host policies are `preserve`.
