@@ -12,6 +12,12 @@ DSH Computer Use 为 Agent 提供新鲜的 Accessibility observation、准确进
 
 [English](README.md) | 中文
 
+<p align="center">
+  <img src="assets/computer-use-demo.gif" width="960" alt="DSH Computer Use 使用虚拟光标演示点击、文字输入、拖动选中文字和加粗。" />
+</p>
+
+快速演示（2 倍速）：点击、输入、拖选和格式调整，全程可见智能体虚拟光标。
+
 ## 为什么它不同
 
 Accessibility 权限允许进程读取和操作 macOS UI 元素，但这个权限本身并不会自动防止抢焦点或移动光标。是否干扰用户，取决于输入事件走哪条路由。
@@ -48,10 +54,6 @@ observe exact bundle id + pid
 -> activation "not-requested"; pointerRouting "target-process"
 -> status "Status: pointer click"
 ```
-
-<p align="center">
-  <img src="assets/computer-use-fixture.png" width="760" alt="目标进程指针输入前、从未激活的确定性原生 fixture，显示专用 pointer probe 与 ready 状态。" />
-</p>
 
 Fixture 会记录每次 `applicationDidBecomeActive` 回调。独立 native monitor 还会在 click、scroll 与 drag 整个动作期间每毫秒采样系统光标和前台 pid。默认发布路径不得增加 `activationCount`，并要求光标坐标不变、前台 pid 不变、click/scroll 精确计数，并且 drag 只有一组完整 down/up gesture。
 
