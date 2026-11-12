@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dsh-version: [0.2.1-rc.3, 0.2.1-rc.5]
+        dsh-version: [0.2.1-rc.3, 0.2.1-rc.5, 0.2.2-rc.1]
     runs-on: macos-15
     timeout-minutes: 35
     steps:
