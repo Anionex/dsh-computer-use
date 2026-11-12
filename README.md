@@ -12,6 +12,12 @@ DSH Computer Use gives an Agent fresh Accessibility observations, exact process/
 
 English | [中文](README.zh.md)
 
+<p align="center">
+  <img src="assets/computer-use-demo.gif" width="960" alt="DSH Computer Use demonstrates clicking, typing, dragging to select text, and bold formatting with its virtual cursor." />
+</p>
+
+Quick demo (2×): clicks, text entry, drag selection, and formatting with the visible Agent cursor.
+
 ## Why it is different
 
 Accessibility permission lets a process inspect and operate macOS UI elements, but the permission itself does not prevent focus stealing or cursor movement. Those behaviors depend on the input route.
@@ -48,10 +54,6 @@ observe exact bundle id + pid
 -> activation "not-requested"; pointerRouting "target-process"
 -> status "Status: pointer click"
 ```
-
-<p align="center">
-  <img src="assets/computer-use-fixture.png" width="760" alt="The never-active deterministic native fixture before target-process pointer input, showing the dedicated pointer probe and ready status." />
-</p>
 
 The fixture records every `applicationDidBecomeActive` callback. An independent native monitor also samples the system cursor and frontmost pid every millisecond throughout click, scroll, and drag. The default release path must not increase `activationCount`; it also requires unchanged cursor coordinates, an unchanged frontmost pid, exact click/scroll counts, and one complete down/up drag gesture.
 
