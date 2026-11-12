@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.9 — 2026-11-12
+
+- Support exact DSH `0.2.2-rc.1` across all DSH peers and compatibility metadata while preserving previously verified releases.
+- 所有 DSH peer 与兼容性元数据明确支持 `0.2.2-rc.1`，保留此前验证过的版本。
+- Require native input and clean Profile acceptance on remote macOS for rc.3, rc.5, and 0.2.2-rc.1; synchronize the universal helper version to 0.3.9.
+- 在远程 macOS 上对 rc.3、rc.5、0.2.2-rc.1 执行必需的原生输入及干净 Profile 验收，通用 helper 版本同步至 0.3.9。
+
 ## 0.3.8 — 2026-11-07
 
 - Support exact DSH `0.2.1-rc.5`, preserving earlier supported versions and requiring native and clean Profile acceptance on both rc.3 and rc.5.
