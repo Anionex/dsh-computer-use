@@ -153,7 +153,7 @@ The cursor is a 28x28 transparent whole-image cursor (Cursor arrow plus DeepSeek
 
 The helper executable is an internal DSH transport rather than a public authorization API. It requires an isolated process group plus parent-owned standard transports, so ordinary shell redirection fails closed before command parsing. This is defense in depth, not authentication against arbitrary code running as the same macOS user: a deliberately constructed detached parent can reproduce that transport topology. Use the registered Tools so application leases, sensitive-action confirmation, and host policy checks remain in force; `danger-full-access` must not be treated as protection against direct native invocation.
 
-Successful action results include:
+Action dispatch results include:
 
 ```ts
 activation: 'not-requested' | 'already-frontmost' | 'activated'
@@ -173,7 +173,7 @@ effect: {
 }
 ```
 
-`effect.observedStateChanged` compares the window title, id and frame plus the Accessibility element tree. It does not prove causation and cannot see pixel-only, transient, remote, or otherwise external effects. `agentCursor` appears only when the separate Agent cursor was expected but could not be shown or validated.
+`effect.note` distinguishes action dispatch from the observed change. `effect.observedStateChanged` only compares the window title, ID, frame and Accessibility tree. Check whether the intended outcome is visible before repeating the action. If the observation fails after dispatch, the error identifies that stage. `computer_wait` reports a matched condition and sends no input. `agentCursor` appears only when the separate Agent cursor was expected but could not be shown or validated.
 
 The model cannot override these host policies through Tool arguments.
 

@@ -631,29 +631,43 @@ export class ComputerUseService extends Service {
         }
       }
     }
-    // The settle loop reports whether the bounded structural observation
-    // changed. It complements routing facts without claiming causal proof or
-    // visibility into pixel-only, transient, or remote effects.
+    // The observation reports structural changes after dispatch. It cannot
+    // tell whether this action caused them or whether the intended effect occurred.
     const started = Date.now()
-    let latest: BackendObservation | undefined
-    let settled = false
-    do {
-      if (this.config.settleMs > 0) await delay(this.config.settleMs, undefined, { signal })
-      latest = await this.backend.observe(stored.backend.app, {
-        screenshot: 'none',
-        maxNodes: this.config.maxNodes,
-        maxDepth: this.config.maxDepth,
-        maxTextBytes: this.config.maxTextBytes,
-      }, signal)
-      if (latest.stateHash !== actionObservation.stateHash) { settled = true; break }
-    } while (Date.now() - started < this.config.maxSettleMs)
-    const observation = await this.capture(
-      stored.backend.app,
-      { app: { bundleId: stored.backend.app.bundleId, pid: stored.backend.app.pid }, screenshot: stored.public.screenshot === undefined ? 'none' : 'optional' },
-      context,
-      'computer_action',
-      latest,
-    )
+    let observedStateChanged = false
+    let observation: ComputerObservation
+    try {
+      let latest: BackendObservation
+      do {
+        if (this.config.settleMs > 0) await delay(this.config.settleMs, undefined, { signal })
+        latest = await this.backend.observe(stored.backend.app, {
+          screenshot: 'none',
+          maxNodes: this.config.maxNodes,
+          maxDepth: this.config.maxDepth,
+          maxTextBytes: this.config.maxTextBytes,
+        }, signal)
+        observedStateChanged = latest.stateHash !== actionObservation.stateHash
+      } while (!observedStateChanged && Date.now() - started < this.config.maxSettleMs)
+      observation = await this.capture(
+        stored.backend.app,
+        { app: { bundleId: stored.backend.app.bundleId, pid: stored.backend.app.pid }, screenshot: stored.public.screenshot === undefined ? 'none' : 'optional' },
+        context,
+        'computer_action',
+        latest,
+      )
+    } catch (error) {
+      const failure = computerUseError(error, 'post-action observation failed')
+      throw new ComputerUseError(
+        signal.aborted ? 'COMPUTER_CANCELLED' : failure.code,
+        'Action dispatched. The post-action observation could not be completed. '
+          + 'The intended outcome is unverified. Check the current state before repeating the action. '
+          + failure.message.slice(failure.code.length + 2),
+        { cause: error },
+      )
+    }
+    const observed = observedStateChanged
+      ? 'Observed a change in the window title, ID, frame, or Accessibility tree.'
+      : 'Observed no change in the window title, ID, frame, or Accessibility tree.'
     return {
       action: action.kind,
       channel: outcome.channel,
@@ -666,16 +680,10 @@ export class ComputerUseService extends Service {
       ...(cursorState === undefined || cursorState.visible ? {} : {
         agentCursor: { visible: false, ...(cursorState.reason === undefined ? {} : { reason: cursorState.reason }) },
       }),
-      // This reports only what the bounded structural observation can prove.
-      // Pixel-only, remote, or transient effects remain outside this hash and
-      // must not be described as action failure.
       effect: {
-        observedStateChanged: settled,
+        observedStateChanged,
         observedForMs: Date.now() - started,
-        ...(settled ? {} : {
-          note: 'no change was observed in the window title, id, frame, or accessibility element tree;'
-            + ' pixel-only, remote, or transient effects may still have occurred',
-        }),
+        note: `Action dispatched. ${observed} The intended outcome is unverified. Verify it before repeating the action.`,
       },
       ...(resolution === undefined ? {} : { resolution }),
       observation,
@@ -842,9 +850,9 @@ export class ComputerUseService extends Service {
       effect: {
         observedStateChanged: latest.stateHash !== stored.backend.stateHash,
         observedForMs: Date.now() - started,
-        ...(latest.stateHash === stored.backend.stateHash
-          ? { note: 'the wait condition was already satisfied by the referenced observation' }
-          : {}),
+        note: latest === stored.backend
+          ? 'The wait condition already matched the referenced observation. No input was sent.'
+          : 'The wait condition matched an Accessibility observation. No input was sent.',
       },
       pointerInput: false,
       pointerRouting: 'none',

@@ -130,10 +130,7 @@ describe('Computer Use Service', () => {
     }
   })
 
-  it('reports bounded structural observation changes without claiming causal proof', async () => {
-    // Routing fields describe the attempt. The effect reports only the
-    // structural state hash and explicitly preserves uncertainty about pixels,
-    // transient UI, remote effects, and unrelated external changes.
+  it('separates dispatch and structural changes from the unverified outcome', async () => {
     const workspace = await temporaryDirectory('dsh-computer-effect-')
     try {
       const { backend, service } = serviceHarness()
@@ -147,7 +144,8 @@ describe('Computer Use Service', () => {
         context,
       )
       expect(effective.effect.observedStateChanged).toBe(true)
-      expect(effective.effect).not.toHaveProperty('note')
+      expect(effective.effect.note).toContain('Action dispatched. Observed a change in the window title, ID, frame, or Accessibility tree.')
+      expect(effective.effect.note).toContain('The intended outcome is unverified.')
 
       backend.inert = true
       const after = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
@@ -156,10 +154,33 @@ describe('Computer Use Service', () => {
         context,
       )
       expect(inert.effect.observedStateChanged).toBe(false)
-      expect(inert.effect.note).toContain('pixel-only, remote, or transient effects may still have occurred')
-      // The attempt still reads as a clean success, which is exactly why the
-      // outcome needs its own field.
+      expect(inert.effect.note).toContain('Action dispatched. Observed no change in the window title, ID, frame, or Accessibility tree.')
+      expect(inert.effect.note).toContain('The intended outcome is unverified. Verify it before repeating the action.')
       expect(inert.pointerRouting).toBe('target-process')
+      expect(backend.actions).toHaveLength(2)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('reports that input was dispatched when the ensuing observation fails', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-effect-observe-')
+    try {
+      const { backend, service } = serviceHarness()
+      await service.initializeForTest()
+      const context = callContext(fakeAgent(workspace.path), workspace.path)
+      const before = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'none' }, context)
+      vi.spyOn(backend, 'observe').mockRejectedValueOnce(
+        new ComputerUseError('COMPUTER_TARGET_UNAVAILABLE', 'fixture window closed'),
+      )
+
+      await expect(service.act({ kind: 'click', observationId: before.observationId, elementIndex: 1 }, context))
+        .rejects.toMatchObject({
+          code: 'COMPUTER_TARGET_UNAVAILABLE',
+          message: 'COMPUTER_TARGET_UNAVAILABLE: Action dispatched. The post-action observation could not be completed. '
+            + 'The intended outcome is unverified. Check the current state before repeating the action. fixture window closed',
+        })
+      expect(backend.actions).toHaveLength(1)
     } finally {
       await workspace.cleanup()
     }
@@ -1221,6 +1242,7 @@ describe('Computer Use Service', () => {
       }, context)
       expect(result.channel).toBe('wait')
       expect(result.effect.observedStateChanged).toBe(true)
+      expect(result.effect.note).toBe('The wait condition matched an Accessibility observation. No input was sent.')
       expect(result.observation.tree.text).toContain('delayed complete')
 
       const alreadySatisfied = await service.act({
@@ -1231,7 +1253,7 @@ describe('Computer Use Service', () => {
       }, context)
       expect(alreadySatisfied.effect).toMatchObject({
         observedStateChanged: false,
-        note: 'the wait condition was already satisfied by the referenced observation',
+        note: 'The wait condition already matched the referenced observation. No input was sent.',
       })
     } finally {
       await workspace.cleanup()

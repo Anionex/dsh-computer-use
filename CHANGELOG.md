@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.10 — 2026-11-21
+
+- Distinguish action dispatch, observed window or Accessibility changes, and the unverified outcome. If observation fails after dispatch, identify that stage so the agent checks the current state before repeating input. Wait results report the matched condition without implying that input was sent.
+- 区分动作已发出、观察到的窗口或无障碍树变化、尚未验证的预期结果。动作发出后若观察失败，报错会标明失败阶段，提示 Agent 先核对当前状态再决定是否重复操作。等待结果说明条件已满足，并明确未发送输入。
+
 ## 0.3.9 — 2026-11-12
 
 - Support exact DSH `0.2.2-rc.1` across all DSH peers and compatibility metadata while preserving previously verified releases.
