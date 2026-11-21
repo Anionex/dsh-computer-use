@@ -207,7 +207,7 @@ export interface ComputerWaitAction extends ComputerActionBase {
 }
 /** Every model-accessible Computer Use action. */
 export type ComputerActionRequest = ComputerClickAction | ComputerSetValueAction | ComputerTypeTextAction | ComputerPressKeyAction | ComputerScrollAction | ComputerDragAction | ComputerPerformAction | ComputerWaitAction;
-/** Result of a successful action followed by a fresh observation. */
+/** Action dispatch and an observation, or a satisfied read-only wait condition. */
 export interface ComputerActionResult {
     action: ComputerActionRequest['kind'];
     channel: 'accessibility' | 'coordinates' | 'keyboard' | 'wait';
@@ -236,11 +236,11 @@ export interface ComputerActionResult {
  * cannot observe pixel-only, transient, remote, or otherwise external effects.
  */
 export interface ComputerActionEffect {
-    /** True when the post-action structural state hash differed. */
+    /** Whether the observed window metadata or Accessibility tree differs from the reference state. */
     observedStateChanged: boolean;
-    /** How long the settle loop watched, in milliseconds. */
+    /** Milliseconds spent observing and preparing the reported state, excluding dispatch. */
     observedForMs: number;
-    /** Scope guidance when no structural change was observed. */
+    /** Explains dispatch, the limits of observation, or the matched wait condition. */
     note?: string;
 }
 /** Confirmation request binding an exact proposed action to human-readable impact. */

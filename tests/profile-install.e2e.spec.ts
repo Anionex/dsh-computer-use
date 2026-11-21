@@ -479,8 +479,13 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(toolNames(server.requests[1])).not.toContain(COMPUTER_USE_ACTIVATE)
       expect(toolNames(server.requests[2])).toContain('computer_click')
       const actionToolResult = latestToolResult(server.requests[3]) as { content?: unknown } | undefined
-      const actionContent = JSON.parse(String(actionToolResult?.content)) as { activation?: unknown; pointerInput?: unknown; pointerRouting?: unknown }
-      expect(actionContent).toMatchObject({ activation: 'not-requested', pointerInput: true, pointerRouting: 'target-process' })
+      const actionContent: unknown = JSON.parse(String(actionToolResult?.content))
+      expect(actionContent).toMatchObject({
+        activation: 'not-requested',
+        pointerInput: true,
+        pointerRouting: 'target-process',
+        effect: { note: expect.stringMatching(/Action dispatched\..*The intended outcome is unverified\./u) },
+      })
       expect(
         JSON.parse(await readFile(transcript, 'utf8')),
         `model-visible action result:\n${JSON.stringify(latestToolResult(server.requests[3]), null, 2)}`,

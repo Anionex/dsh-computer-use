@@ -153,7 +153,7 @@ Agent 光标是 28x28 的透明整图光标（Cursor 箭头加 DeepSeek 鲸鱼�
 
 Helper executable 是 DSH 内部传输实现，不是公共授权 API。它要求独立进程组和父进程持有的标准传输，因此普通 shell 重定向会在解析命令前 fail closed。这个检查只属于纵深防御，不会认证同一 macOS 用户下运行的任意代码：专门构造的 detached 父进程仍能复现这类传输拓扑。应通过已注册 Tool 使用该能力，以保留应用 lease、敏感动作 confirmation 与宿主策略检查；不能把 `danger-full-access` 当作阻止直接 native 调用的保护。
 
-成功动作结果包括：
+动作发出后的结果包括：
 
 ```ts
 activation: 'not-requested' | 'already-frontmost' | 'activated'
@@ -173,7 +173,7 @@ effect: {
 }
 ```
 
-`effect.observedStateChanged` 比较窗口 title、id、frame 与 Accessibility 元素树；它不证明变化由本次动作造成，也无法观察纯像素、瞬时、远端或其他外部效果。只有独立 Agent 光标本应显示却无法显示或验证时，结果才会出现 `agentCursor`。
+`effect.note` 分别说明动作已发出和观察到的变化。`effect.observedStateChanged` 仅比较窗口标题、ID、位置与尺寸和 Accessibility 元素树。再次执行前，请先核对预期结果。动作发出后若观察失败，报错会明确指出失败发生在哪一步。`computer_wait` 报告条件是否满足，且不发送输入。只有独立 Agent 光标本应显示却无法显示或验证时，结果才会出现 `agentCursor`。
 
 模型不能通过 Tool 参数覆盖这些宿主策略。
 
