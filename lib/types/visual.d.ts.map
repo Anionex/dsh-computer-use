@@ -1,0 +1,1 @@
+{"version":3,"file":"visual.d.ts","sourceRoot":"","sources":["../../src/visual.ts"],"names":[],"mappings":"AAAA,oEAAoE;AAEpE,OAAO,KAAK,EAAE,kBAAkB,EAAE,MAAM,cAAc,CAAA;AAOtD,8EAA8E;AAC9E,wBAAgB,gBAAgB,CAAC,SAAS,EAAE,kBAAkB,EAAE,WAAW,EAAE,kBAAkB,GAAG,MAAM,GAAG,SAAS,CAgBnH;AAED,oEAAoE;AACpE,wBAAgB,eAAe,CAAC,MAAM,EAAE,MAAM,EAAE,KAAK,EAAE,MAAM,GAAG,OAAO,CAStE"}

@@ -11,6 +11,7 @@ import type {
   BackendHealth,
   BackendObservation,
   BackendObserveOptions,
+  BackendVisualSignature,
   ComputerUseBackend,
   CursorVisibility,
 } from '../src/backend.ts'
@@ -59,6 +60,10 @@ export function backendObservation(overrides: Partial<BackendObservation> = {}):
     permissions: { accessibility: 'granted', screenRecording: 'granted' },
     ...overrides,
   }
+}
+
+export function visualSignature(changedCells = 0, luminance = 255): BackendVisualSignature {
+  return { side: 32, bytes: Buffer.alloc(32 * 32).fill(luminance, 0, changedCells).toString('base64') }
 }
 
 export class FakeBackend implements ComputerUseBackend {
@@ -111,7 +116,7 @@ export class FakeBackend implements ComputerUseBackend {
   async observe(_app: ComputerAppIdentity, options: BackendObserveOptions): Promise<BackendObservation> {
     this.observations.push(structuredClone(options))
     let screenshot: BackendObservation['screenshot']
-    if (options.screenshot !== 'none') {
+    if (options.screenshot !== 'none' && this.observation.permissions.screenRecording === 'granted') {
       if (options.screenshotPath === undefined) throw new Error('fake screenshot needs screenshotPath')
       await writeFile(options.screenshotPath, Buffer.from('fake-png'))
       screenshot = {
@@ -121,9 +126,11 @@ export class FakeBackend implements ComputerUseBackend {
         ...(this.screenshotPixelScale === undefined ? {} : { pixelScale: this.screenshotPixelScale }),
       }
     }
+    const { visualSignature, ...observation } = this.observation
     return structuredClone({
-      ...this.observation,
+      ...observation,
       ...(screenshot === undefined ? {} : { screenshot }),
+      ...(options.visualSignature === true && visualSignature !== undefined ? { visualSignature } : {}),
     })
   }
 

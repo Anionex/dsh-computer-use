@@ -32,6 +32,9 @@ import {
   type ComputerUseContext,
   type ComputerUseStatus,
 } from './types.ts'
+import { hasVisualChange, readVisualSample } from './visual.ts'
+
+const VISUAL_SAMPLE_TIMEOUT_MS = 1_000
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -44,6 +47,8 @@ interface StoredObservation {
   backend: BackendObservation
   targets: Map<ComputerTargetHandle, ComputerTargetDescriptor>
   generation: number
+  /** Carries forward an explicit screenshot request or a screenshot-space action. */
+  screenshotAssisted: boolean
 }
 
 interface AgentState {
@@ -437,19 +442,23 @@ export class ComputerUseService extends Service {
     const stored = this.requireObservation(action.observationId, context.agent)
     if (action.kind === 'wait') return await this.wait(stored, action, context, signal)
     const normalized = normalizeActionCoordinates(action, stored.backend)
+    const usesScreenshotCoordinates = 'coordinateSpace' in action
+      && action.coordinateSpace === 'screenshot' && requiresCoordinates(action)
     return await this.enqueueAction(stored.backend.app, async () => {
       signal.throwIfAborted()
-      return await this.actNow(normalized, context, signal)
+      return await this.actNow(normalized, usesScreenshotCoordinates, context, signal)
     })
   }
 
   /** Keep this service's actions for one process ordered through post-action observation. */
   private async actNow(
     action: Exclude<ComputerActionRequest, { kind: 'wait' }>,
+    usesScreenshotCoordinates: boolean,
     context: ComputerUseContext,
     signal: AbortSignal,
   ): Promise<ComputerActionResult> {
     const stored = this.requireObservation(action.observationId, context.agent)
+    const screenshotAssisted = stored.screenshotAssisted || usesScreenshotCoordinates
     const index = targetIndex(action)
     const handle = targetHandle(action)
     const originalElement = index === undefined ? undefined : stored.backend.elements.find(candidate => candidate.index === index)
@@ -498,6 +507,11 @@ export class ComputerUseService extends Service {
       maxDepth: this.config.maxDepth,
       maxTextBytes: this.config.maxTextBytes,
     }
+    const visualOptions = { ...observationOptions, visualSignature: true }
+    const visualSampleSignal = (remainingMs = VISUAL_SAMPLE_TIMEOUT_MS): AbortSignal => AbortSignal.any([
+      signal,
+      AbortSignal.timeout(Math.max(1, Math.min(remainingMs, VISUAL_SAMPLE_TIMEOUT_MS))),
+    ])
     let actionObservation = stored.backend
     let cursorActivation: 'already-frontmost' | 'activated' | undefined
     let element = selectedOriginalElement
@@ -588,6 +602,7 @@ export class ComputerUseService extends Service {
       }
       cursorStarted = beforeCursor.visible
     }
+    let visualBaseline: Buffer | undefined
     let outcome: BackendActionResult
     const request = {
       action,
@@ -598,6 +613,15 @@ export class ComputerUseService extends Service {
       ...(actionObservation.window === undefined ? {} : { window: actionObservation.window }),
     }
     try {
+      if (screenshotAssisted && actionObservation.window?.id !== undefined
+        && actionObservation.permissions.screenRecording === 'granted') {
+        // This read supplies evidence only. The original action window and
+        // expected state still control dispatch.
+        const baseline = await this.backend.observe(actionObservation.app, visualOptions, visualSampleSignal()).catch(() => undefined)
+        signal.throwIfAborted()
+        this.requireObservation(action.observationId, context.agent)
+        if (baseline !== undefined) visualBaseline = readVisualSample(actionObservation, baseline)
+      }
       this.confirmations.consume(context.agent, stored.backend.app, action)
       if (cursorStarted && visualization?.kind === 'drag') {
         const tracked = await this.backend.actDragWithCursor(
@@ -631,29 +655,42 @@ export class ComputerUseService extends Service {
         }
       }
     }
-    // The observation reports structural changes after dispatch. It cannot
-    // tell whether this action caused them or whether the intended effect occurred.
+    // Changes after dispatch are evidence of movement in the sampled UI.
+    // The intended effect still needs to be verified from the fresh state.
     const started = Date.now()
+    const deadline = started + this.config.maxSettleMs
     let observedStateChanged = false
+    let observedVisualChange: boolean | undefined
+    let latestVisualChange: boolean | undefined
     let observation: ComputerObservation
     try {
       let latest: BackendObservation
       do {
         if (this.config.settleMs > 0) await delay(this.config.settleMs, undefined, { signal })
-        latest = await this.backend.observe(stored.backend.app, {
-          screenshot: 'none',
-          maxNodes: this.config.maxNodes,
-          maxDepth: this.config.maxDepth,
-          maxTextBytes: this.config.maxTextBytes,
-        }, signal)
+        try {
+          latest = visualBaseline === undefined
+            ? await this.backend.observe(stored.backend.app, observationOptions, signal)
+            : await this.backend.observe(stored.backend.app, visualOptions, visualSampleSignal(deadline - Date.now()))
+        } catch (error) {
+          if (visualBaseline === undefined || signal.aborted) throw error
+          // Recover the required Accessibility observation if optional
+          // visual sampling failed. Input has already been dispatched.
+          visualBaseline = undefined
+          latest = await this.backend.observe(stored.backend.app, observationOptions, signal)
+        }
         observedStateChanged = latest.stateHash !== actionObservation.stateHash
-      } while (!observedStateChanged && Date.now() - started < this.config.maxSettleMs)
+        const sample = visualBaseline === undefined ? undefined : readVisualSample(actionObservation, latest)
+        latestVisualChange = visualBaseline !== undefined && sample !== undefined
+          ? hasVisualChange(visualBaseline, sample)
+          : undefined
+        observedVisualChange = latestVisualChange ?? observedVisualChange
+      } while (!observedStateChanged && observedVisualChange !== true && Date.now() < deadline)
       observation = await this.capture(
         stored.backend.app,
         { app: { bundleId: stored.backend.app.bundleId, pid: stored.backend.app.pid }, screenshot: stored.public.screenshot === undefined ? 'none' : 'optional' },
         context,
         'computer_action',
-        latest,
+        { observation: latest, screenshotAssisted },
       )
     } catch (error) {
       const failure = computerUseError(error, 'post-action observation failed')
@@ -668,6 +705,17 @@ export class ComputerUseService extends Service {
     const observed = observedStateChanged
       ? 'Observed a change in the window title, ID, frame, or Accessibility tree.'
       : 'Observed no change in the window title, ID, frame, or Accessibility tree.'
+    const visual = observedVisualChange === true
+      ? ' The brightness sampled from the same window changed.'
+      : observedVisualChange === false
+        ? ' The comparable samples stayed below the visual change threshold.'
+          + (latestVisualChange === undefined ? ' The final observation could not be visually compared.' : '')
+        : screenshotAssisted ? ' A comparable pair of window screenshots was unavailable.' : ''
+    const waitEnded = observedStateChanged
+      ? ' The structural change ended the post-action wait.'
+      : observedVisualChange === true
+        ? ' The visual change ended the post-action wait.'
+        : ' The post-action wait reached its time limit.'
     return {
       action: action.kind,
       channel: outcome.channel,
@@ -682,8 +730,9 @@ export class ComputerUseService extends Service {
       }),
       effect: {
         observedStateChanged,
+        ...(observedVisualChange === undefined ? {} : { observedVisualChange }),
         observedForMs: Date.now() - started,
-        note: `Action dispatched. ${observed} The intended outcome is unverified. Verify it before repeating the action.`,
+        note: `Action dispatched. ${observed}${visual}${waitEnded} The intended outcome is unverified. Verify it before repeating the action.`,
       },
       ...(resolution === undefined ? {} : { resolution }),
       observation,
@@ -745,15 +794,15 @@ export class ComputerUseService extends Service {
     request: ComputerObserveRequest,
     context: ComputerUseContext,
     sourceTool: 'computer_observe' | 'computer_action',
-    preObserved?: BackendObservation,
+    derived?: { observation: BackendObservation; screenshotAssisted: boolean },
   ): Promise<ComputerObservation> {
     const signal = AbortSignal.any([context.signal, this.lifecycle.signal])
     const screenshot = request.screenshot ?? 'optional'
     const screenshotPath = screenshot === 'none'
       ? undefined
       : await allocateScreenshotPath(context.workspace, this.config.artifactRoot, context.agent.session.id)
-    const backend = preObserved !== undefined && screenshot === 'none'
-      ? preObserved
+    const { visualSignature: _visualSignature, ...backend } = derived !== undefined && screenshot === 'none'
+      ? derived.observation
       : await this.backend.observe(app, {
         screenshot,
         ...(screenshotPath === undefined ? {} : { screenshotPath }),
@@ -802,7 +851,13 @@ export class ComputerUseService extends Service {
       ...(artifact === undefined ? {} : { screenshot: artifact }),
       permissions: backend.permissions,
     }
-    state.observations.set(observationId, { public: observation, backend, targets: projected.targets, generation: this.generation })
+    state.observations.set(observationId, {
+      public: observation,
+      backend,
+      targets: projected.targets,
+      generation: this.generation,
+      screenshotAssisted: artifact !== undefined && (derived?.screenshotAssisted ?? (request.screenshot !== undefined && screenshot !== 'none')),
+    })
     state.latestByApp.set(key, observationId)
     while (state.observations.size > 64) {
       const oldest = state.observations.keys().next().value as ComputerObservationId | undefined
@@ -841,7 +896,7 @@ export class ComputerUseService extends Service {
       { app: { bundleId: stored.backend.app.bundleId, pid: stored.backend.app.pid }, screenshot: stored.public.screenshot === undefined ? 'none' : 'optional' },
       context,
       'computer_action',
-      latest,
+      { observation: latest, screenshotAssisted: stored.screenshotAssisted },
     )
     return {
       action: 'wait',

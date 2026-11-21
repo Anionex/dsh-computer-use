@@ -302,6 +302,18 @@ describe.skipIf(process.platform !== 'darwin')('managed native helper', () => {
     expect(helperSource).toMatch(/image\.width == configuration\.width[\s\S]*?coordinates cannot be mapped to the window frame/u)
   })
 
+  it('samples only the identified window with permission and keeps visual comparison out of screenshot files', async () => {
+    const source = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
+    const capture = source.slice(source.indexOf('private func captureWindow('), source.indexOf('private func captureWindowScreenshot('))
+    expect(capture).toMatch(/let canSample = includeVisualSignature && expectedId != nil[\s\S]*?guard CGPreflightScreenCaptureAccess\(\)[\s\S]*?canSample \? await captureVisualSignature\(filter\)/u)
+    expect(capture).toContain('if let expectedId { return window.windowID == expectedId }')
+    expect(capture).toMatch(/if let screenshotPath \{\s*try await captureWindowScreenshot/u)
+    expect(source).toContain('includeVisualSignature: options["visualSignature"] as? Bool == true')
+    const signature = source.slice(source.indexOf('private func captureVisualSignature('), source.indexOf('private func observationJSON('))
+    expect(signature).toContain('Data(pixels).base64EncodedString()')
+    expect(signature).not.toMatch(/NSBitmapImageRep|fileURLWithPath|CGRequestScreenCaptureAccess/u)
+  })
+
   it('routes AXRaise through explicit foreground authorization and refreshed target validation', async () => {
     const helperSource = await readFile(join(NATIVE, 'Sources', 'Helper', 'main.swift'), 'utf8')
     expect(helperSource).toContain('action == (kAXRaiseAction as String)')

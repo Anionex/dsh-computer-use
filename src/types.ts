@@ -266,21 +266,20 @@ export interface ComputerActionResult {
   resolution?: ComputerTargetResolutionResult
   /** Present only when the agent cursor should be on screen and is not. */
   agentCursor?: { visible: false; reason?: string }
-  /** What changed in the bounded post-action structural observation. */
+  /** Structural and, for screenshot-assisted actions, visual evidence after dispatch. */
   effect: ComputerActionEffect
   observation: ComputerObservation
 }
 
 /**
- * What changed in the bounded structural observation after an action.
- *
- * The comparison covers the window title, id and frame plus the Accessibility
- * element tree. It does not prove that the action caused the change, and it
- * cannot observe pixel-only, transient, remote, or otherwise external effects.
+ * Bounded observations after an action. A reported difference does not prove
+ * causation or confirm the intended outcome.
  */
 export interface ComputerActionEffect {
   /** Whether the observed window metadata or Accessibility tree differs from the reference state. */
   observedStateChanged: boolean
+  /** Whether sampled brightness changed. Omitted when a comparison was unavailable or not requested. */
+  observedVisualChange?: boolean
   /** Milliseconds spent observing and preparing the reported state, excluding dispatch. */
   observedForMs: number
   /** Explains dispatch, the limits of observation, or the matched wait condition. */

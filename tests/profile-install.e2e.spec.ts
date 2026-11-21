@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import { COMPUTER_USE_ACTIVATE } from '../src/exposure.ts'
+import type { ComputerActionResult } from '../src/types.ts'
 
 const ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
 const HELPER = join(ROOT, 'native', 'macos', 'bin', 'dsh-computer-use-helper')
@@ -114,7 +115,9 @@ async function waitForTranscript(path: string): Promise<Record<string, unknown>>
 }
 
 async function launchFixture(transcript: string): Promise<{ bundleId: string; pid: number; name: string }> {
-  const launched = await run('open', ['-g', '-n', FIXTURE_APP, '--args', '--background', '--transcript', transcript], { timeoutMs: 10000 })
+  const launched = await run('open', [
+    '-g', '-n', FIXTURE_APP, '--args', '--background', '--visual-only-pointer-probe', '--transcript', transcript,
+  ], { timeoutMs: 10000 })
   if (launched.code !== 0) throw new Error(`fixture background launch failed: ${launched.stderr}`)
   const deadline = Date.now() + 10000
   const readinessScreenshot = join(dirname(transcript), 'fixture-ready.png')
@@ -281,6 +284,29 @@ function latestToolResult(request: ScriptedRequest | undefined): unknown {
   return body?.messages?.filter(message => message.role === 'tool').at(-1)
 }
 
+function actionToolContent(request: ScriptedRequest | undefined): ComputerActionResult {
+  const message = latestToolResult(request) as { content?: unknown } | undefined
+  return JSON.parse(String(message?.content)) as ComputerActionResult
+}
+
+function clickObservedElement(body: unknown, label: string, allowCoordinateFallback = false): ScriptedStep {
+  const observation = recursiveObservation(latestToolResult({ body }))
+  if (observation === undefined) {
+    throw new Error(`model request did not contain the computer_observe result: ${JSON.stringify(modelRequestSummary(body))}`)
+  }
+  const element = observation.elements.find(element => element.label === label || element.title === label)
+  if (element === undefined) throw new Error(`fixture element was absent from model-visible observation: ${label}`)
+  return {
+    kind: 'tool',
+    name: 'computer_click',
+    arguments: JSON.stringify({
+      observationId: observation.observationId,
+      elementIndex: element.index,
+      allowCoordinateFallback,
+    }),
+  }
+}
+
 function modelRequestSummary(value: unknown): unknown {
   const body = value as { messages?: Array<{ role?: unknown; name?: unknown; content?: unknown; tool_calls?: unknown }> }
   return body.messages?.map(message => ({
@@ -349,7 +375,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     for (const path of temporary.splice(0)) await rm(path, { recursive: true, force: true })
   })
 
-  it('installs the tarball in Web/Headless, operates the real fixture, disables, re-enables, boots Web, and removes cleanly', async (testContext) => {
+  it('installs the tarball in Web/Headless, reports real AX and visual effects, disables, re-enables, boots Web, and removes cleanly', async (testContext) => {
     const health = await helper<{ accessibility: string; screenRecording: string }>({ command: 'health' })
     if (health.accessibility !== 'granted' || health.screenRecording !== 'granted') {
       if (process.env.DSH_COMPUTER_USE_REQUIRE_TCC === '1') throw new Error(`release lane requires macOS TCC: ${JSON.stringify(health)}`)
@@ -390,11 +416,12 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
     const app = await launchFixture(transcript)
     await waitForTranscript(transcript)
     const patch = join(home, 'computer-use.patch.yml')
+    const maxSettleMs = 5000
     await writeFile(patch, [
       '- id: computer-use',
       '  config:',
       '    settleMs: 50',
-      '    maxSettleMs: 3000',
+      `    maxSettleMs: ${maxSettleMs}`,
       '    interaction:',
       '      cursorMotionMs: 750',
       '    grants:',
@@ -423,29 +450,21 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       {
         kind: 'tool',
         name: 'computer_observe',
+        arguments: JSON.stringify({ app: { bundleId: app.bundleId, pid: app.pid }, screenshot: 'none', full: true }),
+      },
+      body => clickObservedElement(body, 'Enable deterministic option'),
+      {
+        kind: 'tool',
+        name: 'computer_observe',
         arguments: JSON.stringify({ app: { bundleId: app.bundleId, pid: app.pid }, screenshot: 'required', full: true }),
       },
       body => {
-        const observation = recursiveObservation(body)
-        if (observation === undefined) {
-          throw new Error(`model request did not contain the computer_observe result: ${JSON.stringify(modelRequestSummary(body))}`)
-        }
         const descriptions = artifactDescriptions(body)
         if (!descriptions.some(description => description.includes('load the vision-tools Skill')
           && description.includes('do not recreate OCR with bash, tesseract, or an ad hoc script'))) {
           throw new Error(`model request did not contain the Vision Toolkit screenshot handoff: ${JSON.stringify(descriptions)}`)
         }
-        const probe = observation.elements.find(element => element.label === 'Targeted pointer probe' || element.title === 'Targeted pointer probe')
-        if (probe === undefined) throw new Error('fixture pointer probe was absent from model-visible observation')
-        return {
-          kind: 'tool',
-          name: 'computer_click',
-          arguments: JSON.stringify({
-            observationId: observation.observationId,
-            elementIndex: probe.index,
-            allowCoordinateFallback: true,
-          }),
-        }
+        return clickObservedElement(body, 'Targeted pointer probe', true)
       },
       { kind: 'text', text: 'computer-use profile e2e passed' },
     ])
@@ -467,7 +486,7 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(server.failures, `scripted server failures:\n${JSON.stringify(server.failures, null, 2)}\ndsh stderr:\n${result.stderr}`).toEqual([])
       expect(result.code, result.stderr).toBe(0)
       expect(result.stdout.trim()).toBe('computer-use profile e2e passed')
-      expect(server.requests).toHaveLength(4)
+      expect(server.requests).toHaveLength(6)
       const initialRequest = JSON.stringify(server.requests[0]?.body)
       expect(initialRequest).toContain('Current DSH file policy: workspace-write.')
       expect(toolNames(server.requests[0])).toContain(COMPUTER_USE_ACTIVATE)
@@ -478,18 +497,29 @@ describe.skipIf(!enabled)('clean Computer Use Profile installation', () => {
       expect(toolNames(server.requests[1])).toContain('computer_observe')
       expect(toolNames(server.requests[1])).not.toContain(COMPUTER_USE_ACTIVATE)
       expect(toolNames(server.requests[2])).toContain('computer_click')
-      const actionToolResult = latestToolResult(server.requests[3]) as { content?: unknown } | undefined
-      const actionContent: unknown = JSON.parse(String(actionToolResult?.content))
-      expect(actionContent).toMatchObject({
+      const axAction = actionToolContent(server.requests[3])
+      expect(axAction).toMatchObject({
+        channel: 'accessibility',
+        pointerInput: false,
+        effect: { observedStateChanged: true },
+      })
+      expect(axAction.effect).not.toHaveProperty('observedVisualChange')
+      const visualAction = actionToolContent(server.requests[5])
+      expect(visualAction).toMatchObject({
         activation: 'not-requested',
         pointerInput: true,
         pointerRouting: 'target-process',
-        effect: { note: expect.stringMatching(/Action dispatched\..*The intended outcome is unverified\./u) },
+        effect: {
+          observedStateChanged: false,
+          observedVisualChange: true,
+          note: expect.stringMatching(/Action dispatched\..*The intended outcome is unverified\./u),
+        },
       })
+      expect(visualAction.effect.observedForMs).toBeLessThan(maxSettleMs)
       expect(
         JSON.parse(await readFile(transcript, 'utf8')),
-        `model-visible action result:\n${JSON.stringify(latestToolResult(server.requests[3]), null, 2)}`,
-      ).toMatchObject({ pointerClickCount: 1, status: 'Status: pointer click' })
+        `model-visible action result:\n${JSON.stringify(latestToolResult(server.requests[5]), null, 2)}`,
+      ).toMatchObject({ checked: true, pointerClickCount: 1, status: 'Status: option enabled' })
       expect((await screenshotFiles(join(workspace, '.dsh-computer-use', 'artifacts'))).length).toBeGreaterThan(0)
     } finally {
       await server.close()
