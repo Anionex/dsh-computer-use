@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.11 — 2026-11-21
+
+- Compare the target window before and after screenshot-assisted actions by default. A sampled visual change can end the wait early while the intended outcome remains unverified. Based on the proposal in #33 by @1e0cf.
+- 基于截图的动作默认比较目标窗口前后的画面。采样发现变化时可以提前返回，预期结果仍需核对。基于 @1e0cf 的 #33 提案。
+
 ## 0.3.10 — 2026-11-21
 
 - Distinguish action dispatch, observed window or Accessibility changes, and the unverified outcome. If observation fails after dispatch, identify that stage so the agent checks the current state before repeating input. Wait results report the matched condition without implying that input was sent.

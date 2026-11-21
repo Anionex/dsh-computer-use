@@ -168,12 +168,15 @@ resolution?: {
 agentCursor?: { visible: false; reason?: string }
 effect: {
   observedStateChanged: boolean
+  observedVisualChange?: boolean
   observedForMs: number
   note?: string
 }
 ```
 
 `effect.note` 分别说明动作已发出和观察到的变化。`effect.observedStateChanged` 仅比较窗口标题、ID、位置与尺寸和 Accessibility 元素树。再次执行前，请先核对预期结果。动作发出后若观察失败，报错会明确指出失败发生在哪一步。`computer_wait` 报告条件是否满足，且不发送输入。只有独立 Agent 光标本应显示却无法显示或验证时，结果才会出现 `agentCursor`。
+
+动作使用截图像素坐标，或基于明确请求且成功返回截图的观察时，插件默认比较输入前后目标窗口的亮度。比较使用已有录屏权限，样本保留在内存中。变化达到门槛时会提前结束等待。无法比较时省略 `effect.observedVisualChange`，返回 `false` 表示采到的变化未达到门槛。动画也可能触发这个信号，请根据返回的观察或一次有针对性的核对来确认预期结果。
 
 模型不能通过 Tool 参数覆盖这些宿主策略。
 

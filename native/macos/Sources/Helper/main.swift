@@ -6,7 +6,8 @@ import Darwin
 import Foundation
 import ScreenCaptureKit
 
-private let helperVersion = "0.3.10"
+private let helperVersion = "0.3.11"
+private let visualSignatureSide = 32
 
 private struct HelperError: Error {
     let code: String
@@ -543,19 +544,26 @@ private func observeSnapshot(app: NSRunningApplication, limits: [String: Any]) t
     )
 }
 
-private func captureWindow(_ snapshot: ObservationSnapshot, path: String, required: Bool) async throws -> [String: Any]? {
+private func captureWindow(
+    _ snapshot: ObservationSnapshot,
+    screenshotPath: String?,
+    screenshotRequired: Bool,
+    includeVisualSignature: Bool
+) async throws -> (screenshot: [String: Any]?, visualSignature: [String: Any]?) {
+    let expectedId = (snapshot.windowJSON?["id"] as? NSNumber)?.uint32Value
+    let canSample = includeVisualSignature && expectedId != nil
+    guard screenshotPath != nil || canSample else { return (nil, nil) }
     guard CGPreflightScreenCaptureAccess() else {
-        if required { throw fail("COMPUTER_PERMISSION_REQUIRED", "macOS Screen Recording permission is required for screenshots") }
-        return nil
+        if screenshotRequired { throw fail("COMPUTER_PERMISSION_REQUIRED", "macOS Screen Recording permission is required for screenshots") }
+        return (nil, nil)
     }
     let content: SCShareableContent
     do {
         content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
     } catch {
-        if required { throw fail("COMPUTER_PROVIDER_FAILURE", "ScreenCaptureKit could not enumerate windows") }
-        return nil
+        if screenshotRequired { throw fail("COMPUTER_PROVIDER_FAILURE", "ScreenCaptureKit could not enumerate windows") }
+        return (nil, nil)
     }
-    let expectedId = (snapshot.windowJSON?["id"] as? NSNumber)?.uint32Value
     let expectedFrame = (snapshot.windowJSON?["frame"] as? [String: Any]).flatMap { try? cgRect($0) }
     let windows = content.windows.filter { $0.owningApplication?.processID == snapshot.app.processIdentifier }
     let selected = windows.first { window in
@@ -568,14 +576,29 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
             && abs(window.frame.height - expectedFrame.height) <= tolerance
     }
     guard let selected else {
-        if required { throw fail("COMPUTER_TARGET_UNAVAILABLE", "the observed window is not available for capture") }
-        return nil
+        if screenshotRequired { throw fail("COMPUTER_TARGET_UNAVAILABLE", "the observed window is not available for capture") }
+        return (nil, nil)
     }
     let filter = SCContentFilter(desktopIndependentWindow: selected)
+    let screenshot: [String: Any]? = if let screenshotPath {
+        try await captureWindowScreenshot(filter, frame: selected.frame, path: screenshotPath, required: screenshotRequired)
+    } else {
+        nil
+    }
+    let signature = canSample ? await captureVisualSignature(filter) : nil
+    return (screenshot, signature)
+}
+
+private func captureWindowScreenshot(
+    _ filter: SCContentFilter,
+    frame: CGRect,
+    path: String,
+    required: Bool
+) async throws -> [String: Any]? {
     let configuration = SCStreamConfiguration()
     let pixelScale = CGFloat(filter.pointPixelScale)
-    configuration.width = max(1, Int((selected.frame.width * pixelScale).rounded()))
-    configuration.height = max(1, Int((selected.frame.height * pixelScale).rounded()))
+    configuration.width = max(1, Int((frame.width * pixelScale).rounded()))
+    configuration.height = max(1, Int((frame.height * pixelScale).rounded()))
     configuration.showsCursor = false
     // ScreenCaptureKit frames a single window with its drop shadow by default,
     // which draws the window content inset and scaled inside an image that still
@@ -608,7 +631,44 @@ private func captureWindow(_ snapshot: ObservationSnapshot, path: String, requir
     return ["path": path, "width": image.width, "height": image.height, "pixelScale": Double(pixelScale)]
 }
 
-private func observationJSON(_ snapshot: ObservationSnapshot, screenshot: [String: Any]?) -> [String: Any] {
+private func captureVisualSignature(_ filter: SCContentFilter) async -> [String: Any]? {
+    // Bound the intermediate capture while retaining pixels for the grayscale downsample.
+    let captureSide = 128
+    let side = visualSignatureSide
+    let configuration = SCStreamConfiguration()
+    configuration.width = captureSide
+    configuration.height = captureSide
+    configuration.scalesToFit = true
+    configuration.preservesAspectRatio = false
+    configuration.showsCursor = false
+    configuration.ignoreShadowsSingleWindow = true
+    guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration),
+          image.width == captureSide, image.height == captureSide else { return nil }
+
+    var pixels = [UInt8](repeating: 0, count: side * side)
+    let drewImage = pixels.withUnsafeMutableBytes { buffer -> Bool in
+        guard let context = CGContext(
+            data: buffer.baseAddress,
+            width: side,
+            height: side,
+            bitsPerComponent: 8,
+            bytesPerRow: side,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return false }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        return true
+    }
+    guard drewImage else { return nil }
+    return ["side": side, "bytes": Data(pixels).base64EncodedString()]
+}
+
+private func observationJSON(
+    _ snapshot: ObservationSnapshot,
+    screenshot: [String: Any]?,
+    visualSignature: [String: Any]? = nil
+) -> [String: Any] {
     var result: [String: Any] = [
         "app": snapshot.appJSON,
         "stateHash": snapshot.stateHash,
@@ -623,6 +683,7 @@ private func observationJSON(_ snapshot: ObservationSnapshot, screenshot: [Strin
     ]
     if let window = snapshot.windowJSON { result["window"] = window }
     if let screenshot { result["screenshot"] = screenshot }
+    if let visualSignature { result["visualSignature"] = visualSignature }
     return result
 }
 
@@ -1299,12 +1360,14 @@ private func handle(
         let options = try dictionary(request["options"], "options")
         let snapshot = try observeSnapshot(app: app, limits: options)
         let mode = options["screenshot"] as? String ?? "optional"
-        var screenshot: [String: Any]?
-        if mode != "none" {
-            let path = try string(options["screenshotPath"], "options.screenshotPath")
-            screenshot = try await captureWindow(snapshot, path: path, required: mode == "required")
-        }
-        return observationJSON(snapshot, screenshot: screenshot)
+        let path = mode == "none" ? nil : try string(options["screenshotPath"], "options.screenshotPath")
+        let capture = try await captureWindow(
+            snapshot,
+            screenshotPath: path,
+            screenshotRequired: mode == "required",
+            includeVisualSignature: options["visualSignature"] as? Bool == true
+        )
+        return observationJSON(snapshot, screenshot: capture.screenshot, visualSignature: capture.visualSignature)
     case "activate-for-cursor":
         let appIdentity = try dictionary(request["app"], "app")
         let app = try resolveApp([

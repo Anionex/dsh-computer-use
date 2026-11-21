@@ -18,6 +18,13 @@ export interface BackendElement extends Omit<ComputerElement, 'targetHandle'> {
   nativeIdentifier?: string
 }
 
+/** Transient grayscale window sample used only for an action's visual comparison. */
+export interface BackendVisualSignature {
+  side: number
+  /** Base64-encoded row-major grayscale bytes. */
+  bytes: string
+}
+
 /** Raw full-state observation returned by a provider before Service diff projection. */
 export interface BackendObservation {
   app: ComputerAppIdentity
@@ -38,6 +45,7 @@ export interface BackendObservation {
     /** Authoritative pixels per window point reported by the provider, when it knows. */
     pixelScale?: number
   }
+  visualSignature?: BackendVisualSignature
   permissions: {
     accessibility: ComputerPermissionState
     screenRecording: ComputerPermissionState
@@ -48,6 +56,8 @@ export interface BackendObservation {
 export interface BackendObserveOptions {
   screenshot: ComputerScreenshotMode
   screenshotPath?: string
+  /** Sample the selected window in memory if screen recording is already allowed. */
+  visualSignature?: boolean
   maxNodes: number
   maxDepth: number
   maxTextBytes: number

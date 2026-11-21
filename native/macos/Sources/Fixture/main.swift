@@ -87,6 +87,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private let activationReleaseTriggerPath: String?
     private let activationOnly: Bool
     private let launchInBackground: Bool
+    private let visualOnlyPointerProbe: Bool
 
     override init() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -112,6 +113,7 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         }
         activationOnly = arguments.contains("--activation-only")
         launchInBackground = arguments.contains("--background")
+        visualOnlyPointerProbe = arguments.contains("--visual-only-pointer-probe")
         super.init()
     }
 
@@ -282,6 +284,9 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         inputProbe = InputProbeView(frame: .zero)
         inputProbe.translatesAutoresizingMaskIntoConstraints = false
         inputProbe.heightAnchor.constraint(equalToConstant: 54).isActive = true
+        if visualOnlyPointerProbe {
+            inputProbe.layer?.backgroundColor = NSColor.white.cgColor
+        }
         inputProbe.onEvent = { [weak self] event in
             guard let self else { return }
             switch event {
@@ -300,7 +305,12 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
                     self.statusLabel.stringValue = "Status: pointer drag"
                 } else {
                     self.pointerClickCount += 1
-                    self.statusLabel.stringValue = "Status: pointer click"
+                    if self.visualOnlyPointerProbe {
+                        let color: NSColor = self.pointerClickCount.isMultiple(of: 2) ? .white : .black
+                        self.inputProbe.layer?.backgroundColor = color.cgColor
+                    } else {
+                        self.statusLabel.stringValue = "Status: pointer click"
+                    }
                 }
                 self.activeDragGesture = false
             case "pointer scroll":

@@ -48,9 +48,12 @@ plugin; an API or CLI; browser automation for browser tasks; then Computer Use.
 5. Read effect.note and the returned observation before deciding what to do next.
    Dispatch means input was sent or the Accessibility request was accepted.
    effect.observedStateChanged reports a change in window metadata or the
-   Accessibility tree. Neither value establishes the intended outcome.
-   Check the expected state before retrying. Request a fresh tree or screenshot
-   only if the returned observation lacks the evidence you need.
+   Accessibility tree. For actions based on an explicitly requested screenshot
+   or screenshot-pixel coordinates, effect.observedVisualChange reports a
+   sampled change in the target window. It is absent when not measured.
+   Visual change may end the wait early and can come from unrelated animation.
+   Verify the intended outcome before retrying. Request a fresh tree or
+   screenshot if the returned observation lacks the evidence you need.
    If observation failed after dispatch, the action may already have taken effect.
    computer_wait checks its requested condition without sending input.
 6. When agentCursor is present, the separate Agent cursor was expected but is not

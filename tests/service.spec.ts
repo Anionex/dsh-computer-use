@@ -12,7 +12,7 @@ import {
   type ComputerActionRequest,
   type ComputerUseContext,
 } from '../src/types.ts'
-import { FakeBackend, FIXTURE_APP, backendObservation, fakeAgent, temporaryDirectory } from './helpers.ts'
+import { FakeBackend, FIXTURE_APP, backendObservation, fakeAgent, temporaryDirectory, visualSignature } from './helpers.ts'
 
 class TestComputerUseService extends ComputerUseService {
   initializeForTest(): Promise<void> {
@@ -158,6 +158,173 @@ describe('Computer Use Service', () => {
       expect(inert.effect.note).toContain('The intended outcome is unverified. Verify it before repeating the action.')
       expect(inert.pointerRouting).toBe('target-process')
       expect(backend.actions).toHaveLength(2)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it.each(['optional', 'required'] as const)('ends the wait on visual-only change with an explicit %s screenshot', async (screenshot) => {
+    const workspace = await temporaryDirectory('dsh-computer-visual-effect-')
+    try {
+      const { backend, service } = serviceHarness({ maxSettleMs: 1_000 })
+      backend.inert = true
+      backend.observation.visualSignature = visualSignature()
+      const dispatch = backend.act.bind(backend)
+      vi.spyOn(backend, 'act').mockImplementation(async (request) => {
+        const result = await dispatch(request)
+        backend.observation.visualSignature = visualSignature(21, 16)
+        return result
+      })
+      await service.initializeForTest()
+      const context = callContext(fakeAgent(workspace.path), workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot }, context)
+
+      const result = await service.act({ kind: 'click', observationId: observation.observationId, elementIndex: 1 }, context)
+
+      expect(result.effect).toMatchObject({
+        observedStateChanged: false,
+        observedVisualChange: true,
+        note: expect.stringContaining('The visual change ended the post-action wait. The intended outcome is unverified.'),
+      })
+      expect(backend.actions).toHaveLength(1)
+      expect(backend.observations.filter(options => options.visualSignature === true)).toEqual([
+        expect.objectContaining({ screenshot: 'none' }),
+        expect.objectContaining({ screenshot: 'none' }),
+      ])
+      expect(result.observation).not.toHaveProperty('visualSignature')
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('retains earlier visual evidence when the window switches during the wait', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-visual-window-switch-')
+    try {
+      const { backend, service } = serviceHarness({ maxSettleMs: 1_000 })
+      backend.inert = true
+      backend.observation.visualSignature = visualSignature()
+      const observe = backend.observe.bind(backend)
+      let postSamples = 0
+      vi.spyOn(backend, 'observe').mockImplementation(async (app, options) => {
+        if (backend.actions.length > 0 && options.visualSignature === true && ++postSamples === 2) {
+          backend.observation = backendObservation({
+            stateHash: 'different-window',
+            window: { ...backend.observation.window!, id: 8 },
+            visualSignature: visualSignature(32 * 32),
+          })
+        }
+        return await observe(app, options)
+      })
+      await service.initializeForTest()
+      const context = callContext(fakeAgent(workspace.path), workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+
+      const result = await service.act({ kind: 'click', observationId: observation.observationId, elementIndex: 1 }, context)
+
+      expect(result.effect).toMatchObject({
+        observedStateChanged: true,
+        observedVisualChange: false,
+        note: expect.stringContaining('The final observation could not be visually compared.'),
+      })
+      expect(result.observation.window?.id).toBe(8)
+      expect(backend.actions).toHaveLength(1)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('keeps default screenshots structural until the caller uses screenshot coordinates', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-visual-source-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.observation.visualSignature = visualSignature()
+      await service.initializeForTest()
+      const context = callContext(fakeAgent(workspace.path), workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId } }, context)
+      expect(observation.screenshot).toBeDefined()
+      const first = await service.act({ kind: 'click', observationId: observation.observationId, elementIndex: 1 }, context)
+      const second = await service.act({ kind: 'click', observationId: first.observation.observationId, elementIndex: 1 }, context)
+      expect(first.effect).not.toHaveProperty('observedVisualChange')
+      expect(second.effect).not.toHaveProperty('observedVisualChange')
+      expect(backend.observations.some(options => options.visualSignature === true)).toBe(false)
+
+      const third = await service.act({
+        kind: 'click',
+        observationId: second.observation.observationId,
+        coordinateSpace: 'screenshot',
+        x: 40,
+        y: 40,
+      }, context)
+      expect(third.effect.observedVisualChange).toBe(false)
+      expect(backend.observations.filter(options => options.visualSignature === true)).toHaveLength(2)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('preserves explicit screenshot provenance across a read-only wait without sampling during the wait', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-visual-wait-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.observation.visualSignature = visualSignature()
+      await service.initializeForTest()
+      const context = callContext(fakeAgent(workspace.path), workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+      const waited = await service.act({ kind: 'wait', observationId: observation.observationId, condition: { text: 'Apply' } }, context)
+      expect(waited.effect).not.toHaveProperty('observedVisualChange')
+      expect(backend.observations.some(options => options.visualSignature === true)).toBe(false)
+
+      const clicked = await service.act({ kind: 'click', observationId: waited.observation.observationId, elementIndex: 1 }, context)
+      const clickedAgain = await service.act({ kind: 'click', observationId: clicked.observation.observationId, elementIndex: 1 }, context)
+      expect(clicked.effect).toMatchObject({ observedStateChanged: true, observedVisualChange: false })
+      expect(clickedAgain.effect).toMatchObject({ observedStateChanged: true, observedVisualChange: false })
+      expect(backend.observations.filter(options => options.visualSignature === true)).toHaveLength(4)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it('keeps the action structural when an optional screenshot was unavailable', async () => {
+    const workspace = await temporaryDirectory('dsh-computer-visual-no-permission-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.observation.permissions.screenRecording = 'denied'
+      await service.initializeForTest()
+      const context = callContext(fakeAgent(workspace.path), workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'optional' }, context)
+      expect(observation.screenshot).toBeUndefined()
+
+      const result = await service.act({ kind: 'click', observationId: observation.observationId, elementIndex: 1 }, context)
+
+      expect(result.effect.observedStateChanged).toBe(true)
+      expect(result.effect).not.toHaveProperty('observedVisualChange')
+      expect(backend.observations.some(options => options.visualSignature === true)).toBe(false)
+    } finally {
+      await workspace.cleanup()
+    }
+  })
+
+  it.each(['before', 'after'] as const)('preserves one dispatch and fresh structural evidence when sampling fails %s input', async (phase) => {
+    const workspace = await temporaryDirectory('dsh-computer-visual-unavailable-')
+    try {
+      const { backend, service } = serviceHarness()
+      backend.observation.visualSignature = visualSignature()
+      const observe = backend.observe.bind(backend)
+      vi.spyOn(backend, 'observe').mockImplementation(async (app, options) => {
+        const beforeInput = backend.actions.length === 0
+        if (options.visualSignature === true && beforeInput === (phase === 'before')) throw new Error('fixture capture failed')
+        return await observe(app, options)
+      })
+      await service.initializeForTest()
+      const context = callContext(fakeAgent(workspace.path), workspace.path)
+      const observation = await service.observe({ app: { bundleId: FIXTURE_APP.bundleId }, screenshot: 'required' }, context)
+
+      const result = await service.act({ kind: 'click', observationId: observation.observationId, elementIndex: 1 }, context)
+
+      expect(result.effect.observedStateChanged).toBe(true)
+      expect(result.effect).not.toHaveProperty('observedVisualChange')
+      expect(result.effect.note).toContain('A comparable pair of window screenshots was unavailable.')
+      expect(backend.actions).toHaveLength(1)
     } finally {
       await workspace.cleanup()
     }

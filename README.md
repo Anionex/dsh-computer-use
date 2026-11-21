@@ -168,12 +168,15 @@ resolution?: {
 agentCursor?: { visible: false; reason?: string }
 effect: {
   observedStateChanged: boolean
+  observedVisualChange?: boolean
   observedForMs: number
   note?: string
 }
 ```
 
 `effect.note` distinguishes action dispatch from the observed change. `effect.observedStateChanged` only compares the window title, ID, frame and Accessibility tree. Check whether the intended outcome is visible before repeating the action. If the observation fails after dispatch, the error identifies that stage. `computer_wait` reports a matched condition and sends no input. `agentCursor` appears only when the separate Agent cursor was expected but could not be shown or validated.
+
+When an action uses screenshot-pixel coordinates or an observation that returned an explicitly requested screenshot, the plugin compares the target window's brightness before and after input by default. It uses the existing Screen Recording permission and keeps the comparison samples in memory. A difference at or above the threshold ends the observation wait early. `effect.observedVisualChange` is omitted when the window cannot be compared, and `false` means the measured difference stayed below the threshold. An animation can also trigger this signal. Confirm the expected result from the returned observation or a focused follow-up check.
 
 The model cannot override these host policies through Tool arguments.
 
